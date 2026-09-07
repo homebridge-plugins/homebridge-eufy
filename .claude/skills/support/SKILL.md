@@ -13,12 +13,12 @@ Refer to CLAUDE.md for label recommendations, issue comment guidelines, and diag
 
 The user provides `$ARGUMENTS` as either:
 - A GitHub issue number (e.g. `423`)
-- A GitHub issue URL (e.g. `https://github.com/homebridge-plugins/homebridge-eufy-security/issues/423`)
+- A GitHub issue URL (e.g. `https://github.com/homebridge-plugins/homebridge-eufy/issues/423`)
 
 ## Step 1 -- Fetch the issue
 
 ```bash
-gh issue view <number> --repo homebridge-plugins/homebridge-eufy-security
+gh issue view <number> --repo homebridge-plugins/homebridge-eufy
 ```
 
 Extract:

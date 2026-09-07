@@ -881,7 +881,7 @@ describe('packed plugin', () => {
       expect(document).toContain('data-diagnostics-export');
       expect(document).not.toContain('diagnostics-steps');
       expect(document).not.toContain('data-diagnostics-case');
-      expect(document).not.toContain('homebridge-eufy-security/issues/1010');
+      expect(document).not.toMatch(/\/issues\/1010\b/);
       expect(script).toContain("'/diagnostics/archive/review'");
       expect(script).toContain("'/diagnostics/archive/export'");
       expect(script).toContain('data:${exported.mediaType};base64,${exported.archive}');

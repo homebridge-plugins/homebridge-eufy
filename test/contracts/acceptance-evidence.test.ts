@@ -56,7 +56,7 @@ const measured = (overrides: Record<string, unknown> = {}) => ({
 });
 
 const workflow = (overrides: Record<string, unknown> = {}) => ({
-  repository: 'homebridge-plugins/homebridge-eufy-security',
+  repository: 'homebridge-plugins/homebridge-eufy',
   workflow: 'CI',
   runId: '17420001',
   runAttempt: '1',

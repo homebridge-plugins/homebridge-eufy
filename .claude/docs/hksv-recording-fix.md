@@ -1,6 +1,6 @@
 # HKSV Recording Reliability Fix
 
-**PR:** [#878](https://github.com/homebridge-plugins/homebridge-eufy-security/pull/878)
+**PR:** [#878](https://github.com/homebridge-plugins/homebridge-eufy/pull/878)
 **Branch:** `fix/hksv-recording-reliability`
 **Affects:** All cameras with HomeKit Secure Video enabled
 

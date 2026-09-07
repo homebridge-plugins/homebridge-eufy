@@ -4,7 +4,7 @@
 
 **Do not open a public issue.** Report privately through GitHub Security Advisories:
 
-> [Report a vulnerability](https://github.com/homebridge-plugins/homebridge-eufy-security/security/advisories/new)
+> [Report a vulnerability](https://github.com/homebridge-plugins/homebridge-eufy/security/advisories/new)
 
 Include the affected version, reproduction steps, and impact where possible. Reports are handled
 privately, and reporters are credited unless they prefer anonymity.

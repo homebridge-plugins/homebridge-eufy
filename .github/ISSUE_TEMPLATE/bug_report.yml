@@ -8,7 +8,7 @@ body:
     attributes:
       label: Preflight Checklist
       options:
-        - label: I have searched the [existing issues](https://github.com/homebridge-plugins/homebridge-eufy-security/issues) and this bug has not been reported before.
+        - label: I have searched the [existing issues](https://github.com/homebridge-plugins/homebridge-eufy/issues) and this bug has not been reported before.
           required: true
         - label: I am using a **dedicated guest admin account** (not my main Eufy account).
           required: true

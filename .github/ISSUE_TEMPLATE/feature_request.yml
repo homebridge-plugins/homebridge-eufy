@@ -13,7 +13,7 @@ body:
     attributes:
       label: Preflight Checklist
       options:
-        - label: I have searched the [existing issues](https://github.com/homebridge-plugins/homebridge-eufy-security/issues) and this feature has not been requested before.
+        - label: I have searched the [existing issues](https://github.com/homebridge-plugins/homebridge-eufy/issues) and this feature has not been requested before.
           required: true
 
   - type: textarea

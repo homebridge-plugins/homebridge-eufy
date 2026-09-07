@@ -17,7 +17,7 @@ hero:
       link: /guide/first-time-setup
     - theme: alt
       text: View on GitHub
-      link: https://github.com/homebridge-plugins/homebridge-eufy-security
+      link: https://github.com/homebridge-plugins/homebridge-eufy
 features:
   - title: One runtime owner
     details: One long-lived SDK owner restores the persisted session, maintains the canonical registry, and refuses concurrent ownership.

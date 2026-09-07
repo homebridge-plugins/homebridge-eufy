@@ -404,7 +404,7 @@ was acknowledged, the accessory presented the camera as disabled 17.7 s after it
 with HAP's `ERROR` status while snapshots stayed reachable, and a session was admitted again 11.6 s after
 power-on with the presented state following. The mid-session half was formerly gated on
 [eufy-sdk#47](https://github.com/mega-yfue/eufy-sdk/issues/47) and its qualification,
-[#1043](https://github.com/homebridge-plugins/homebridge-eufy-security/issues/1043), now passes end to end.
+[#1043](https://github.com/homebridge-plugins/homebridge-eufy/issues/1043), now passes end to end.
 What no controller can observe is what Apple Home renders from the presented state, which stays a human
 check.
 

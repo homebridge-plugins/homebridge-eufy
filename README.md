@@ -2,19 +2,19 @@
 
 <!-- The suffix names the mode: logo-dark.svg is the white glyph for dark backgrounds. -->
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/homebridge-plugins/homebridge-eufy-security/beta-5.0.0/homebridge-ui/public/assets/logo-dark.svg">
-  <img src="https://raw.githubusercontent.com/homebridge-plugins/homebridge-eufy-security/beta-5.0.0/homebridge-ui/public/assets/logo.svg" alt="Homebridge Eufy" height="96">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/homebridge-plugins/homebridge-eufy/beta-5.0.0/homebridge-ui/public/assets/logo-dark.svg">
+  <img src="https://raw.githubusercontent.com/homebridge-plugins/homebridge-eufy/beta-5.0.0/homebridge-ui/public/assets/logo.svg" alt="Homebridge Eufy" height="96">
 </picture>
 
 **Bring verified eufy device capabilities into Apple Home through Homebridge.**
 
 [![npm](https://img.shields.io/npm/v/@homebridge-plugins/homebridge-eufy-security?logo=npm&color=cb3837)](https://www.npmjs.com/package/@homebridge-plugins/homebridge-eufy-security)
 [![beta](https://img.shields.io/npm/v/@homebridge-plugins/homebridge-eufy-security/beta?label=beta)](https://www.npmjs.com/package/@homebridge-plugins/homebridge-eufy-security)
-[![CI](https://github.com/homebridge-plugins/homebridge-eufy-security/actions/workflows/ci.yml/badge.svg?branch=beta-5.0.0)](https://github.com/homebridge-plugins/homebridge-eufy-security/actions/workflows/ci.yml)
+[![CI](https://github.com/homebridge-plugins/homebridge-eufy/actions/workflows/ci.yml/badge.svg?branch=beta-5.0.0)](https://github.com/homebridge-plugins/homebridge-eufy/actions/workflows/ci.yml)
 [![node](https://img.shields.io/node/v/@homebridge-plugins/homebridge-eufy-security?logo=nodedotjs)](./.nvmrc)
 [![license](https://img.shields.io/npm/l/@homebridge-plugins/homebridge-eufy-security)](./LICENSE)
 
-[Documentation](https://homebridge-plugins.github.io/homebridge-eufy-security/) · [Contributing](./CONTRIBUTING.md) · [Security](./SECURITY.md) · [Releases](https://github.com/homebridge-plugins/homebridge-eufy-security/releases)
+[Documentation](https://homebridge-plugins.github.io/homebridge-eufy/) · [Contributing](./CONTRIBUTING.md) · [Security](./SECURITY.md) · [Releases](https://github.com/homebridge-plugins/homebridge-eufy/releases)
 
 </div>
 
@@ -93,15 +93,15 @@ explicit HomeKit adapter exists for their primary purpose.
 
 ## Documentation
 
-The [documentation site](https://homebridge-plugins.github.io/homebridge-eufy-security/) contains the
+The [documentation site](https://homebridge-plugins.github.io/homebridge-eufy/) contains the
 current V5 contract and a clearly separated migration of useful legacy V4 wiki material. Current V5
-work is tracked in the [beta issues](https://github.com/homebridge-plugins/homebridge-eufy-security/issues)
+work is tracked in the [beta issues](https://github.com/homebridge-plugins/homebridge-eufy/issues)
 and release notes.
 
-- [Installation](https://homebridge-plugins.github.io/homebridge-eufy-security/guide/installation)
-- [Configuration](https://homebridge-plugins.github.io/homebridge-eufy-security/reference/configuration)
-- [Troubleshooting](https://homebridge-plugins.github.io/homebridge-eufy-security/troubleshooting/)
-- [Current releases](https://github.com/homebridge-plugins/homebridge-eufy-security/releases)
+- [Installation](https://homebridge-plugins.github.io/homebridge-eufy/guide/installation)
+- [Configuration](https://homebridge-plugins.github.io/homebridge-eufy/reference/configuration)
+- [Troubleshooting](https://homebridge-plugins.github.io/homebridge-eufy/troubleshooting/)
+- [Current releases](https://github.com/homebridge-plugins/homebridge-eufy/releases)
 - [SDK documentation](https://mega-yfue.github.io/)
 
 ## Design

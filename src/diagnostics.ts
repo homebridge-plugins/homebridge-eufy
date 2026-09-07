@@ -1059,7 +1059,7 @@ export class GuidedDiagnostics {
       ...(session.reproductionStartedAt ? { reproductionStartedAt: session.reproductionStartedAt } : {}),
       ...(session.reproductionEndedAt ? { reproductionEndedAt: session.reproductionEndedAt } : {}),
       partialExportAvailable: Boolean(session.reproductionEndedAt),
-      issueUrl: `https://github.com/homebridge-plugins/homebridge-eufy-security/issues/new?body=${encodeURIComponent(issueBody)}`,
+      issueUrl: `https://github.com/homebridge-plugins/homebridge-eufy/issues/new?body=${encodeURIComponent(issueBody)}`,
     };
   }
 
