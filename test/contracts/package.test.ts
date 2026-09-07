@@ -686,6 +686,28 @@ describe('packed plugin', () => {
     }
   }, 15_000);
 
+  /**
+   * Every GitHub location the manifest publishes names one repository, over a protocol that still serves it.
+   *
+   * The npm name is a fixed identity and is deliberately not that repository's name. A rename therefore has
+   * to move these three and leave the name alone, and moving only some of them leaves a registry page whose
+   * links resolve to nothing.
+   */
+  it('publishes GitHub locations that name one repository over a live protocol', () => {
+    const repository = fileURLToPath(new URL('../..', import.meta.url));
+    const packageJson = JSON.parse(readFileSync(join(repository, 'package.json'), 'utf8')) as {
+      repository?: { url?: string };
+      bugs?: { url?: string };
+      homepage?: string;
+    };
+    const slug = 'homebridge-plugins/homebridge-eufy';
+    const [owner, name] = slug.split('/');
+
+    expect(packageJson.repository?.url).toBe(`git+https://github.com/${slug}.git`);
+    expect(packageJson.bugs?.url).toBe(`https://github.com/${slug}/issues`);
+    expect(packageJson.homepage).toBe(`https://${owner}.github.io/${name}/`);
+  });
+
   it('keeps the runtime dependency and entry-point surface closed', () => {
     const repository = fileURLToPath(new URL('../..', import.meta.url));
     const packageJson = JSON.parse(readFileSync(join(repository, 'package.json'), 'utf8')) as {

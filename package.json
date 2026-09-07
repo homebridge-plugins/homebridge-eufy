@@ -7,7 +7,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git://github.com/homebridge-plugins/homebridge-eufy-security.git"
+    "url": "git+https://github.com/homebridge-plugins/homebridge-eufy.git"
   },
   "funding": [
     {
@@ -16,7 +16,7 @@
     }
   ],
   "bugs": {
-    "url": "https://github.com/homebridge-plugins/homebridge-eufy-security/issues"
+    "url": "https://github.com/homebridge-plugins/homebridge-eufy/issues"
   },
   "engines": {
     "node": ">=24.5.0",
@@ -58,7 +58,7 @@
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   },
-  "homepage": "https://homebridge-plugins.github.io/homebridge-eufy-security/",
+  "homepage": "https://homebridge-plugins.github.io/homebridge-eufy/",
   "author": "homebridge-eufy-security",
   "allowScripts": {
     "ffmpeg-for-homebridge@2.2.2": true
