@@ -101,11 +101,9 @@ a camera, so every script uses wired cameras unless `--battery` is passed.
 ### Comparing two revisions
 
 Pin the selection to what the accessory advertises, and read the advertisement in both runs rather than
-assuming it held. An accessory's advertised resolution list is not a constant: it can move from a generic
-fallback to one derived from each camera's native geometry as the plugin learns that geometry, and every
-script refuses a selection outside the advertisement. A comparison whose two halves ran at different
-geometries measures the advertisement rather than the change, and the halves that refuse measure nothing at
-all — an inconclusive run, which is reported as inconclusive rather than as a pass.
+assuming it held. Every script refuses a selection outside the advertisement. A comparison whose two halves
+ran at different geometries measures the advertisement rather than the change, and the halves that refuse
+measure nothing at all — an inconclusive run, which is reported as inconclusive rather than as a pass.
 
 Prefer one downtime window containing both revisions over two windows separated in time: build the first
 revision, run every camera, build the second, run them again, all against one storage copy taken once. That

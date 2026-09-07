@@ -1686,8 +1686,8 @@ const HOMEKIT_LIVE_VIDEO_LEVELS = new Set(['3.1', '3.2', '4.0']);
 /**
  * The inclusive bounds a controller-selected live geometry and frame rate are retained within.
  *
- * Bounds rather than an enumeration, because the matrix a controller selects from is derived per camera from
- * that camera's own reported shape. The ceiling exceeds what the recorded H.264 level codes, so a selection its
+ * Bounds rather than an enumeration, because a controller may select a geometry the advertised matrix does not
+ * offer and the plugin honours it. The ceiling exceeds what the recorded H.264 level codes, so a selection its
  * own level cannot carry is retained.
  */
 const MIN_LIVE_VIDEO_DIMENSION = 120;

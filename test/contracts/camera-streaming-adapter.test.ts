@@ -1538,44 +1538,6 @@ describe('camera streaming bundle adapter', () => {
     }
   });
 
-  /**
-   * A camera whose own shape has been observed advertises that shape instead of the 16:9 default, so a
-   * controller reading the matrix for the first time is offered nothing the picture has to be fitted into.
-   * Measured on a 1600x1200 doorbell negotiated at 1280x720, that fitting leaves 160 black columns each side
-   * and spends a quarter of the negotiated bit rate encoding them.
-   *
-   * What this pins is the advertisement, not the outcome: a controller paired before the shape was known
-   * keeps its own copy of the old matrix, because HAP's configuration number ignores characteristic values.
-   */
-  it('advertises the shape the camera itself produces once one has been observed', () => {
-    const target = new Accessory(
-      'Synthetic four-thirds camera',
-      uuid.generate('synthetic-camera-four-thirds'),
-    ) as unknown as PlatformAccessory;
-
-    CAMERA_STREAMING_ADAPTER.attach({
-      device: { camera: () => ({ live: vi.fn() }) } as never,
-      evidence: snapshotEvidence(),
-      accessory: target,
-      hap: HAP,
-      liveMedia: { prepare: vi.fn() },
-      audioEnabled: true,
-      sourceGeometry: { width: 1600, height: 1200 },
-      diagnose: vi.fn(),
-      observed: vi.fn(),
-      persist: vi.fn(),
-    } satisfies AdapterAttachmentContext);
-
-    for (const management of streamManagements(target)) {
-      const advertised = management.getCharacteristic(Characteristic.SupportedVideoStreamConfiguration).value as string;
-      const { resolutions } = advertisedVideo(advertised);
-
-      expect(resolutions).toContainEqual([1600, 1200, 30]);
-      expect(resolutions.every(([width, height]) => Math.abs(width / height - 4 / 3) < 0.01)).toBe(true);
-      expect(resolutions.every(([, height]) => height <= 1200)).toBe(true);
-    }
-  });
-
   it('drives negotiated prepare, start, reconfigure, and stop through the media seam and traces the identity-free video selection a controller starts and reconfigures', async () => {
     const target = new Accessory(
       'Synthetic camera',

@@ -626,6 +626,30 @@ AAC-ELD output requires an explicit global header. `libfdk_aac` picks its transp
 output asks for and defaults to ADTS, which cannot carry AAC-ELD at all, so without that header the
 encoder refuses to initialize and the negotiated audio codec is unreachable.
 
+### One advertised resolution matrix
+
+Every camera advertises the same 16:9 ladder, whatever shape its own source produces, and a camera of another
+shape has its picture scaled to fit and centred inside the selected frame. Fitting is preferred to cropping
+because cropping spends the vertical field of view a doorbell exists to have.
+
+The fitting costs the picture no bit rate. Flat black is skip-coded, and every live adaptation pins `-b:v`,
+`-maxrate` and `-bufsize` to one ceiling, so the encoder spends on the picture what it does not spend on the
+padding: measured through the bundled FFmpeg on the plugin's own argument list, at 299, 600 and 802 kbps
+across both a pathologically detailed source and a low-detail noisy one, the picture region of a 1600x1200
+source padded into 1280x720 is within 0.0004 SSIM of the same picture coded alone at 960x720.
+
+Advertising each camera's own coded geometry instead is therefore not an improvement, and at the low end it is
+a regression: at 299 kbps, the rate this fleet negotiates, coding a 4:3 camera's native 1600x1200 spreads the
+same bits over 2.8 times the pixels and scores below 1280x720, which it only overtakes above roughly 1 Mbps. A
+per-camera matrix also could not reach the controllers it was for. A shape is known only once a live session
+has announced one, so a first pairing publishes the ladder regardless; and HAP derives its configuration
+number from the accessory structure with every characteristic value replaced by `null`, which excludes
+`SupportedVideoStreamConfiguration`, so a paired controller is never told to read the matrix again. Measured
+on a paired 4:3 doorbell, a per-camera matrix was published and the controller still selected 1280x720.
+
+What a per-camera matrix would leave is black bars in a controller's tile, whose removal is unverified — a
+Home app tile is drawn 16:9 and may letterbox a 4:3 stream itself.
+
 ### The negotiated bit-rate ceiling
 
 The negotiated bit rate bounds what the accessory **transmits**, not what it codes. RTP and SRTP overhead
@@ -658,7 +682,7 @@ which spends the ceiling rather than exceeding it. And the VBV buffer holds one 
 rather than two, because a two-second buffer puts a 45-second window 4.4 percent over on arithmetic alone.
 
 The measurement that fixed this is a back-to-back comparison, both phases inside one downtime window against
-one storage copy, driven at each camera's own advertised geometry so the plugin build was the only variable.
+one storage copy, driven at each camera's negotiated geometry so the plugin build was the only variable.
 Before the reservation, every camera coded an elementary stream inside its 299 kbps ceiling and still
 transmitted 2.3 to 4.0 percent more than it had negotiated. After it, every camera transmitted under, at 276,
 282, 289, 292 and 295 kbps. The overshoot was the transport, and the transport had never been reserved for.

@@ -61,104 +61,19 @@ import type {
 export const CAMERA_STREAMING_ADAPTER_KEY = 'camera.streaming';
 
 /**
- * The resolutions advertised to a controller when the camera's own shape is not known.
+ * The resolutions every camera advertises to a controller.
  *
- * 16:9, because it is what most cameras produce and what a controller's tile is drawn at. A camera whose
- * shape has never been observed keeps these rather than being given a guessed matrix.
+ * One 16:9 ladder for every camera, whatever shape its own source produces. A camera of another shape has its
+ * picture scaled to fit and centred, which preserves its aspect and costs it no bit rate. Dimensions are even
+ * because H.264 codes in macroblocks, and the frame rate is a ceiling a session may select below rather than a
+ * target.
  */
-export const DEFAULT_ADVERTISED_RESOLUTIONS: readonly (readonly [number, number, number])[] = [
+const ADVERTISED_RESOLUTIONS: readonly (readonly [number, number, number])[] = [
   [320, 180, 15],
   [640, 360, 30],
   [1280, 720, 30],
   [1920, 1080, 30],
 ];
-
-/**
- * The geometry to keep, given one already recorded and one a source has just announced.
- *
- * The LARGEST by area, never the latest. A camera runs an adaptive ladder and a session may be served any
- * rung of it, so keeping the newest announcement would record a rung and advertise a ceiling below what the
- * camera produces — measured on a real fleet, three of eight cameras were capped at 1280x720 that way.
- * Growing only means repeated sessions converge on the true shape instead of oscillating with the ladder.
- *
- * A geometry with a non-positive side is refused, so nothing displaces a recorded one on a malformed report.
- */
-export function largestSourceGeometry(
-  recorded: { readonly width: number; readonly height: number } | undefined,
-  announced: { readonly width: number; readonly height: number },
-): { readonly width: number; readonly height: number } | undefined {
-  if (announced.width <= 0 || announced.height <= 0) {
-    return recorded;
-  }
-  if (recorded && recorded.width * recorded.height >= announced.width * announced.height) {
-    return recorded;
-  }
-  return { width: announced.width, height: announced.height };
-}
-
-/** The frame rate every derived entry is advertised at; a negotiated rate is a ceiling, not a target. */
-const ADVERTISED_FPS = 30;
-
-/**
- * Divisors of the native size a derived matrix offers, so a controller drawing a small tile is not forced to
- * the largest.
- *
- * Whole divisions of the camera's own geometry rather than a list of heights: a fixed list carries steps
- * belonging to other shapes, which land on sizes no camera produces — a 16:9 camera offered a 1200-high step
- * advertises 2134x1200, whose ratio has drifted and whose width is arbitrary. Halving keeps the exact aspect
- * and stays even, and on a 16:9 camera it lands on the familiar ladder unchanged.
- */
-const ADVERTISED_DIVISORS = [1, 2, 4] as const;
-
-/** Below this the shape is not a camera frame, and deriving a matrix from it would publish nonsense. */
-const SMALLEST_CREDIBLE_DIMENSION = 120;
-
-/**
- * The resolutions one camera advertises, derived from the geometry it actually produces.
- *
- * A controller picks one entry and the plugin must then deliver exactly that geometry, so a matrix offering
- * only one shape fits every camera of another shape into it. Measured on a 1600x1200 doorbell negotiated at
- * 1280x720, the picture occupies 960x720 with 160 black columns each side: a quarter of every encoded frame is
- * black, and that quarter is charged against the negotiated bit rate rather than spent on the picture.
- *
- * Entries keep the camera's own aspect and never exceed its own size, because asking a controller to accept
- * more pixels than the camera codes spends bit rate on upscaling. Dimensions are rounded to even numbers,
- * which is all H.264 can code. A shape that is absent or not credible falls back to
- * {@link DEFAULT_ADVERTISED_RESOLUTIONS}: a guessed shape is worse than a fitted one, because the fitting
- * would still happen and at the wrong ratio.
- *
- * REACHES A CONTROLLER ONLY AT PAIRING. HAP's configuration number is derived from the accessory's structure
- * with every characteristic value replaced by null, so changing what this returns never tells a paired
- * controller to read it again — verified in the host's own implementation, which carries a TODO admitting the
- * omission. A controller keeps whatever matrix it read when the accessory's structure last changed, and may
- * select from it a geometry this does not offer, which is honoured and fitted. Measured on a paired 4:3
- * doorbell: the matrix was published and the controller selected 1280x720. This therefore takes effect for an
- * accessory paired AFTER its shape is known.
- */
-export function advertisedResolutions(
-  geometry: { readonly width: number; readonly height: number } | undefined,
-): readonly (readonly [number, number, number])[] {
-  if (
-    !geometry ||
-    !Number.isSafeInteger(geometry.width) ||
-    !Number.isSafeInteger(geometry.height) ||
-    geometry.width < SMALLEST_CREDIBLE_DIMENSION ||
-    geometry.height < SMALLEST_CREDIBLE_DIMENSION
-  ) {
-    return DEFAULT_ADVERTISED_RESOLUTIONS;
-  }
-  const even = (value: number): number => Math.max(2, Math.round(value / 2) * 2);
-  const derived = new Map<string, readonly [number, number, number]>();
-  for (const divisor of ADVERTISED_DIVISORS) {
-    const width = even(geometry.width / divisor);
-    const height = even(geometry.height / divisor);
-    if (width < SMALLEST_CREDIBLE_DIMENSION && height < SMALLEST_CREDIBLE_DIMENSION) {
-      continue;
-    }
-    derived.set(`${width}x${height}`, [width, height, ADVERTISED_FPS]);
-  }
-  return [...derived.values()].sort(([leftWidth], [rightWidth]) => leftWidth - rightWidth);
-}
 
 /**
  * The stable key of the Camera Operating Mode service this bundle publishes for a camera that configures no
@@ -458,7 +373,6 @@ function attachCameraStreaming(context: AdapterAttachmentContext): AttachedAdapt
     reportSelection: context.trace,
     ...(context.device.stationSn ? { stationSn: context.device.stationSn } : {}),
     ...(context.stationLiveSessions ? { stations: context.stationLiveSessions } : {}),
-    ...(context.observeSourceGeometry ? { observeSourceGeometry: context.observeSourceGeometry } : {}),
   };
   const recordingBinding: RecordingCameraBinding | undefined = recordingConfigured
     ? {
@@ -512,9 +426,7 @@ function attachCameraStreaming(context: AdapterAttachmentContext): AttachedAdapt
             profiles: [context.hap.H264Profile.BASELINE, context.hap.H264Profile.MAIN, context.hap.H264Profile.HIGH],
             levels: [context.hap.H264Level.LEVEL3_1, context.hap.H264Level.LEVEL3_2, context.hap.H264Level.LEVEL4_0],
           },
-          resolutions: advertisedResolutions(context.sourceGeometry).map(
-            (entry) => [...entry] as [number, number, number],
-          ),
+          resolutions: ADVERTISED_RESOLUTIONS.map((entry) => [...entry] as [number, number, number]),
         },
         ...(context.audioEnabled === false
           ? {}
@@ -1230,8 +1142,6 @@ interface LiveCameraBinding {
   readonly stationSn?: string;
   /** Where a live session is recorded, so opportunistic work elsewhere on the station stands aside. */
   readonly stations?: StationLiveSessionRegistry;
-  /** Record a geometry the source announced, so a later start can advertise the shape it produces. */
-  readonly observeSourceGeometry?: (geometry: { readonly width: number; readonly height: number }) => void;
   readonly source: CameraMediaSource;
   readonly media: LiveMediaAdapter;
   readonly snapshotMedia?: SnapshotMediaAdapter;
@@ -1472,7 +1382,6 @@ class LiveCameraDelegate implements CameraStreamingDelegate {
       },
       onSessionReleased: this.binding.reportRelease,
       onTalkbackOutcome: (outcome) => this.binding.reportTalkback(outcome),
-      ...(this.binding.observeSourceGeometry ? { onSourceConfiguration: this.binding.observeSourceGeometry } : {}),
     });
     session = {
       prepared,

@@ -182,9 +182,9 @@ geometry, and keyframe cadence. It is recording input, never HomeKit output.
 _Avoid_: Recorded fragment, negotiated recording
 
 **Advertised resolution matrix**:
-The resolutions one camera offers a HomeKit controller, derived from the shape that camera's own frames have
-rather than from a fixed list. A controller reads it when the accessory's structure changes and keeps that
-copy, so a change to it reaches an accessory paired afterwards and not one paired before.
+The resolutions one camera offers a HomeKit controller: one fixed 16:9 ladder, the same for every camera
+whatever shape its own frames have. A controller reads it when the accessory's structure changes and keeps
+that copy, so it may select an entry the plugin then fits the camera's picture into.
 _Avoid_: Negotiated live selection, announced source configuration
 
 **Announced source configuration**:

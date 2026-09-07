@@ -240,14 +240,6 @@ export interface LiveMediaTransport {
   readonly onSessionOutcome?: (outcome: LiveSessionOutcome) => void;
   readonly onSessionReleased?: () => void;
   readonly onTalkbackOutcome?: (outcome: TalkbackOutcome) => void;
-  /**
-   * The coded configuration the SDK announced for this camera's source, each time it changes.
-   *
-   * The authoritative account of what the camera produces — read from the parameter sets in force rather than
-   * inferred from an image — and the only one available without a second guess. A consumer records it to
-   * decide what to offer a controller next time; the session itself needs nothing from the answer.
-   */
-  readonly onSourceConfiguration?: (config: { readonly width: number; readonly height: number }) => void;
 }
 
 export interface PreparedLiveMedia {
