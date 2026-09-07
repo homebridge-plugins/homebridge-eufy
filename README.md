@@ -21,12 +21,13 @@
 ---
 
 > [!IMPORTANT]
-> **V5 is a closed maintainer beta, not yet a replacement for the stable plugin. Registration is not
-> open; please do not request access.** Account authentication, single-owner session restore, complete
-> device discovery, and the first explicit HomeKit adapter are implemented. Accessory publication,
-> camera media, HKSV, motion
-> and doorbell events, arming, locks, lights, and battery enrichment are still being rebuilt. A device
-> discovered by the SDK is not automatically represented in HomeKit.
+> **V5 is a beta and not yet a replacement for the stable V4 plugin.** Every capability area is
+> implemented and covered by the contract suite; qualification on real hardware is the remaining step.
+>
+> **V5 does not adopt V4 HomeKit accessories.** It registers its own, so expect to remove the V4
+> accessories and reassign rooms, names, and automations once. A V4 configuration block is not loaded
+> either. A device the SDK recognizes is not automatically represented in HomeKit: representation requires
+> an explicit adapter for a primary-purpose member.
 
 ## What it is
 
@@ -58,9 +59,11 @@ from npm:
 npm install -g @homebridge-plugins/homebridge-eufy
 ```
 
-The V5 branch is currently for development and a closed maintainer beta. Enrollment is not open. It
-depends on a private GitHub Packages SDK prerelease and is not yet an anonymously installable public
-beta.
+While V5 is a beta, it is published under the `beta` dist-tag rather than `latest`:
+
+```bash
+npm install -g @homebridge-plugins/homebridge-eufy@beta
+```
 
 ## First-time setup
 
@@ -80,16 +83,22 @@ temporary authentication flow, and the runtime never falls back to interactive l
 
 | Area | Status |
 |---|---|
-| Interactive login, captcha, and two-factor continuation | Available |
-| Persisted session restore and single runtime ownership | Available |
-| Complete device discovery and runtime snapshot | Available |
-| Contact sensor adapter | Implemented; production accessory publication not yet connected |
-| Camera streaming, snapshots, talkback, and HKSV | In progress |
-| Motion and doorbell events | In progress |
-| Security modes, locks, lights, sirens, and battery services | In progress |
+| Interactive login, captcha, and two-factor continuation | Implemented |
+| Persisted session restore and single runtime ownership | Implemented |
+| Complete device discovery, runtime snapshot, and dashboard | Implemented |
+| Contact sensors, motion, and doorbell presses | Implemented |
+| Camera live video and audio, snapshots, and talkback | Implemented |
+| HomeKit Secure Video recording | Implemented |
+| Security system arming, locks, sirens, and lights | Implemented |
+| Battery, charging, and low-battery enrichment | Implemented |
+| Guided diagnostics and redacted support archives | Implemented |
+| Qualification on real hardware, then public beta promotion | Remaining |
 
-Support is capability-led rather than model-led. Recognized devices may appear in discovery before an
-explicit HomeKit adapter exists for their primary purpose.
+Support is capability-led rather than model-led, so capability evidence decides coverage instead of product
+naming, and a newly recognized model that exposes an already-adapted capability works without an allowlist.
+Of the 303 rows in the coverage matrix, 57 have an admitted HomeKit adapter, 230 remain diagnostic-only, and
+16 are blocked by a declared SDK gap. Recognized devices therefore appear in the dashboard before, or
+without, an explicit HomeKit adapter for their primary purpose.
 
 ## Documentation
 
