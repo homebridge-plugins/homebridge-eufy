@@ -69,7 +69,6 @@ const diagnosticsReviewConfirmLabel = document.querySelector('[data-diagnostics-
 const diagnosticsExport = document.querySelector('[data-diagnostics-export]');
 const diagnosticsResultHeading = document.querySelector('[data-diagnostics-result-heading]');
 const diagnosticsStartAnother = document.querySelector('[data-diagnostics-start-another]');
-const diagnosticsBackgroundAction = document.querySelector('[data-diagnostics-background-action]');
 const advancedPanel = document.querySelector('[data-advanced-settings]');
 const advancedClose = document.querySelector('[data-advanced-close]');
 const advancedPolling = document.querySelector('[data-advanced-polling]');
@@ -269,12 +268,19 @@ function renderDiagnostics(state) {
   const choosing = screen === 'choose';
   const reviewing = screen === 'review';
   const reproductionMode = state.reproductionMode ?? 'now';
-  const dashboardBackground = isDashboardUiReproducing(state);
-  diagnosticsBackgroundAction.hidden = !dashboardBackground;
+  const collecting = isDashboardUiReproducing(state);
+  for (const entry of [mastheadDiagnostics, menuDiagnostics]) {
+    if (collecting) entry.dataset.collecting = 'true';
+    else delete entry.dataset.collecting;
+    entry.setAttribute(
+      'aria-label',
+      messages[collecting ? 'diagnosticsCollectingFinishHere' : 'menuDiagnostics'] ?? '',
+    );
+  }
   diagnosticsWizardPanel.hidden = !choosing;
-  diagnosticsGuidance.hidden = screen !== 'reproduce' || dashboardBackground;
+  diagnosticsGuidance.hidden = screen !== 'reproduce';
   diagnosticsGuidanceBeforeSection.hidden = state.status === 'reproducing';
-  diagnosticsActions.hidden = screen !== 'reproduce' || dashboardBackground;
+  diagnosticsActions.hidden = screen !== 'reproduce';
   diagnosticsReproduction.disabled = !['authorized', 'reproducing'].includes(state.status);
   diagnosticsReproduction.textContent =
     reproductionMode === 'intermittent'
@@ -308,21 +314,19 @@ function renderDiagnostics(state) {
     }
   }
   if (choosing) renderDiagnosticsWizard();
-  const statusKey = dashboardBackground
-    ? 'diagnosticsBackgroundActive'
-    : reviewing
-      ? state.missingEvidence?.length
-        ? 'diagnosticsMissingEvidence'
-        : 'diagnosticsComplete'
-      : {
-          inactive: 'diagnosticsInactive',
-          authorized:
-            reproductionMode === 'intermittent' ? 'diagnosticsIntermittentAuthorized' : 'diagnosticsAuthorized',
-          reproducing:
-            reproductionMode === 'intermittent' ? 'diagnosticsIntermittentReproducing' : 'diagnosticsReproducing',
-          complete: state.missingEvidence?.length ? 'diagnosticsMissingEvidence' : 'diagnosticsComplete',
-          expired: 'diagnosticsExpired',
-        }[state.status];
+  const statusKey = reviewing
+    ? state.missingEvidence?.length
+      ? 'diagnosticsMissingEvidence'
+      : 'diagnosticsComplete'
+    : {
+        inactive: 'diagnosticsInactive',
+        authorized:
+          reproductionMode === 'intermittent' ? 'diagnosticsIntermittentAuthorized' : 'diagnosticsAuthorized',
+        reproducing:
+          reproductionMode === 'intermittent' ? 'diagnosticsIntermittentReproducing' : 'diagnosticsReproducing',
+        complete: state.missingEvidence?.length ? 'diagnosticsMissingEvidence' : 'diagnosticsComplete',
+        expired: 'diagnosticsExpired',
+      }[state.status];
   diagnosticsStatus.textContent = (
     choosing && (state.status === 'inactive' || diagnosticsStartingAnother) ? '' : (messages[statusKey] ?? '')
   ).replace('{evidence}', state.missingEvidence?.join(', ') ?? '');
@@ -593,44 +597,6 @@ function closeDashboardPanel() {
     recordActiveUiEventBestEffort('dashboard-opened');
   }
 }
-
-function openCompletedDiagnostics(trigger) {
-  firstSetup.hidden = true;
-  setupContent.hidden = true;
-  dashboard.hidden = false;
-  masthead.hidden = true;
-  openDashboardPanel(diagnosticsPanel, trigger);
-  diagnosticsResultHeading.focus?.();
-}
-
-diagnosticsBackgroundAction.addEventListener('click', async () => {
-  diagnosticsBackgroundAction.disabled = true;
-  try {
-    await recordActiveUiEvent('issue-observed').catch(() => undefined);
-    let state = await requestWithinDeadline('/diagnostics/reproduction/end', undefined, 12000);
-    if (state.status === 'complete' && state.missingEvidence?.length) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      state = await requestWithinDeadline('/diagnostics/status', undefined, 12000);
-    }
-    renderDiagnostics(state);
-    openCompletedDiagnostics(diagnosticsBackgroundAction);
-  } catch {
-    await recordActiveUiEvent('request-failed').catch(() => undefined);
-    try {
-      const state = await requestWithinDeadline('/diagnostics/status', undefined, 12000);
-      renderDiagnostics(state);
-      if (state.status === 'complete' || state.partialExportAvailable) {
-        openCompletedDiagnostics(diagnosticsBackgroundAction);
-      } else {
-        diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
-      }
-    } catch {
-      diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
-    }
-  } finally {
-    diagnosticsBackgroundAction.disabled = false;
-  }
-});
 
 mastheadDiagnostics.addEventListener('click', () => menuDiagnostics.click());
 

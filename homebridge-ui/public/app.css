@@ -510,60 +510,13 @@ button.diagnostics-quiet-action {
   background: color-mix(in srgb, var(--accent) 9%, var(--panel));
 }
 
+.dashboard-action[data-collecting] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+}
+
 .dashboard-action:hover::after,
 .dashboard-action:focus-visible::after {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.diagnostics-background-action {
-  position: fixed;
-  z-index: 40;
-  right: max(16px, calc((100vw - 720px) / 2 + 16px));
-  bottom: 18px;
-  display: grid;
-  width: 46px;
-  min-height: 46px;
-  height: 46px;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--line));
-  border-radius: 50%;
-  background: var(--accent);
-  padding: 0;
-  box-shadow: 0 10px 28px rgb(15 23 42 / 24%);
-}
-
-.diagnostics-background-action img {
-  width: 21px;
-  height: 21px;
-}
-
-.diagnostics-background-action::after {
-  content: attr(aria-label);
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  width: max-content;
-  max-width: min(240px, calc(100vw - 32px));
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--panel);
-  color: var(--ink);
-  padding: 6px 9px;
-  box-shadow: 0 8px 24px rgb(15 23 42 / 16%);
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 1.3;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(3px);
-  transition:
-    opacity 120ms ease,
-    transform 120ms ease;
-}
-
-.diagnostics-background-action:hover::after,
-.diagnostics-background-action:focus-visible::after {
   opacity: 1;
   transform: translateY(0);
 }
@@ -1477,7 +1430,6 @@ button:disabled {
 .shell[data-theme='dark'] .status-icon,
 .shell[data-theme='dark'] .dashboard-page-icon,
 .shell[data-theme='dark'] .dashboard-action img,
-.shell[data-theme='dark'] .diagnostics-background-action img,
 .shell[data-theme='dark'] .device-class-icon {
   filter: invert(1);
 }

@@ -130,7 +130,7 @@ describe('guided diagnostics session', () => {
       await expect(diagnostics.recordUiEvent('free-text' as never)).rejects.toThrow('Unknown diagnostics UI event');
 
       await diagnostics.endReproduction();
-      await expect(diagnostics.recordUiEvent('issue-observed')).rejects.toThrow('closing');
+      await expect(diagnostics.recordUiEvent('dashboard-opened')).rejects.toThrow('closing');
 
       await diagnostics.authorize('dashboard-ui', 'intermittent');
       await diagnostics.startReproduction();
@@ -176,7 +176,7 @@ describe('guided diagnostics session', () => {
       const authorized = await diagnostics.authorize('dashboard-ui', 'intermittent');
       await diagnostics.startReproduction();
       await diagnostics.recordUiEvent('dashboard-opened');
-      await diagnostics.recordUiEvent('issue-observed');
+      await diagnostics.recordUiEvent('authentication-opened');
 
       const path = join(root, 'diagnostics', 'ui-events.jsonl');
       expect(statSync(path).mode & 0o777).toBe(0o600);
@@ -190,7 +190,7 @@ describe('guided diagnostics session', () => {
         version: 1,
         supportCaseId: authorized.supportCaseId,
         timestamp: '2026-08-16T08:00:00.000Z',
-        event: 'issue-observed',
+        event: 'authentication-opened',
       });
       expect(JSON.stringify(records)).not.toMatch(/serial|device|account|credential|answer|configuration|url/i);
     } finally {
@@ -229,14 +229,14 @@ describe('guided diagnostics session', () => {
       writeFileSync(path, seeded, { encoding: 'utf8', mode: 0o600 });
       expect(seeded.length, 'seeded just under the cap, so one more record has to cross it').toBeLessThan(64 * 1_024);
 
-      await diagnostics.recordUiEvent('issue-observed');
+      await diagnostics.recordUiEvent('authentication-opened');
 
       const records = readFileSync(path, 'utf8')
         .trim()
         .split('\n')
         .map((line) => JSON.parse(line) as { event: string });
       expect(statSync(path).size, 'the cap is the point').toBeLessThanOrEqual(64 * 1_024);
-      expect(records.at(-1)?.event, 'the newest record is kept').toBe('issue-observed');
+      expect(records.at(-1)?.event, 'the newest record is kept').toBe('authentication-opened');
       expect(
         records.map(({ event }) => event),
         'and the oldest is the one dropped',
@@ -601,7 +601,7 @@ describe('guided diagnostics session', () => {
       await diagnostics.startReproduction();
       await diagnostics.recordUiEvent('background-started');
       await diagnostics.recordUiEvent('authentication-opened');
-      const finalEvent = diagnostics.recordUiEvent('issue-observed');
+      const finalEvent = diagnostics.recordUiEvent('request-failed');
       const ending = diagnostics.endReproduction();
       await expect(diagnostics.recordUiEvent('dashboard-opened')).rejects.toThrow('closing');
       const completed = await ending;
@@ -630,7 +630,7 @@ describe('guided diagnostics session', () => {
       )?.content;
       expect(uiLog).toContain('"event":"background-started"');
       expect(uiLog).toContain('"event":"authentication-opened"');
-      expect(uiLog).toContain('"event":"issue-observed"');
+      expect(uiLog).toContain('"event":"request-failed"');
       expect(uiLog).not.toMatch(/serial|device|account|credential|answer|configuration|url/i);
 
       const archivePath = join(root, exported.filename);
@@ -657,7 +657,7 @@ describe('guided diagnostics session', () => {
       expect(extractedRecords.map(({ event }) => event)).toEqual([
         'background-started',
         'authentication-opened',
-        'issue-observed',
+        'request-failed',
       ]);
       expect(
         extractedRecords.every(

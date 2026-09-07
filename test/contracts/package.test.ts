@@ -59,6 +59,16 @@ async function renderUi(
     });
   }
 
+  function labelledElement() {
+    return interactiveElement({
+      attributes: {} as Record<string, string>,
+      dataset: {} as Record<string, string>,
+      setAttribute(name: string, value: string) {
+        this.attributes[name] = value;
+      },
+    });
+  }
+
   const shell = { dataset: {} as Record<string, string>, lang: '' };
   const documentElement = { lang: '' };
   const masthead = { hidden: false };
@@ -89,8 +99,8 @@ async function renderUi(
   const legacyNotice = { hidden: true };
   const legacySettings = { textContent: '' };
   const legacyAcknowledge = interactiveElement({});
-  const menuDiagnostics = interactiveElement({});
-  const mastheadDiagnostics = interactiveElement({});
+  const menuDiagnostics = labelledElement();
+  const mastheadDiagnostics = labelledElement();
   const menuAdvanced = interactiveElement({});
   const diagnosticsPanel = { hidden: true, scrollIntoView() {} };
   const diagnosticsClose = interactiveElement({ focus() {} });
@@ -168,7 +178,6 @@ async function renderUi(
     },
   };
   const diagnosticsStartAnother = interactiveElement({});
-  const diagnosticsBackgroundAction = interactiveElement({ disabled: false, hidden: true });
   const advancedPanel = { hidden: true, scrollIntoView() {} };
   const advancedClose = interactiveElement({ focus() {} });
   const advancedPolling = interactiveElement({
@@ -236,7 +245,6 @@ async function renderUi(
     'closeAdvanced',
     'closeDiagnostics',
     'dashboardActionsLabel',
-    'diagnosticsBackgroundIssueVisible',
     'menuAdvanced',
     'menuDiagnostics',
     'menuRelogin',
@@ -326,7 +334,6 @@ async function renderUi(
           '[data-diagnostics-export]': diagnosticsExport,
           '[data-diagnostics-result-heading]': diagnosticsResultHeading,
           '[data-diagnostics-start-another]': diagnosticsStartAnother,
-          '[data-diagnostics-background-action]': diagnosticsBackgroundAction,
           '[data-advanced-settings]': advancedPanel,
           '[data-advanced-close]': advancedClose,
           '[data-advanced-polling]': advancedPolling,
@@ -520,6 +527,7 @@ async function renderUi(
     warmUpRemove,
     warmUpRemoveAll,
     menuDiagnostics,
+    mastheadDiagnostics,
     diagnosticsPanel,
     diagnosticsClose,
     diagnosticsWizardPanel,
@@ -559,7 +567,6 @@ async function renderUi(
     diagnosticsExport,
     diagnosticsResultHeading,
     diagnosticsStartAnother,
-    diagnosticsBackgroundAction,
     advancedPanel,
     advancedClose,
     advancedPolling,
@@ -954,7 +961,6 @@ describe('packed plugin', () => {
         'closeAdvanced',
         'closeDiagnostics',
         'dashboardActionsLabel',
-        'diagnosticsBackgroundIssueVisible',
         'menuAdvanced',
         'menuDiagnostics',
         'menuRelogin',
@@ -1014,7 +1020,7 @@ describe('packed plugin', () => {
         'diagnosticsArchiveFields',
         'diagnosticsArchiveMode',
         'diagnosticsArchiveTruncated',
-        'diagnosticsBackgroundActive',
+        'diagnosticsCollectingFinishHere',
         'diagnosticsComplete',
         'diagnosticsControlAction',
         'diagnosticsControlBefore',
@@ -1137,7 +1143,6 @@ describe('packed plugin', () => {
         closeAdvanced: 'Retour aux appareils',
         closeDiagnostics: 'Retour aux appareils',
         dashboardActionsLabel: 'Actions du tableau de bord',
-        diagnosticsBackgroundIssueVisible: 'Le problème d’interface est visible maintenant',
         menuAdvanced: 'Réglages avancés',
         menuDiagnostics: 'Diagnostics de débogage',
         menuRelogin: 'Se reconnecter ou remplacer le compte',
@@ -1390,10 +1395,18 @@ describe('packed plugin', () => {
       await dashboardBackgroundUi.diagnosticsReproduction.dispatch('click');
       expect(dashboardBackgroundUi).toMatchObject({
         diagnosticsPanel: { hidden: true },
-        diagnosticsBackgroundAction: { hidden: false },
-        diagnosticsGuidance: { hidden: true },
-        diagnosticsActions: { hidden: true },
+        diagnosticsGuidance: { hidden: false },
+        diagnosticsActions: { hidden: false },
+        diagnosticsReproduction: { disabled: false },
         dashboardState: { hidden: false },
+        menuDiagnostics: {
+          dataset: { collecting: 'true' },
+          attributes: { 'aria-label': catalogs['i18n/en.json'].diagnosticsCollectingFinishHere },
+        },
+        mastheadDiagnostics: {
+          dataset: { collecting: 'true' },
+          attributes: { 'aria-label': catalogs['i18n/en.json'].diagnosticsCollectingFinishHere },
+        },
       });
       expect(dashboardBackgroundUi.requests).toContainEqual({
         path: '/diagnostics/ui-event',
@@ -1406,25 +1419,12 @@ describe('packed plugin', () => {
       await dashboardBackgroundUi.dashboardAuthenticate.dispatch('click');
       expect(dashboardBackgroundUi).toMatchObject({
         dashboard: { hidden: true },
-        diagnosticsBackgroundAction: { hidden: false },
+        masthead: { hidden: false },
         setupContent: { hidden: false },
       });
       expect(dashboardBackgroundUi.requests).toContainEqual({
         path: '/diagnostics/ui-event',
         body: { event: 'authentication-opened' },
-      });
-      await dashboardBackgroundUi.diagnosticsBackgroundAction.dispatch('click');
-      expect(dashboardBackgroundUi.requests).toContainEqual({
-        path: '/diagnostics/ui-event',
-        body: { event: 'issue-observed' },
-      });
-      expect(dashboardBackgroundUi).toMatchObject({
-        dashboard: { hidden: true },
-        diagnosticsPanel: { hidden: false },
-        diagnosticsBackgroundAction: { disabled: false, hidden: true },
-        diagnosticsResult: { hidden: false },
-        diagnosticsResultHeading: { focused: true },
-        setupContent: { hidden: true },
       });
 
       const reloadedDashboardBackgroundUi = await renderUi(
@@ -1444,9 +1444,33 @@ describe('packed plugin', () => {
         },
       );
       expect(reloadedDashboardBackgroundUi).toMatchObject({
-        diagnosticsBackgroundAction: { hidden: false },
-        diagnosticsGuidance: { hidden: true },
-        diagnosticsActions: { hidden: true },
+        diagnosticsPanel: { hidden: true },
+        diagnosticsGuidance: { hidden: false },
+        diagnosticsActions: { hidden: false },
+        menuDiagnostics: { dataset: { collecting: 'true' } },
+      });
+      await reloadedDashboardBackgroundUi.menuDiagnostics.dispatch('click');
+      expect(reloadedDashboardBackgroundUi).toMatchObject({
+        diagnosticsPanel: { hidden: false },
+        diagnosticsActions: { hidden: false },
+        diagnosticsReproduction: {
+          disabled: false,
+          textContent: catalogs['i18n/en.json'].diagnosticsIntermittentIssueHappened,
+        },
+      });
+      await reloadedDashboardBackgroundUi.diagnosticsReproduction.dispatch('click');
+      expect(reloadedDashboardBackgroundUi).toMatchObject({
+        diagnosticsPanel: { hidden: false },
+        diagnosticsResult: { hidden: false },
+        diagnosticsResultHeading: { focused: true },
+        menuDiagnostics: {
+          dataset: {},
+          attributes: { 'aria-label': catalogs['i18n/en.json'].menuDiagnostics },
+        },
+      });
+      expect(reloadedDashboardBackgroundUi.requests).toContainEqual({
+        path: '/diagnostics/reproduction/end',
+        body: undefined,
       });
 
       const completedDiagnosticsUi = await renderUi(

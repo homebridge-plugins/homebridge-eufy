@@ -111,6 +111,14 @@ Device-tile product artwork is synchronized from the SDK documentation gallery b
 at runtime. Exact model images use the SDK gallery's product-line and model-code names; an unavailable
 image reveals the tile's local category fallback.
 
+The custom UI shell owns no viewport. Homebridge hosts it in an iframe sized to the shell's natural
+height, so the shell has no scrollport of its own and the host modal scrolls instead. A viewport-anchored
+control therefore anchors to the iframe's own box rather than to what the user can see, and `100vw` and
+`100vh` resolve against the iframe rather than the host viewport. Every control is anchored in flow, and
+an affordance that must remain findable during a long-running task is a state on a control the screen
+already has rather than a floating overlay. No in-iframe placement can be reachable at an arbitrary host
+scroll position, so nothing in the shell claims to be.
+
 Only `runtime/sdk-client.ts` and `ui/server.ts` may construct a concrete SDK client. Other modules may
 consume public typed SDK capabilities relevant to their policy, but may not import SDK transports,
 private package paths, or the client facade.

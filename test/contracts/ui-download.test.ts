@@ -20,7 +20,18 @@ describe('custom UI downloads', () => {
     expect(stylesheet).toContain('.dashboard-actions');
     expect(stylesheet).toMatch(/\.shell\[data-theme=['"]dark['"]\] \.dashboard-action img/);
     expect(stylesheet).toMatch(/\.shell\[data-theme=['"]dark['"]\] \.dashboard-page-icon/);
-    expect(stylesheet).toMatch(/\.shell\[data-theme=['"]dark['"]\] \.diagnostics-background-action img/);
+  });
+
+  /** Every control is anchored in the shell's own flow, and no length resolves against a viewport the iframe does not own. */
+  it('anchors every control in flow rather than to a viewport the iframe does not own', () => {
+    const document = readFileSync(new URL('../../homebridge-ui/public/index.html', import.meta.url), 'utf8');
+    const stylesheet = readFileSync(new URL('../../homebridge-ui/public/app.css', import.meta.url), 'utf8');
+
+    expect(stylesheet).not.toMatch(/position:\s*(fixed|sticky)/);
+    expect(stylesheet).not.toContain('100vw');
+    expect(stylesheet).not.toContain('100vh');
+    expect(document).not.toContain('data-diagnostics-background-action');
+    expect(document).not.toContain('diagnosticsBackgroundIssueVisible');
   });
 
   it('uses a CSP-compatible data link for encrypted support archives', () => {
@@ -67,7 +78,5 @@ describe('custom UI downloads', () => {
       document.indexOf('data-diagnostics-frequency-answer="now"'),
     );
     expect(document).toContain('src="js/profile-wizard.js"');
-    expect(document).toMatch(/data-diagnostics-background-action[\s\S]*?hidden/);
-    expect(document).toContain('data-i18n-aria-label="diagnosticsBackgroundIssueVisible"');
   });
 });

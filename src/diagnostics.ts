@@ -249,7 +249,6 @@ const DIAGNOSTICS_UI_EVENTS = [
   'dashboard-opened',
   'authentication-opened',
   'request-failed',
-  'issue-observed',
 ] as const;
 
 export type DiagnosticsUiEvent = (typeof DIAGNOSTICS_UI_EVENTS)[number];

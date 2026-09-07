@@ -131,14 +131,15 @@ describe('custom UI diagnostics input', () => {
   });
 
   it('accepts only one allowlisted UI event field', () => {
-    expect(parseDiagnosticsUiEvent({ event: 'issue-observed' })).toBe('issue-observed');
+    expect(parseDiagnosticsUiEvent({ event: 'dashboard-opened' })).toBe('dashboard-opened');
 
     for (const value of [
       undefined,
       [],
       {},
       { event: 'future-event' },
-      { event: 'issue-observed', detail: 'must not cross the boundary' },
+      { event: 'issue-observed' },
+      { event: 'dashboard-opened', detail: 'must not cross the boundary' },
     ]) {
       expect(() => parseDiagnosticsUiEvent(value)).toThrow('Invalid diagnostics UI event');
     }
