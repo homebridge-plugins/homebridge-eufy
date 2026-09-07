@@ -101,6 +101,7 @@ describe('source architecture', () => {
     for (const [name, target] of [
       ['AGENTS.md', 'CODING_STANDARDS.md'],
       ['CLAUDE.md', 'CODING_STANDARDS.md'],
+      ['.github/copilot-instructions.md', '../CODING_STANDARDS.md'],
     ] as const) {
       expect(lstatSync(resolve(repository, name)).isSymbolicLink(), name).toBe(true);
       expect(readlinkSync(resolve(repository, name)), name).toBe(target);

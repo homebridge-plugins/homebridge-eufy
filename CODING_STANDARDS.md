@@ -1,7 +1,8 @@
 # Code practice
 
-The rules for writing code in this repository. They apply to everyone. `AGENTS.md` is a symlink to this
-file, so AI coding tools that look for that name load these same rules.
+The rules for writing code in this repository. They apply to everyone. This is the only file to edit:
+`AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md` are symlinks to it, so every name an AI
+coding tool searches for loads these same rules.
 
 Setup, the development workflow, and the pull request process are in
 [CONTRIBUTING.md](./CONTRIBUTING.md).
