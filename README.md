@@ -22,7 +22,8 @@
 
 > [!IMPORTANT]
 > **V5 is a beta and not yet a replacement for the stable V4 plugin.** Every capability area is
-> implemented and covered by the contract suite; qualification on real hardware is the remaining step.
+> implemented, covered by the contract suite, and exercised against a real device fleet. What remains is
+> qualifying one immutable artifact and approving the public beta.
 >
 > **V5 does not adopt V4 HomeKit accessories.** It registers its own, so expect to remove the V4
 > accessories and reassign rooms, names, and automations once. A V4 configuration block is not loaded
@@ -92,13 +93,18 @@ temporary authentication flow, and the runtime never falls back to interactive l
 | Security system arming, locks, sirens, and lights | Implemented |
 | Battery, charging, and low-battery enrichment | Implemented |
 | Guided diagnostics and redacted support archives | Implemented |
-| Qualification on real hardware, then public beta promotion | Remaining |
+| Continuous validation against a real device fleet | Ongoing |
+| Qualification of an immutable pilot artifact, then public beta approval | Remaining |
 
 Support is capability-led rather than model-led, so capability evidence decides coverage instead of product
 naming, and a newly recognized model that exposes an already-adapted capability works without an allowlist.
 Of the 303 rows in the coverage matrix, 57 have an admitted HomeKit adapter, 230 remain diagnostic-only, and
 16 are blocked by a declared SDK gap. Recognized devices therefore appear in the dashboard before, or
 without, an explicit HomeKit adapter for their primary purpose.
+
+Device behaviour is grounded in measurement rather than inference: [`docs/architecture.md`](./docs/architecture.md)
+records the observed timings and outcomes behind the live, recording, and control decisions, and
+[`scripts/`](./scripts/README.md) holds the checks that produce them against real cameras.
 
 ## Documentation
 
