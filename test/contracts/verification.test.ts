@@ -92,11 +92,25 @@ describe('verification gate', () => {
   });
 
   /**
+   * Exactly one guard binds the publish job to the repository allowed to publish, and it names that
+   * repository exactly. A guard that cannot match skips the job while the run still reports success, so the
+   * name is a contract here rather than a discovery at the registry.
+   */
+  it('binds publication to this repository by name', () => {
+    const guards = [...workflow('release').matchAll(/github\.repository == '(?<repository>[^']+)'/g)].map(
+      (match) => match.groups!.repository,
+    );
+
+    expect(guards).toEqual(['homebridge-plugins/homebridge-eufy']);
+  });
+
+  /**
    * Publication installs cleanly, runs the gate at the exact commit it publishes before reaching the
    * registry, and runs it again with release qualification through `prepublishOnly`, which is the only thing
    * a publication made outside the workflow passes through. Qualification is preceded by the build it scans
    * and followed by the suite, so the packed artifact exists when its provenance is read and a linked working
-   * copy is refused before it reaches the contracts that excuse themselves for it.
+   * copy is refused before it reaches the contracts that excuse themselves for it. The publish command
+   * attaches provenance, which is a property of the artifact consumers verify and not of this run.
    */
   it('verifies at the publication commit and qualifies provenance during publication', () => {
     const release = workflow('release');
@@ -105,7 +119,7 @@ describe('verification gate', () => {
     expect(release).toContain('run: npm ci --ignore-scripts');
     expect(release).toContain('run: npm rebuild ffmpeg-for-homebridge');
     expect(release).toContain('run: npm run verify');
-    expect(release).toMatch(/run: npm publish --tag/);
+    expect(release).toMatch(/run: npm publish --tag .+ --provenance --access public$/m);
     expect(release).not.toMatch(/npm publish.*--ignore-scripts/);
   });
 });

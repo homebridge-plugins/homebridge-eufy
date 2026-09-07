@@ -24,7 +24,7 @@ concurrency:
 jobs:
   publish:
     if: >-
-      github.repository == 'homebridge-plugins/homebridge-eufy-security'
+      github.repository == 'homebridge-plugins/homebridge-eufy'
       && !(github.event_name == 'release' && github.event.release.prerelease)
       && github.ref != 'refs/heads/beta-5.0.0'
     runs-on: ubuntu-latest
