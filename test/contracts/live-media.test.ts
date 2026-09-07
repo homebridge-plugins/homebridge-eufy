@@ -695,6 +695,87 @@ describe('live media adaptation', () => {
   });
 
   /**
+   * A live adaptation that stops accepting the frames it is still being given has ended what it was serving,
+   * and says so on the pipe rather than in an exit status. It is reported in its own right, because it carries
+   * no exit status of its own and the exit that follows is the one this session then asked for.
+   */
+  it('reports a live adaptation that stops accepting the media the source is still producing', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac', data: Buffer.alloc(4) });
+    await settle();
+    session.children[0]!.stderr.push('progress=continue\nav_interleaved_write_frame(): Broken pipe\n');
+    session.children[1]!.stderr.push('Audio encoding failed\n');
+    await settle();
+
+    session.children[1]!.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    session.children[0]!.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    await settle();
+
+    expect(session.outcomes).toEqual([
+      { outcome: 'streaming' },
+      { outcome: 'failed', reason: 'adaptation-failed', stage: 'first-adapted-output' },
+    ]);
+    expect(session.notices).toEqual([
+      { role: 'live-video', event: 'started' },
+      { role: 'live-audio', event: 'started' },
+      { role: 'live-audio', event: 'input-failed', stderr: ['Audio encoding failed'] },
+      { role: 'live-video', event: 'input-failed', stderr: ['av_interleaved_write_frame(): Broken pipe'] },
+    ]);
+  });
+
+  /**
+   * An adaptation this session stopped on purpose is not one that refused media: a codec change replaces the
+   * audio process, and the input it destroys can raise on a write already in flight.
+   */
+  it('does not report an input this session deliberately destroyed as one that stopped accepting media', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac', data: Buffer.alloc(4) });
+    await settle();
+    const replaced = session.children[1]!;
+    session.stream.audio({ codec: 'opus', data: Buffer.alloc(4) });
+    await settle();
+
+    replaced.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    await settle();
+
+    expect(session.notices).toEqual([
+      { role: 'live-video', event: 'started' },
+      { role: 'live-audio', event: 'started' },
+      { role: 'live-audio', event: 'started' },
+    ]);
+  });
+
+  /**
+   * An audio adaptation whose exit has already been reported is accounted for by that exit, so the input error
+   * a write still in flight raises afterwards adds no second account of the same death. Only the audio process
+   * this session is currently writing to can be one that stopped accepting media.
+   */
+  it('does not report an input error behind an audio exit already accounted for', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac', data: Buffer.alloc(4) });
+    await settle();
+    session.children[1]!.stderr.push('Audio encoding failed\n');
+    await settle();
+    session.children[1]!.emit('exit', 1, null);
+    await settle();
+
+    session.children[1]!.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    await settle();
+
+    expect(session.notices).toEqual([
+      { role: 'live-video', event: 'started' },
+      { role: 'live-audio', event: 'started' },
+      { role: 'live-audio', event: 'exited-before-output', code: 1, stderr: ['Audio encoding failed'] },
+    ]);
+  });
+
+  /**
    * A profile that declares FFmpeg output has to receive some for a session that worked, not only for one
    * that failed: an unwatchable live view is a working session whose adaptation warned its way through it.
    * A process that ended as the session intended is therefore reported for what it wrote, with no reason

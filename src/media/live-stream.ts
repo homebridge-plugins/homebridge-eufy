@@ -549,6 +549,7 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
         });
         child.stdin.on('error', () => {
           if (!stoppingProcesses.has(child)) {
+            reportAdaptation('live-video', 'input-failed', stderr);
             failVideo('adaptation-failed');
           }
         });
@@ -609,6 +610,9 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
         };
         child.stdin.on('close', () => releaseAdaptation(child.stdin));
         child.stdin.on('error', () => {
+          if (!stoppingProcesses.has(child) && audioProcess === child) {
+            reportAdaptation('live-audio', 'input-failed', stderr);
+          }
           stopProcess(child);
           clearChild();
         });
