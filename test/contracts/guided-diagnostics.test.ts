@@ -909,7 +909,7 @@ describe('guided diagnostics session', () => {
           scope: 'sdk',
           level: 'debug',
           subsystem: 'p2p',
-          event: 'sdk-diagnostic',
+          event: 'session-idle',
           timestamp: new Date(at).toISOString(),
         });
       const bytesPerLine = Buffer.byteLength(line(startedAt)) + 1;
@@ -994,7 +994,7 @@ describe('guided diagnostics session', () => {
         scope: 'sdk',
         level: 'debug',
         subsystem: 'p2p',
-        event: 'sdk-diagnostic',
+        event: 'session-idle',
         timestamp: at(10_000 + index * 1_000),
       });
       const noisyLines = Math.ceil((17 * 1024 * 1024) / (Buffer.byteLength(JSON.stringify(noisy(0))) + 1));

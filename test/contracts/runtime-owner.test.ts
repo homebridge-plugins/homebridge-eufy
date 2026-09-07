@@ -121,11 +121,11 @@ describe('persisted runtime owner', () => {
     const logger = createSdkLogger({ debug, info: vi.fn(), warn: vi.fn(), error })!;
 
     logger.debug(
-      '[mega] device T8000P0000000000 at 192.0.2.1 belongs to account@example.invalid',
+      '[mega] connection error for device T8000P0000000000 at 192.0.2.1 belonging to account@example.invalid',
       Object.assign(new Error('must-not-appear'), { name: 'SensitiveDeviceName' }),
       { token: 'must-not-appear' },
     );
-    logger.error('synthetic failure', 'must-not-appear');
+    logger.error('synthetic upstream error', 'must-not-appear');
 
     expect(debug).toHaveBeenCalledTimes(2);
     expect(debug.mock.calls[0]?.[0]).toContain('"subsystem":"mega"');

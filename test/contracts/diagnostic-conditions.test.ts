@@ -297,7 +297,7 @@ describe('diagnostic conditions', () => {
       debug: (message) => structured.push(message),
     })!;
     sdk.error(
-      `[p2p] ${prohibited.join(' ')}`,
+      `[p2p] upstream error ${prohibited.join(' ')}`,
       { account: prohibited[0], token: prohibited[2], capture: prohibited[7] },
       ...Array.from({ length: 20 }, () => prohibited[6]),
     );
@@ -314,15 +314,13 @@ describe('diagnostic conditions', () => {
   });
 
   /**
-   * A warm-up is not a retry, and nothing else reached the bucket that said it was.
+   * A warm-up is not a retry.
    *
-   * The SDK's warm-up line reads `warming (retry=2000ms deadline=20000ms)`. A bucket matching `retry` caught
-   * it, while `connection-retrying` already matched `retrying` higher up — so that bucket could only ever be
-   * fed by warm-ups, and every record it produced was false. The records carry no text, so nothing in a log
-   * could contradict a station that had never rebuilt anything: a live open of four cameras read as four
-   * session rebuilds.
+   * The SDK's warm-up line reads `warming (retry=2000ms deadline=20000ms)`, and the trace vocabulary carries
+   * the phase already. Classified from its text it read as a session rebuild, so a live open of four cameras
+   * read as four rebuilds against a station that had rebuilt nothing.
    */
-  it('does not call a warm-up a retry, and keeps a real one in its own bucket', () => {
+  it('does not call a warm-up a retry, and classifies a message that says it is retrying', () => {
     const debug = vi.fn();
     const sdk = createSdkLogger({ debug })!;
 
@@ -330,8 +328,35 @@ describe('diagnostic conditions', () => {
     sdk.debug('[push] synthetic-cause — retrying (attempt 2)');
 
     const events = debug.mock.calls.map(([message]) => JSON.parse(message).event);
-    expect(events[0], 'a warm-up is its own structured phase').not.toContain('retry');
-    expect(events[1], 'a message that says it is retrying is one').toBe('connection-retrying');
+    expect(events, 'a warm-up the trace vocabulary carries is not classified from its text').toEqual([
+      'connection-retrying',
+    ]);
+  });
+
+  /**
+   * A message no class matches is not recorded at all, at any level, while a classified one still is.
+   *
+   * The classification is the whole content of an SDK record, because the message text crosses a trust
+   * boundary and is never retained. Two measured rotations of a running host held 237,820 fall-through
+   * records against 717 classified ones, none of them above `debug`, each stating only that a subsystem had
+   * spoken.
+   */
+  it('records nothing for an SDK message no class matches', () => {
+    const debug = vi.fn();
+    const sdk = createSdkLogger({ debug, error: vi.fn(), info: vi.fn(), warn: vi.fn() })!;
+
+    sdk.debug('[p2p] T8000P0000000000 <<< 192.0.2.10:32100 header=f1d0 len=1024');
+    sdk.debug('[p2p] T8000P0000000000 sendLookups: cloud -> 192.0.2.10:32100 self=192.0.2.20:41000');
+    sdk.debug('[p2p] T8000P0000000000 beginCheckCam -> 192.0.2.10:32100 (+/-3)');
+    sdk.warn('[p2p] T8000P0000000000 path silent for 15000ms', new Error('synthetic-cause'));
+
+    expect(
+      debug,
+      'a record whose only content is its class carries none when the class is absent',
+    ).not.toHaveBeenCalled();
+
+    sdk.debug('[session synthetic-parent] connected');
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message).event)).toEqual(['connection-opened']);
   });
 
   it('classifies current SDK session messages without retaining session identity', () => {
@@ -477,7 +502,6 @@ describe('diagnostic conditions', () => {
       ['live-start-trace', 7599, undefined],
       ['live-start-trace', 2000, undefined],
       ['live-start-trace', undefined, 209],
-      ['sdk-diagnostic', undefined, undefined],
     ]);
     expect(records[1]!.deadlineMs).toBe(20000);
   });

@@ -219,7 +219,6 @@ const SDK_EVENT_KEYS = new Set([
   'observation-invalid',
   'protocol-command',
   'protocol-unhandled',
-  'sdk-diagnostic',
   'session-connecting',
   'session-idle',
   'session-resumed',
@@ -1308,7 +1307,8 @@ export function createDiagnosticLogger(
   };
 }
 
-function classifySdkEvent(message: string): string {
+/** The class an SDK message belongs to, or nothing when its text matches none of them. */
+function classifySdkEvent(message: string): string | undefined {
   const normalized = message.toLowerCase();
   if (normalized.includes('restored persisted session')) return 'session-restored';
   if (normalized.includes('retrying') || normalized.includes('reconnecting')) return 'connection-retrying';
@@ -1356,7 +1356,7 @@ function classifySdkEvent(message: string): string {
     return 'media-warning';
   }
   if (normalized.includes('[eufy]')) return 'client-warning';
-  return 'sdk-diagnostic';
+  return undefined;
 }
 
 /** A non-negative integer, or nothing — a byte count, a duration, a tally of accessories. */
@@ -1490,6 +1490,9 @@ function opaquePullHandle(value: unknown): string | undefined {
  * stderr under an `[ffmpeg]` prefix. That is the same class of evidence as this plugin's own adaptation
  * output, so it is recorded as such, redacted line by line, rather than dropped as SDK chatter: a snapshot
  * that never decodes has no other account anywhere of why.
+ *
+ * Any other message is recorded only when {@link classifySdkEvent} names a class for it, because the class is
+ * all a record carries.
  */
 export function createSdkLogger(target: Partial<PlatformLogger> | undefined): Logger | undefined {
   if (!target?.debug) {
@@ -1505,6 +1508,8 @@ export function createSdkLogger(target: Partial<PlatformLogger> | undefined): Lo
       const stderr = message.slice(message.indexOf(']') + 1).split(/\r?\n/);
       return sanitizeAdaptationNotice({ role: 'sdk', event: 'output', stderr }, 'debug');
     }
+    const event = classifySdkEvent(message);
+    if (!event) return undefined;
     const subsystemAliases: Readonly<Record<string, string>> = {
       eufy: 'mega',
       fcm: 'push',
@@ -1533,7 +1538,7 @@ export function createSdkLogger(target: Partial<PlatformLogger> | undefined): Lo
     return {
       scope: 'sdk',
       subsystem,
-      event: classifySdkEvent(message),
+      event,
       ...(details.length ? { details } : {}),
       ...(args.length > MAX_SDK_DETAILS ? { detailsTruncated: true } : {}),
     };
