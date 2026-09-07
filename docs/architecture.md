@@ -821,6 +821,15 @@ source has ended and the adaptation's input is closed, the remaining fragments a
 adaptation exits and the final one is flagged. The common case, where the controller closes the stream
 first, pays no latency at all.
 
+A recording whose source ends with nothing left for the adaptation to flush therefore ends with no packet
+flagged, and is cancelled rather than acknowledged. The flag rides on the bytes of the packet carrying it,
+so packets already delivered are beyond revision and a zero-length final packet carries no event at all;
+buying the flag instead means holding the newest fragment back for the whole recording, which costs every
+recording the controller closes first the final fragment of media it would otherwise have received. That
+price is refused, so the ending is stated for what it is: an explicit cancellation closes the stream at
+once, where a stream neither acknowledged nor cancelled remains the camera's one recording stream until
+the controller's force-close window elapses and every trigger inside that window is refused as busy.
+
 Recording audio is withheld rather than substituted. HomeKit's own recording-audio state starts off, a
 camera's audio can be turned off by preference, a controller can select a codec the camera never
 advertised, and a source can carry no audio track at all. In every one of those cases the output carries

@@ -421,6 +421,27 @@ describe('recording media adaptation', () => {
     expect(session.consumed.failed()).toBe(false);
   });
 
+  /**
+   * A recording whose adaptation had already written everything before its source ended completes with no
+   * unit marked last, because finality takes one unit of lookahead only where it is free.
+   */
+  it('completes a recording whose adaptation had nothing left to flush without marking a last unit', async () => {
+    const session = recordingSession();
+    await settle();
+    const child = session.children[0];
+    child.stdout.write(Buffer.concat([INIT_SEGMENT, mediaFragment(0x01)]));
+    await settle();
+    session.source.complete();
+    await settle();
+
+    child.stdout.end();
+    child.emit('exit', 0, null);
+    await session.consumed.iteration;
+    expect(session.consumed.units.map((unit) => unit.last)).toEqual([false, false]);
+    expect(session.consumed.failed()).toBe(false);
+    expect(session.consumed.finished()).toBe(true);
+  });
+
   it('ends a recording whose adaptation never flushes what the ended source already gave it', async () => {
     vi.useFakeTimers();
     try {

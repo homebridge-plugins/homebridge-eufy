@@ -3607,13 +3607,15 @@ function syntheticRecording() {
   let waiting:
     { resolve: (result: IteratorResult<RecordedFragment>) => void; reject: (e: unknown) => void } | undefined;
   let ended = false;
-  const stop = vi.fn(() => {
+  const complete = (): void => {
     ended = true;
     waiting?.resolve({ done: true, value: undefined });
     waiting = undefined;
-  });
+  };
+  const stop = vi.fn(complete);
   return {
     stop,
+    complete,
     push(fragment: RecordedFragment): void {
       if (waiting) {
         const resolve = waiting.resolve;
@@ -4318,6 +4320,30 @@ describe('camera recording bundle adapter', () => {
     expect(stream.failed()).toBe(false);
   });
 
+  /**
+   * A recording whose media ended while HomeKit still held the stream open is closed as cancelled, so the
+   * camera's one recording stream is released for the next trigger instead of being force-closed.
+   */
+  it('closes a recording that ended with no unit marked last as cancelled', async () => {
+    const media = recordingMedia();
+    const connection = hapConnection();
+    const { controller, delegate } = attachRecordingCamera('Synthetic unmarked recording camera', {
+      recordingMedia: media.adapter,
+    });
+    await selectRecordingConfiguration(controller, connection);
+    const stream = consumeRecordingStream(delegate, 13);
+    await new Promise((resolve) => setImmediate(resolve));
+    media.sessions[0].push({ data: Buffer.from('init'), last: false });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    media.sessions[0].complete();
+    await stream.iteration;
+
+    expect(stream.packets).toEqual([{ data: Buffer.from('init'), isLast: false }]);
+    expect(stream.failure()).toBeInstanceOf(HDSProtocolError);
+    expect((stream.failure() as HDSProtocolError).reason).toBe(HDSProtocolSpecificErrorReason.CANCELLED);
+  });
+
   it('stops a recording whose abort signal fires', async () => {
     const media = recordingMedia();
     const connection = hapConnection();
@@ -4331,6 +4357,7 @@ describe('camera recording bundle adapter', () => {
     abort.abort();
     await stream.iteration;
     expect(media.sessions[0].stop).toHaveBeenCalled();
+    expect(stream.failed()).toBe(false);
   });
 
   it('refuses a recording while the admitted enabled observation says the camera is disabled', async () => {
@@ -4623,6 +4650,7 @@ describe('camera recording bundle adapter', () => {
     attach(new Map());
     await running.iteration;
     expect(media.sessions[0].stop).toHaveBeenCalled();
+    expect((running.failure() as HDSProtocolError).reason).toBe(HDSProtocolSpecificErrorReason.CANCELLED);
 
     const refused = consumeRecordingStream(delegate, 52);
     await refused.iteration;

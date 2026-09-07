@@ -1697,6 +1697,7 @@ interface RecordingCameraBinding {
 class RecordingCameraDelegate implements CameraRecordingDelegate {
   recordingManagement?: CameraController['recordingManagement'];
   private configuration?: CameraRecordingConfiguration;
+  /** Every recording being served, held under its stream for as long as its consumer has not closed it. */
   private readonly streams = new Map<number, AdaptedRecording>();
   private refused = false;
 
@@ -1739,6 +1740,10 @@ class RecordingCameraDelegate implements CameraRecordingDelegate {
    * recording rather than to this one. Cancellation arrives three ways — an aborted signal, a closed
    * stream, or a consumer that stops iterating — and every one of them reaches the same single stop, so
    * the SDK handle and the adaptation are released once however the recording ended.
+   *
+   * A recording that ends while its consumer still holds the stream open ended without a unit marked
+   * last, and is cancelled rather than left for that consumer's force-close, which holds the camera's one
+   * recording stream and refuses every trigger until it elapses.
    */
   async *handleRecordingStreamRequest(streamId: number, signal?: AbortSignal): AsyncGenerator<RecordingPacket> {
     const binding = this.binding;
@@ -1772,7 +1777,7 @@ class RecordingCameraDelegate implements CameraRecordingDelegate {
       onOutcome: (outcome) => binding.reportRecording(outcome),
     });
     this.streams.set(streamId, recording);
-    const abort = (): void => recording.stop();
+    const abort = (): void => this.closeRecordingStream(streamId);
     signal?.addEventListener('abort', abort, { once: true });
     /**
      * A recording holds the station its camera belongs to, so a still elsewhere on that base stands aside and a
@@ -1793,6 +1798,9 @@ class RecordingCameraDelegate implements CameraRecordingDelegate {
           return;
         }
       }
+      if (this.streams.get(streamId) === recording) {
+        throw new this.hap.HDSProtocolError(this.hap.HDSProtocolSpecificErrorReason.CANCELLED);
+      }
     } finally {
       signal?.removeEventListener('abort', abort);
       recording.stop();
@@ -1810,9 +1818,15 @@ class RecordingCameraDelegate implements CameraRecordingDelegate {
     this.streams.delete(streamId);
   }
 
+  /**
+   * Ends every recording this delegate is serving, because the binding that opened them is gone.
+   *
+   * Each recording is stopped without deregistering its stream, so its ending reaches its controller as
+   * the cancellation it is rather than as a close that controller asked for.
+   */
   stop(): void {
-    for (const streamId of [...this.streams.keys()]) {
-      this.closeRecordingStream(streamId);
+    for (const recording of this.streams.values()) {
+      recording.stop();
     }
   }
 
