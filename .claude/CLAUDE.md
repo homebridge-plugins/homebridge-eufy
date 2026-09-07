@@ -1,1 +1,0 @@
-../CODING_STANDARDS.md

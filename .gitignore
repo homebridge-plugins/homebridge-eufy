@@ -143,3 +143,6 @@ diagnostics-*
 keys/
 
 .claude-octopus
+
+# Agent tooling writes its own local state here; the rules live in CODING_STANDARDS.md
+.claude/
