@@ -5,7 +5,8 @@ and debug toggles are not imported.
 
 ::: warning Breaking V5 platform identity
 V5 registers only `HomebridgeEufy`. A V4 configuration block using `EufySecurity` is not loaded or
-migrated; create a fresh V5 block through the custom UI.
+migrated; create a fresh V5 block through the custom UI. V4 HomeKit accessories are not adopted either:
+V5 creates its own, so expect to remove the V4 accessories and reassign rooms, names, and automations once.
 :::
 
 | Key                           | Type              | Default           | Purpose                                       |

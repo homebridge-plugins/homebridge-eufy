@@ -6,7 +6,7 @@ Install through the Homebridge UI by searching for **Homebridge Eufy**, or insta
 package:
 
 ```bash
-npm install -g @homebridge-plugins/homebridge-eufy-security
+npm install -g @homebridge-plugins/homebridge-eufy
 ```
 
 ## V5 closed beta

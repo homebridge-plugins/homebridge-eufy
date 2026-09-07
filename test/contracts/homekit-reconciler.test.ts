@@ -442,17 +442,6 @@ function recordingApi() {
 }
 
 describe('HomeKit registry reconciliation', () => {
-  const repository = fileURLToPath(new URL('../..', import.meta.url));
-  const migrationFixture = JSON.parse(readFileSync(`${repository}/test/fixtures/v4-migration.json`, 'utf8')) as {
-    cachedAccessory: {
-      context: PlatformAccessory['context'];
-      platform: string;
-      plugin: string;
-      uuid: string;
-      uuidInput: string;
-    };
-  };
-
   it('creates and updates one serial-based contact accessory with stable semantic services', () => {
     const source = new RegistrySource();
     const recording = recordingApi();
@@ -1008,30 +997,6 @@ describe('HomeKit registry reconciliation', () => {
     source.publish(registryView(1, new Map(), snapshot()));
 
     expect(recording.unregisterPlatformAccessories).toHaveBeenCalledWith([cached]);
-  });
-
-  it('upgrades one matched V4 cached accessory without duplicate or orphaned ownership', () => {
-    const source = new RegistrySource();
-    const recording = recordingApi();
-    const fixture = migrationFixture.cachedAccessory;
-    const serial = fixture.context.device.uniqueId as string;
-    const cached = recording.api.createAccessory('Legacy contact', fixture.uuid);
-    cached.context = structuredClone(fixture.context);
-    new HomeKitReconciler(source, recording.api, vi.fn(), [cached]).start();
-
-    source.publish(registryView(1, new Map([[serial, contactDevice(false)]]), snapshot(contactManifest(serial))));
-
-    expect(fixture.plugin).toBe('@homebridge-plugins/homebridge-eufy-security');
-    expect(fixture.platform).toBe('EufySecurity');
-    expect(fixture.uuidInput).toBe(`d1_${serial}`);
-    expect(uuid.generate(fixture.uuidInput)).toBe(fixture.uuid);
-    expect(recording.registerPlatformAccessories).not.toHaveBeenCalled();
-    expect(recording.unregisterPlatformAccessories).not.toHaveBeenCalled();
-    expect(recording.updatePlatformAccessories).toHaveBeenCalledExactlyOnceWith([cached]);
-    expect(cached.context).toMatchObject({
-      device: fixture.context.device,
-      homebridgeEufy: { version: 1, serial },
-    });
   });
 
   it('clears adapter diagnostics when a complete snapshot withdraws the device', () => {

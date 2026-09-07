@@ -27,9 +27,9 @@ const OTHER_COMMIT = '0d9c8b7a6f5e4d3c2b1a0d9c8b7a6f5e4d3c2b1a';
 /** Facts a run measures for itself, shaped as `measure()` reports them for a clean checkout. */
 const measured = (overrides: Record<string, unknown> = {}) => ({
   clean: true,
-  plugin: { name: '@homebridge-plugins/homebridge-eufy-security', version: '5.0.0-beta.0', commit: COMMIT },
+  plugin: { name: '@homebridge-plugins/homebridge-eufy', version: '5.0.0-beta.0', commit: COMMIT },
   package: {
-    filename: 'homebridge-plugins-homebridge-eufy-security-5.0.0-beta.0.tgz',
+    filename: 'homebridge-plugins-homebridge-eufy-5.0.0-beta.0.tgz',
     integrity: `sha512-${'A'.repeat(86)}==`,
     entryCount: 265,
     unpackedSize: 13_620_076,
@@ -416,7 +416,7 @@ describe('acceptance evidence', () => {
     const facts = measure(repository) as unknown as Record<string, Record<string, unknown>>;
 
     expect(typeof facts.clean).toBe('boolean');
-    expect(facts.plugin!.name).toBe('@homebridge-plugins/homebridge-eufy-security');
+    expect(facts.plugin!.name).toBe('@homebridge-plugins/homebridge-eufy');
     expect(facts.plugin!.commit).toMatch(/^[0-9a-f]{40}$/);
     expect(facts.package!.integrity).toMatch(/^sha512-/);
     expect(facts.package!.entryCount).toBeGreaterThan(0);
