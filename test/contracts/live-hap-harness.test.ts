@@ -706,6 +706,30 @@ describe('coded fidelity of one measured window', () => {
   });
 });
 
+/**
+ * A live session refreshes every two negotiated seconds, which nothing negotiates, so the run judges the
+ * cadence the live path codes: coded frames per keyframe within three negotiated seconds' worth.
+ *
+ * The bound carries the slack a real session needs and no more. A session whose first refresh is not its first
+ * coded frame still passes, and an interval that doubled would not. A session reporting one keyframe is not
+ * judged on cadence at all, because one refresh establishes no interval.
+ */
+describe('measured refresh cadence', () => {
+  const CADENCE = 'window refreshed inside the live keyframe interval';
+  const session = (frames: number, keyframes: number) => ({ ...measuredVideo([NEGOTIATED]), frames, keyframes });
+
+  it('passes the interval the live path codes and fails a doubled one', () => {
+    expect(judged([NEGOTIATED], SELECTION, { session: session(300, 5) }).passed).toContain(CADENCE);
+    expect(judged([NEGOTIATED], SELECTION, { session: session(480, 4) }).failed).toEqual([CADENCE]);
+  });
+
+  it('judges no cadence from a single refresh', () => {
+    const single = judged([NEGOTIATED], SELECTION, { session: session(300, 1) });
+    expect(single.failed).toEqual([]);
+    expect(single.passed).not.toContain(CADENCE);
+  });
+});
+
 describe('live HomeKit stream measurement', () => {
   it('reports negotiated identity, frames, and parameter sets from authenticated SRTP', () => {
     const emitted: Buffer[] = [];

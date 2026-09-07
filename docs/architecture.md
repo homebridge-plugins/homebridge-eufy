@@ -670,8 +670,8 @@ and a ten-second window at 25 fps holds roughly four instantaneous refreshes, wh
 lookahead cannot smooth. The worst ten-second window is therefore measured and reported on every live run, so
 a regression is visible and comparable between revisions, but it is not a pass condition; a threshold fitted
 to one fleet's scenes would fail the next, and a rule that fails intermittently teaches a maintainer to
-ignore it. Reducing the refreshes rather than the allowance is the lever, and it is a separate decision about
-the live keyframe interval.
+ignore it. Reducing the refreshes rather than the allowance is the remaining lever, and "The live keyframe
+interval" below records why it is not pulled.
 
 Two arguments follow. The encoder is given the ceiling **less the RTP and SRTP bytes the session's own
 packetization will add**, derived rather than chosen: a 12-byte RTP header and a 10-byte authentication tag
@@ -699,6 +699,39 @@ encoder, and capped CRF was rejected outright because it held the same rate at a
 The recording path shares the buffer rule and not the reservation. A recording is carried as fragmented MP4
 over the HAP session rather than as RTP, so it has neither those packets nor a measurement of what its own
 container costs; reserving for a container overhead nobody has measured would be a guess.
+
+### The live keyframe interval
+
+Live codes a refresh every two negotiated seconds: `-g` and `-keyint_min` are the negotiated frame rate
+doubled, and scene-cut detection is off, so nothing else inserts one. Because that rate is a ceiling rather
+than a cadence, the interval is two seconds of wall clock or more — a 25 fps source against a 30 fps
+selection refreshes about every 2.4 s.
+
+The interval is plugin policy and not a contract. A controller's selected video parameters are codec, profile,
+level, packetization mode, an optional CVO identifier, dimensions, frame rate, payload type, synchronisation
+source, bit rate, RTCP interval and MTU — no refresh cadence among them. The recording path's interval _is_ a
+contract, because a fragment must open on a keyframe and must not exceed the selected fragment length; nothing
+on the live path consumes a two-second group of pictures.
+
+It stays because it is the only repair a live session has. The output is SRTP over UDP with no
+retransmission, and nothing on this path asks the encoder for a picture out of cadence: controller RTCP is
+read as liveness and the RTP muxer acts on none of it, so a picture lost or corrupted in transit persists
+until the next scheduled refresh. Lengthening the interval lengthens that persistence on exactly the congested
+uplink an excursion over the ceiling would matter on. The cost usually set against this does not apply here:
+no third party joins a HomeKit live stream mid-flight, and every session and every restarted adaptation opens
+on its own keyframe, so the interval buys no join latency to trade away.
+
+What a longer interval would buy is smaller than it looks. A ten-second window absorbing fewer refreshes does
+carry less, by an amount nothing here has measured. What is measured is that it would not close
+the spread a restored threshold has to survive: the two cameras that landed 53 kbps apart over their worst
+ten-second window coded the _same_ 18 refreshes in 45 s at the same selection, so the difference between them
+is not a refresh cost and no interval removes it. The rate the ceiling is judged on is unaffected either way,
+because rate control is ABR against that ceiling and spends bits not spent on a refresh on the pictures
+between refreshes. The worst ten-second window therefore stays measured and reported and not judged, for the
+reason above.
+
+The cadence itself is judged: a live run fails a session whose coded frames per keyframe exceed three
+negotiated seconds' worth, so this interval passes and a doubled one does not.
 
 ### Return audio adaptation
 

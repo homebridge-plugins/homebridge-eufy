@@ -938,8 +938,13 @@ function outputArguments(
  * of the negotiated bit rate for a picture carrying nothing new. Measured on a 1600x1200 doorbell delivering
  * about 15 fps against a 30 fps selection: 264 of 267 emitted frames were duplicates and the adaptation ran at
  * 0.32x real time, so it fell further behind every second and the session died on its backstop with nothing
- * watchable reaching the controller. The keyframe interval still derives from the negotiated rate, because that
- * is a contract about segment boundaries rather than about cadence.
+ * watchable reaching the controller.
+ *
+ * A negotiated selection states no refresh cadence, so the keyframe interval is plugin policy: `-g` and
+ * `-keyint_min` are the negotiated rate doubled and scene-cut detection is off, which is a refresh every two
+ * negotiated seconds and nothing between them. It is the only repair a live session has, because this output is
+ * unretransmitted SRTP over UDP and nothing here asks the encoder for a picture out of cadence, so one lost in
+ * transit persists until the next refresh. What the interval costs is in docs/architecture.md.
  *
  * A negotiated bit rate is a ceiling on what the accessory TRANSMITS, so the encoder is given the ceiling less
  * the transport its own packetization adds, and its VBV buffer holds one second of that budget rather than

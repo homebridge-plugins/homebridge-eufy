@@ -2021,8 +2021,18 @@ describe('live output frame rate', () => {
     expect(args).not.toContain('-r');
     session.prepared.stop();
   });
+});
 
-  it('still derives the keyframe interval from the negotiated rate', async () => {
+/**
+ * `-g` and `-keyint_min` are the negotiated frame rate doubled, and scene-cut detection is off, so a live
+ * session refreshes every two negotiated seconds and nothing else inserts one.
+ *
+ * Nothing in a negotiated selection states a refresh cadence, so this interval is plugin policy, and it is the
+ * only repair an unretransmitted SRTP session has. What it costs and what it does not buy are in
+ * docs/architecture.md.
+ */
+describe('live keyframe interval', () => {
+  it('codes a refresh every two negotiated seconds and lets nothing else insert one', async () => {
     const session = await liveSession();
     await session.start();
     session.stream.video(KEYFRAME);
@@ -2030,6 +2040,18 @@ describe('live output frame rate', () => {
     const args = session.spawned[0]!;
     expect(args[args.indexOf('-g') + 1]).toBe('60');
     expect(args[args.indexOf('-keyint_min') + 1]).toBe('60');
+    expect(args[args.indexOf('-sc_threshold') + 1]).toBe('0');
+    session.prepared.stop();
+  });
+
+  it('takes the interval from the negotiated rate rather than from a fixed frame count', async () => {
+    const session = await liveSession(undefined, { video: { ...NEGOTIATED_VIDEO, fps: 15 } });
+    await session.start();
+    session.stream.video(KEYFRAME);
+
+    const args = session.spawned[0]!;
+    expect(args[args.indexOf('-g') + 1]).toBe('30');
+    expect(args[args.indexOf('-keyint_min') + 1]).toBe('30');
     session.prepared.stop();
   });
 });

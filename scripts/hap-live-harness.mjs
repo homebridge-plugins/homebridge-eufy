@@ -1255,7 +1255,8 @@ const CEILING_WINDOW_SECONDS = 30;
  * their worst such window. That spread is scene complexity, and `-tune zerolatency` forces `rc_lookahead=0`,
  * so an encoder coding roughly four instantaneous refreshes inside the window cannot smooth them. A threshold
  * fitted to one fleet's scenes would fail the next, and a rule that fails intermittently teaches a maintainer
- * to ignore it.
+ * to ignore it. Both those sessions coded the same number of refreshes, so a longer keyframe interval does not
+ * close the spread either.
  */
 const SUSTAINED_WINDOW_SECONDS = 10;
 
@@ -1286,7 +1287,10 @@ export function worstSustainedRate(samples, windowSeconds) {
  * Reports and judges what one measured window carried against the selection it was negotiated from,
  * without exposing any media content. Rates are judged on the window; keyframe presence and refresh
  * cadence are judged on `session`, the cumulative report the window belongs to, because a window shorter
- * than one group of pictures legitimately contains no keyframe of its own.
+ * than one group of pictures legitimately contains no keyframe of its own. Nothing negotiates a refresh
+ * cadence, so the cadence judged is the two-negotiated-second interval the live path codes, held to three
+ * negotiated seconds' worth of frames per keyframe: a session whose first refresh is not its first coded frame
+ * still passes, and a doubled interval does not.
  *
  * The negotiated bit rate bounds what the accessory transmits, so the rate judged is the whole SRTP datagram
  * rather than the coded media inside it, and it is judged over half a minute or more, where the VBV buffer
@@ -1330,7 +1334,7 @@ export function judgeWindow(results, { label, window, seconds, expected, session
   if (session.keyframes > 1) {
     results.check(
       session.frames / session.keyframes <= expected.fps * 3,
-      `${label} refreshed inside the negotiated group of pictures`,
+      `${label} refreshed inside the live keyframe interval`,
     );
   }
   if (seconds >= CEILING_WINDOW_SECONDS) {
