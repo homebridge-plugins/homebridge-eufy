@@ -75,7 +75,6 @@ function deviceClassOf(codec: DeviceManifest['codec']): DashboardDevice['deviceC
     keypad: 'other',
     light: 'light',
     printer: 'printer',
-    display: 'other',
   };
   return classes[codec];
 }
