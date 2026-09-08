@@ -44,7 +44,7 @@ verify.
 
 ## Requirements
 
-- [Homebridge](https://homebridge.io/) 2.0 or newer
+- [Homebridge](https://homebridge.io/) 2.4 or newer
 - Node.js 24.5.0 or newer
 - A dedicated guest eufy account with the relevant home and devices shared to it
 

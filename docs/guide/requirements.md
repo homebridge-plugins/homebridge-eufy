@@ -3,7 +3,7 @@
 | Requirement | V5 contract |
 |---|---|
 | Node.js | 24.5.0 or newer |
-| Homebridge | 2.0 or newer |
+| Homebridge | 2.4 or newer |
 | Account | Dedicated secondary eufy account |
 | Access | Relevant home and devices shared to that account |
 
