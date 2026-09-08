@@ -15,7 +15,6 @@ import type {
 
 import { satisfiesMemberRequirements } from '../../device/member-evidence.js';
 import {
-  ENABLEMENT_EVENT_TRACE,
   deviceOperationIssuer,
   enablementAnnouncement,
   INVALID_OBSERVATION_CONDITION,

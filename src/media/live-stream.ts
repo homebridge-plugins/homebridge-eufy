@@ -14,7 +14,6 @@ import type {
   LiveMediaTarget,
   LiveMediaTransport,
   LiveSessionFailure,
-  LiveSessionOutcome,
   NegotiatedLiveAudio,
   NegotiatedLiveMedia,
   NegotiatedLiveVideo,

@@ -130,7 +130,7 @@ export class PersistedSdkClient implements SdkClient {
     private readonly config: EufyConfig,
     private readonly stores: RuntimeClientStores,
     private readonly restoredClient?: EufyMega,
-    private readonly logger?: SdkLogger,
+    logger?: SdkLogger,
   ) {
     this.diagnostics = createSdkLogger(logger);
   }
