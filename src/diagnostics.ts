@@ -2404,9 +2404,11 @@ export class DiagnosticConditions {
   private runtimeState?: RuntimeState;
 
   /**
-   * @param nameFor Resolves a device serial to the accessory name the owner sees, for the CONSOLE line only.
+   * @param nameFor Resolves a device serial to the label the owner sees, for the CONSOLE line only.
    *   The console line goes to the owner's own log, where Homebridge prints accessory names on every other
    *   line, and a count is not something an owner can act on. The retained record keeps carrying no identity.
+   *   A device with no accessory has no display name, so a caller resolving one for a condition about an
+   *   unrepresented device supplies its snapshot label instead.
    */
   constructor(
     private readonly log: PlatformLogger,

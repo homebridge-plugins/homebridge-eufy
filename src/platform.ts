@@ -12,6 +12,7 @@ import {
   reportInvalidSnapshotCache,
   type PlatformLogger,
 } from './diagnostics.js';
+import { deviceSnapshotLabel } from './device/snapshot.js';
 import { HomeKitReconciler, type HomeKitAccessoryStore } from './homekit/reconciler.js';
 import type { AdaptationDiagnostics } from './media/contracts.js';
 import { FfmpegLiveMedia, resolveFfmpegIdentity } from './media/live-stream.js';
@@ -68,7 +69,7 @@ export function createEufyPlatform(
           this.cachedAccessories.find((accessory) => {
             const context = accessory.context as { homebridgeEufy?: { version?: number; serial?: string } };
             return context.homebridgeEufy?.version === 1 && context.homebridgeEufy.serial === serial;
-          })?.displayName,
+          })?.displayName ?? deviceSnapshotLabel(this.runtime.currentRegistry()?.snapshot, serial),
       );
       const adaptationDiagnostics: AdaptationDiagnostics = {
         report: (notice) => reportAdaptationNotice(diagnosticLog, notice),

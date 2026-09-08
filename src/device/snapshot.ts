@@ -226,3 +226,21 @@ export async function discoverCompleteDeviceRegistry<T extends DiscoveryDevice>(
     client.off('error', onError);
   }
 }
+
+/**
+ * The owner-facing label for one device in a snapshot: its name followed by its model and codec, or
+ * `undefined` when the snapshot does not carry the serial.
+ *
+ * A device the runtime recognized but HomeKit could not represent has no accessory, so it has no
+ * display name for a diagnostic to resolve, and a condition about it can otherwise only be reported as
+ * a tally. Model and codec accompany the name because they are what separate that device from the rest
+ * of a fleet where several share a name.
+ */
+export function deviceSnapshotLabel(snapshot: CompleteDeviceSnapshot | undefined, serial: string): string | undefined {
+  const manifest = snapshot?.devices.find((device) => device.sn === serial);
+  if (manifest === undefined) {
+    return undefined;
+  }
+  const type = [manifest.model, manifest.codec].filter((part) => part !== undefined && part !== '').join(' ');
+  return type === '' ? manifest.name : `${manifest.name} [${type}]`;
+}

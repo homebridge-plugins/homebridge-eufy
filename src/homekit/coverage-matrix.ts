@@ -43,8 +43,6 @@ const COVERAGE_BY_ROW = new Map<string, { adapter: string; productEvidence?: str
 );
 
 const BLOCKED = new Set([
-  'person_detection.detectionEnabled.read',
-  'person_detection.detected.read',
   'ptz.rotationSpeed.read',
   'ptz.panAngle.read',
   'ptz.tiltAngle.read',
@@ -56,9 +54,6 @@ const BLOCKED = new Set([
   'lock.locked.persistent-operation',
   'keypad.batteryLow.read',
   'keypad.charging.read',
-  'storage.sdCard.read',
-  'storage.free.read',
-  'storage.total.read',
 ]);
 
 /** Derives the current semantic member inventory directly from the pinned SDK contract. */
