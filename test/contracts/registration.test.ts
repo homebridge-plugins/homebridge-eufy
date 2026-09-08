@@ -10,7 +10,7 @@ describe('plugin registration', () => {
     registerPlugin({ registerPlatform });
 
     expect(registerPlatform).toHaveBeenCalledExactlyOnceWith(
-      '@homebridge-plugins/homebridge-eufy',
+      '@homebridge-plugins/homebridge-eufy-security',
       'HomebridgeEufy',
       EufyPlatform,
     );

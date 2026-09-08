@@ -21,7 +21,7 @@ inspect the package path before replacing anything:
 
 ```bash
 npm root --global
-npm list --global @homebridge-plugins/homebridge-eufy --depth=0
+npm list --global @homebridge-plugins/homebridge-eufy-security --depth=0
 ```
 
 Do not infer the loaded version from the source checkout alone. The startup log must identify the

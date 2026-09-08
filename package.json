@@ -1,6 +1,6 @@
 {
   "displayName": "Homebridge Eufy",
-  "name": "@homebridge-plugins/homebridge-eufy",
+  "name": "@homebridge-plugins/homebridge-eufy-security",
   "version": "5.0.0-beta.0",
   "description": "Control Eufy Security from homebridge.",
   "type": "module",

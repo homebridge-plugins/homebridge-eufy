@@ -8,11 +8,11 @@
 
 **Bring verified eufy device capabilities into Apple Home through Homebridge.**
 
-[![npm](https://img.shields.io/npm/v/@homebridge-plugins/homebridge-eufy?logo=npm&color=cb3837)](https://www.npmjs.com/package/@homebridge-plugins/homebridge-eufy)
-[![beta](https://img.shields.io/npm/v/@homebridge-plugins/homebridge-eufy/beta?label=beta)](https://www.npmjs.com/package/@homebridge-plugins/homebridge-eufy)
+[![npm](https://img.shields.io/npm/v/@homebridge-plugins/homebridge-eufy-security?logo=npm&color=cb3837)](https://www.npmjs.com/package/@homebridge-plugins/homebridge-eufy-security)
+[![beta](https://img.shields.io/npm/v/@homebridge-plugins/homebridge-eufy-security/beta?label=beta)](https://www.npmjs.com/package/@homebridge-plugins/homebridge-eufy-security)
 [![CI](https://github.com/homebridge-plugins/homebridge-eufy/actions/workflows/ci.yml/badge.svg?branch=beta-5.0.0)](https://github.com/homebridge-plugins/homebridge-eufy/actions/workflows/ci.yml)
-[![node](https://img.shields.io/node/v/@homebridge-plugins/homebridge-eufy?logo=nodedotjs)](./.nvmrc)
-[![license](https://img.shields.io/npm/l/@homebridge-plugins/homebridge-eufy)](./LICENSE)
+[![node](https://img.shields.io/node/v/@homebridge-plugins/homebridge-eufy-security?logo=nodedotjs)](./.nvmrc)
+[![license](https://img.shields.io/npm/l/@homebridge-plugins/homebridge-eufy-security)](./LICENSE)
 
 [Documentation](https://homebridge-plugins.github.io/homebridge-eufy/) · [Contributing](./CONTRIBUTING.md) · [Security](./SECURITY.md) · [Releases](https://github.com/homebridge-plugins/homebridge-eufy/releases)
 
@@ -57,7 +57,7 @@ Install stable releases through the Homebridge UI by searching for **Homebridge 
 from npm:
 
 ```bash
-npm install -g @homebridge-plugins/homebridge-eufy
+npm install -g @homebridge-plugins/homebridge-eufy-security
 ```
 
 While V5 is a beta, it is published under the `beta` dist-tag rather than `latest`:

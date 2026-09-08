@@ -719,7 +719,7 @@ describe('packed plugin', () => {
     };
 
     expect(packageJson.displayName).toBe('Homebridge Eufy');
-    expect(packageJson.name).toBe('@homebridge-plugins/homebridge-eufy');
+    expect(packageJson.name).toBe('@homebridge-plugins/homebridge-eufy-security');
     expect(packageJson.main).toBe('dist/index.js');
     expect(Object.keys(packageJson.dependencies ?? {}).sort()).toEqual([
       '@homebridge/plugin-ui-utils',
@@ -805,7 +805,7 @@ describe('packed plugin', () => {
       const deviceArtworkFiles = uiFiles.filter((path) => path.startsWith('homebridge-ui/public/assets/devices/'));
       const uiShellFiles = uiFiles.filter((path) => !path.startsWith('homebridge-ui/public/assets/devices/'));
 
-      expect(packedPackage.name).toBe('@homebridge-plugins/homebridge-eufy');
+      expect(packedPackage.name).toBe('@homebridge-plugins/homebridge-eufy-security');
       expect(schema.customUi).toBe(true);
       expect(result.files.map((file) => file.path)).toContain('dist/ui/server.js');
       expect(result.files.map((file) => file.path)).toContain('i18n/runtime/en.json');
@@ -1635,8 +1635,10 @@ describe('packed plugin', () => {
       const migrationFixture = JSON.parse(
         readFileSync(join(repository, 'test', 'fixtures', 'v4-migration.json'), 'utf8'),
       ) as {
+        cachedAccessory: { plugin: string };
         configuration: Record<string, unknown>;
       };
+      expect(migrationFixture.cachedAccessory.plugin).toBe(packedPackage.name);
       const migratedUi = await renderUi(script, [migrationFixture.configuration], catalogs, 'en', [], {
         status: 'restart-required',
       });
