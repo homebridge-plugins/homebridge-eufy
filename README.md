@@ -10,7 +10,6 @@
 
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=flat)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 [![npm](https://img.shields.io/npm/v/@homebridge-plugins/homebridge-eufy-security?logo=npm&color=cb3837)](https://www.npmjs.com/package/@homebridge-plugins/homebridge-eufy-security)
-[![node](https://img.shields.io/node/v/@homebridge-plugins/homebridge-eufy-security?logo=nodedotjs)](./.nvmrc)
 
 [Documentation](https://homebridge-plugins.github.io/homebridge-eufy/) · [Contributing](./CONTRIBUTING.md) · [Security](./SECURITY.md) · [Releases](https://github.com/homebridge-plugins/homebridge-eufy/releases)
 
