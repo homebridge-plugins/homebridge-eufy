@@ -742,11 +742,11 @@ describe('packed plugin', () => {
     };
     const sdk = packageLock.packages['node_modules/@mega-yfue/eufy-sdk'];
 
-    expect(packageJson.dependencies?.['@mega-yfue/eufy-sdk']).toBe('0.1.0-beta.53');
+    expect(packageJson.dependencies?.['@mega-yfue/eufy-sdk']).toBe('0.1.0-beta.59');
     expect(sdk).toEqual(
       expect.objectContaining({
-        version: '0.1.0-beta.53',
-        integrity: 'sha512-7dsi8d9pS3qgqY5y2X+AZ/GRJFccTffdz/k/grarMxAusSodoiyBYzQHal/hNT3pHc0/olJdrpuyCYycaPKeLw==',
+        version: '0.1.0-beta.59',
+        integrity: 'sha512-nBDVC7tVNO+ARzhFJ0zZLRYkocKZqpJc+BuQScInT1w/U61vsLoBc3MwEPS4vp5w4DIpwsPAiB7kheLXeL4+Vw==',
       }),
     );
   });
