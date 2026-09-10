@@ -86,6 +86,8 @@
   "log.notice.statusPublicationFailed": "Runtime status could not be published; dashboard status may be stale.",
   "log.notice.channelServeFailed": "Live runtime status could not be served to the plugin settings page; it will show the last published status instead.",
   "log.notice.diagnosticsAuthorizationArmed": "Diagnostic evidence collection is now active in the plugin runtime.",
+  "log.notice.standDownNotRearmed": "Homebridge Eufy stood down for an authentication and could not take the account session back; restart Homebridge to bring it back.",
+  "log.notice.standDownAccountReplaced": "Homebridge Eufy stood down for an authentication that replaced the account; restart Homebridge to use the new account.",
   "log.runtime.authenticationRequired": "Eufy authentication is required",
   "log.runtime.failed": "The Eufy runtime failed",
   "log.runtime.ownerConflict": "Another process owns the Eufy account session",

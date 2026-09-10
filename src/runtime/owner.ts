@@ -34,6 +34,17 @@ import { RuntimeTracker, runtimeStatusFor, type RuntimeTrackerRecord, type Runti
 
 export type RuntimeLogger = Pick<PlatformLogger, 'error' | 'warn'> & Partial<Pick<PlatformLogger, 'debug' | 'info'>>;
 
+/**
+ * How long a runtime that stood down on request keeps trying to take the account session back.
+ *
+ * It outlasts the interactive authentication a stand-down is requested for, whose own deadline is five minutes,
+ * so a flow that runs to its limit still ends with a runtime that came back.
+ */
+const REARM_WINDOW_MS = 15 * 60_000;
+
+/** How long between attempts to take the account session back after standing down on request. */
+const REARM_INTERVAL_MS = 15_000;
+
 export interface RuntimeOwnership {
   acquire(
     accountScope: string,
@@ -88,6 +99,8 @@ export interface RuntimeChannelHost {
 export interface RuntimeOwnerOptions {
   storageRoot?: string;
   shutdownTimeoutMs?: number;
+  rearmWindowMs?: number;
+  rearmIntervalMs?: number;
   ownership?: RuntimeOwnership;
   persistence?: RuntimePersistence;
   statusPublisher?: RuntimeStatusPublisher;
@@ -130,6 +143,14 @@ export class RuntimeOwner {
   private readonly storageRoot?: string;
   private readonly persistence?: RuntimePersistence;
   private readonly shutdownTimeoutMs: number;
+  private readonly rearmWindowMs: number;
+  private readonly rearmIntervalMs: number;
+  private shuttingDown = false;
+  private standingDown = false;
+  private rearming = false;
+  private rearmTimer?: NodeJS.Timeout;
+  private rearmGeneration?: string;
+  private activeGeneration?: string;
 
   constructor(
     private readonly log: RuntimeLogger,
@@ -139,6 +160,8 @@ export class RuntimeOwner {
   ) {
     this.storageRoot = options.storageRoot;
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? 10_000;
+    this.rearmWindowMs = options.rearmWindowMs ?? REARM_WINDOW_MS;
+    this.rearmIntervalMs = options.rearmIntervalMs ?? REARM_INTERVAL_MS;
     this.ownership = options.ownership;
     this.statusPublisher = options.statusPublisher;
     this.channel = options.channel;
@@ -195,6 +218,35 @@ export class RuntimeOwner {
   }
 
   stop(): Promise<void> {
+    this.shuttingDown = true;
+    this.clearRearm();
+    return this.stopOwnership();
+  }
+
+  /**
+   * Releases the account session so another process may own it, and takes it back when it can.
+   *
+   * Reports whether a stand-down was started, which is acceptance and not completion: the release runs the same
+   * bounded cleanup a shutdown runs, and the endpoint closes inside the release guard. Only the lease is
+   * evidence that the session is free. A runtime holding no lease, one already stopping, and one already
+   * standing down each refuse, so the caller behaves as it does without this channel.
+   */
+  standDown(): boolean {
+    if (!this.storageRoot || !this.runtimeLease || this.stopping || this.standingDown || this.shuttingDown) {
+      return false;
+    }
+    this.standingDown = true;
+    this.rearmGeneration = this.activeGeneration;
+    void this.stopOwnership().then(() => {
+      this.standingDown = false;
+      if (!this.shuttingDown) {
+        this.scheduleRearm(Date.now() + this.rearmWindowMs);
+      }
+    });
+    return true;
+  }
+
+  private stopOwnership(): Promise<void> {
     this.cleanupTerminalState = 'stopped';
     if (!this.stopPromise) {
       this.stopping = true;
@@ -225,10 +277,75 @@ export class RuntimeOwner {
     });
   }
 
+  /**
+   * Schedules the next attempt to take the account session back, or gives up once the window has passed.
+   *
+   * Nothing can tell this runtime when the session is free: the endpoint's lifetime is the lease, so the channel
+   * is gone for exactly as long as the reason to re-arm lasts, and the process that asked may itself be gone.
+   */
+  private scheduleRearm(deadline: number): void {
+    this.rearming = true;
+    if (Date.now() >= deadline) {
+      this.clearRearm();
+      reportRuntimeNotice(this.log, 'stand-down-not-rearmed');
+      return;
+    }
+    this.rearmTimer = setTimeout(() => void this.attemptRearm(deadline), this.rearmIntervalMs);
+    this.rearmTimer.unref();
+  }
+
+  /**
+   * Takes the account session back if it is free, and schedules another attempt if it is not.
+   *
+   * An attempt that finds the lease held is the ordinary case for as long as the authentication this runtime
+   * stood down for is running, so it reports nothing and leaves this runtime stopped, which is what it is.
+   */
+  private async attemptRearm(deadline: number): Promise<void> {
+    this.rearmTimer = undefined;
+    if (this.shuttingDown || !this.rearming) {
+      return;
+    }
+    this.resetForRearm();
+    await this.start();
+    if (this.rearming) {
+      this.scheduleRearm(deadline);
+    }
+  }
+
+  /**
+   * Returns this owner to the state a start begins from, keeping what a stopped runtime is defined to retain.
+   *
+   * The latest complete registry view and its version survive, because HomeKit's topology is built from them
+   * and only a later complete inventory may replace them. Everything a cleanup consumed is cleared so that one
+   * cycle's cleanup cannot be a second cycle's, which is what keeps a lease from being released twice.
+   */
+  private resetForRearm(): void {
+    this.startPromise = undefined;
+    this.stopPromise = undefined;
+    this.stopping = false;
+    this.cleanupTerminalState = undefined;
+    this.statusPublisherActive = false;
+    this.pendingOwnership = undefined;
+    this.client = undefined;
+  }
+
+  private clearRearm(): void {
+    clearTimeout(this.rearmTimer);
+    this.rearmTimer = undefined;
+    this.rearming = false;
+    this.rearmGeneration = undefined;
+  }
+
   private async startClient(): Promise<void> {
     try {
       const { active, config } = await this.activeAccount();
+      this.activeGeneration = active?.generation;
       if (this.stopping) {
+        return;
+      }
+      if (this.rearming && this.activeGeneration !== this.rearmGeneration) {
+        reportRuntimeNotice(this.log, 'stand-down-account-replaced');
+        this.clearRearm();
         return;
       }
       if (this.storageRoot && !active) {
@@ -243,7 +360,9 @@ export class RuntimeOwner {
         this.statusPublisher ??= this.createStatusPublisher();
       }
       if (this.ownership && this.accountScope && active) {
-        this.transitionTo('acquiring-ownership');
+        if (!this.rearming) {
+          this.transitionTo('acquiring-ownership');
+        }
         const pendingOwnership = this.ownership.acquire(this.accountScope, 'runtime');
         this.pendingOwnership = pendingOwnership;
         const ownership = await pendingOwnership;
@@ -252,10 +371,13 @@ export class RuntimeOwner {
         }
         this.pendingOwnership = undefined;
         if (ownership.state === 'owner-conflict') {
-          this.transitionTo('owner-conflict');
+          if (!this.rearming) {
+            this.transitionTo('owner-conflict');
+          }
           return;
         }
         this.runtimeLease = ownership.lease;
+        this.clearRearm();
         await this.openChannel();
         const previousSnapshot = active.snapshot.load() ?? undefined;
         if (
@@ -481,6 +603,7 @@ export class RuntimeOwner {
         {
           devices: () => this.channelDevices(),
           diagnostics: (notice) => this.pickUpDiagnosticsAuthorization(storageRoot, notice),
+          standDown: () => this.standDown(),
         },
       );
     }

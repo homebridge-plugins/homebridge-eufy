@@ -1160,3 +1160,242 @@ describe('persisted runtime owner', () => {
     expect(statusPublisher.update).not.toHaveBeenCalledWith('authentication-required');
   });
 });
+
+describe('a runtime standing down on request and taking the session back', () => {
+  function harness(
+    acquisitions: readonly ('owner' | 'conflict')[],
+    options: {
+      generations?: readonly string[];
+      rearmIntervalMs?: number;
+      rearmWindowMs?: number;
+      incomplete?: boolean;
+    } = {},
+  ) {
+    const config = parseConfig({
+      platform: 'HomebridgeEufy',
+      username: 'runtime@example.invalid',
+      password: 'persisted-password',
+    });
+    const releases: ReturnType<typeof vi.fn>[] = [];
+    const states: string[] = [];
+    const warn = vi.fn();
+    const info = vi.fn();
+    const client: SdkClient = {
+      start: vi.fn(async () =>
+        options.incomplete
+          ? { state: 'degraded' as const, complete: false }
+          : {
+              state: 'ready' as const,
+              registry: new Map([['synthetic-current', sdkDevice('synthetic-current')]]),
+              snapshot: snapshot('synthetic-current'),
+            },
+      ),
+      stop: vi.fn(async () => undefined),
+    };
+    let attempt = 0;
+    let generation = 0;
+    const statusPublisher = { start: vi.fn(() => true), update: vi.fn(() => true), stop: vi.fn() };
+    const channel = { open: vi.fn(async () => true), close: vi.fn() };
+    const runtime = new RuntimeOwner({ error: vi.fn(), info, warn }, config, () => client, {
+      storageRoot: '/synthetic-runtime',
+      shutdownTimeoutMs: 1_000,
+      rearmIntervalMs: options.rearmIntervalMs ?? 5,
+      rearmWindowMs: options.rearmWindowMs ?? 5_000,
+      channel,
+      ownership: {
+        acquire: vi.fn(async () => {
+          const outcome = acquisitions[Math.min(attempt++, acquisitions.length - 1)]!;
+          if (outcome === 'conflict') {
+            return {
+              state: 'owner-conflict' as const,
+              owner: { acquiredAt: '2026-09-01T00:00:00.000Z', kind: 'temporary-authentication' as const, pid: 4242 },
+            };
+          }
+          const release = vi.fn(releaseLease);
+          releases.push(release);
+          return { state: 'owner' as const, lease: { release }, recovered: false };
+        }),
+      },
+      persistence: {
+        active: vi.fn(async () => ({
+          account: 'runtime@example.invalid',
+          generation:
+            options.generations?.[Math.min(generation++, options.generations.length - 1)] ?? 'synthetic-generation',
+          configuration: { load: () => config },
+          session: { load: () => session(), save: vi.fn(), clear: vi.fn() },
+          push: { load: () => null, save: vi.fn(), clear: vi.fn() },
+          snapshot: { load: () => snapshot('synthetic-current'), save: vi.fn() },
+        })),
+      },
+      statusPublisher,
+    });
+    runtime.subscribeState((state) => states.push(state));
+    return { channel, client, info, releases, runtime, states, statusPublisher, warn };
+  }
+
+  /**
+   * The cycle end to end: the runtime releases the lease so an interactive authentication can own the session,
+   * and takes it back on its own once it is free again, restoring its endpoint and its published record. Each
+   * lease is released exactly once, which is the invariant cycling must not turn into two release paths.
+   */
+  it('releases the lease once, then takes it back and serves again', async () => {
+    const { channel, client, releases, runtime } = harness(['owner', 'conflict', 'conflict', 'owner'], {
+      rearmIntervalMs: 40,
+    });
+    await runtime.start();
+    expect(runtime.currentState()).toBe('ready');
+
+    expect(runtime.standDown()).toBe(true);
+    await vi.waitFor(() => expect(runtime.currentState()).toBe('stopped'));
+    expect(client.stop).toHaveBeenCalledOnce();
+    expect(channel.close).toHaveBeenCalledOnce();
+
+    await vi.waitFor(() => expect(runtime.currentState()).toBe('ready'));
+    expect(client.start).toHaveBeenCalledTimes(2);
+    expect(channel.open).toHaveBeenCalledTimes(2);
+    expect(releases).toHaveLength(2);
+    expect(releases[0]).toHaveBeenCalledOnce();
+
+    await runtime.stop();
+    expect(releases[1]).toHaveBeenCalledOnce();
+    expect(releases[0]).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * An attempt that finds the lease still held is the ordinary case for as long as the authentication it stood
+   * down for is running, so it reports nothing. A window that outlasts a five-minute flow would otherwise fill
+   * the Homebridge log with a conflict the user asked for.
+   */
+  it('reports no state and no notice while the lease is still held', async () => {
+    const { runtime, states, statusPublisher, warn } = harness(['owner', 'conflict', 'conflict', 'owner']);
+    await runtime.start();
+    expect(runtime.standDown()).toBe(true);
+    await vi.waitFor(() => expect(runtime.currentState()).toBe('ready'));
+
+    expect(states).toEqual(['acquiring-ownership', 'starting', 'ready', 'stopping', 'stopped', 'starting', 'ready']);
+    expect(warn).not.toHaveBeenCalled();
+    expect(statusPublisher.update).not.toHaveBeenCalledWith('owner-conflict', expect.anything());
+    await runtime.stop();
+  });
+
+  /**
+   * The retained inventory is what HomeKit's topology is built from, and a runtime standing down is a stopped
+   * runtime, which keeps it. Withdrawing it would unpublish every accessory for the length of an authentication.
+   */
+  it('keeps its retained registry view for the whole time it is down', async () => {
+    const { runtime } = harness(['owner', 'conflict', 'owner'], { rearmIntervalMs: 40 });
+    await runtime.start();
+    const view = runtime.currentRegistry();
+    expect(view?.snapshot).toEqual(snapshot('synthetic-current'));
+
+    runtime.standDown();
+    await vi.waitFor(() => expect(runtime.currentState()).toBe('stopped'));
+    expect(runtime.currentRegistry()).toBe(view);
+
+    await vi.waitFor(() => expect(runtime.currentState()).toBe('ready'));
+    await runtime.stop();
+    expect(runtime.currentRegistry()?.snapshot).toEqual(snapshot('synthetic-current'));
+  });
+
+  /**
+   * The generation a re-arm must match is the account the runtime started against, not the inventory it managed
+   * to publish. A runtime that held the lease without ever completing an inventory is the case an authentication
+   * is most likely to be requested for, and it must still come back.
+   */
+  it('takes the session back after standing down without having published an inventory', async () => {
+    const { client, runtime, warn } = harness(['owner', 'owner'], { incomplete: true });
+    await runtime.start();
+    expect(runtime.currentState()).toBe('degraded');
+    expect(runtime.currentRegistry()).toBeUndefined();
+
+    expect(runtime.standDown()).toBe(true);
+    await vi.waitFor(() => expect(client.start).toHaveBeenCalledTimes(2));
+
+    expect(warn).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  /**
+   * A re-arm reads `accounts/active.json` like any start, so a replacement committed while the runtime was down
+   * would otherwise be adopted without the HomeKit reconciliation a restart performs. The restart requirement
+   * after an account replacement is a separate decision and stays.
+   */
+  it('abandons the re-arm when the active generation is no longer the one it stood down from', async () => {
+    const { client, runtime, warn } = harness(['owner', 'owner'], {
+      generations: ['synthetic-generation', 'replacement-generation'],
+    });
+    await runtime.start();
+    expect(runtime.standDown()).toBe(true);
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+
+    expect(runtime.currentState()).toBe('stopped');
+    expect(client.start).toHaveBeenCalledOnce();
+    await runtime.stop();
+  });
+
+  /**
+   * A Homebridge shutdown is not a stand-down. Whether it arrives while the stand-down is still running or
+   * after it, the runtime stays down rather than re-acquiring a session the process is about to lose.
+   */
+  it('cancels the re-arm when Homebridge shuts down', async () => {
+    const during = harness(['owner', 'owner']);
+    await during.runtime.start();
+    during.runtime.standDown();
+    await during.runtime.stop();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(during.client.start).toHaveBeenCalledOnce();
+    expect(during.runtime.currentState()).toBe('stopped');
+
+    const after = harness(['owner', 'conflict', 'owner'], { rearmIntervalMs: 40 });
+    await after.runtime.start();
+    after.runtime.standDown();
+    await vi.waitFor(() => expect(after.runtime.currentState()).toBe('stopped'));
+    await after.runtime.stop();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(after.client.start).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * The window is bounded, so a lease held by something that never gives it back leaves the runtime stopped and
+   * says so once, rather than retrying for the life of the process.
+   */
+  it('gives up and reports once when the window expires', async () => {
+    const { client, runtime, warn } = harness(['owner', 'conflict'], { rearmWindowMs: 60 });
+    await runtime.start();
+    runtime.standDown();
+
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledOnce());
+    expect(runtime.currentState()).toBe('stopped');
+    expect(client.start).toHaveBeenCalledOnce();
+    await runtime.stop();
+  });
+
+  /**
+   * Standing down is releasing the lease, so a runtime that holds none has nothing to release and refuses. The
+   * UI then reports what it reports without the channel, which is the behaviour the whole design degrades to.
+   */
+  it('refuses when it holds no lease', async () => {
+    const { runtime } = harness(['conflict']);
+    expect(runtime.standDown()).toBe(false);
+
+    await runtime.start();
+    expect(runtime.currentState()).toBe('owner-conflict');
+    expect(runtime.standDown()).toBe(false);
+    await runtime.stop();
+  });
+
+  /**
+   * A second request while the first is still running is the same stand-down, not another one, so it does not
+   * start a second cleanup or a second re-arm.
+   */
+  it('refuses a second request while the first is still standing down', async () => {
+    const { runtime } = harness(['owner', 'conflict', 'owner']);
+    await runtime.start();
+
+    expect(runtime.standDown()).toBe(true);
+    expect(runtime.standDown()).toBe(false);
+
+    await vi.waitFor(() => expect(runtime.currentState()).toBe('ready'));
+    await runtime.stop();
+  });
+});

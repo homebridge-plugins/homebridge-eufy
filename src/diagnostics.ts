@@ -1843,6 +1843,14 @@ const RUNTIME_NOTICES = {
     level: 'info',
     messageKey: 'log.notice.diagnosticsAuthorizationArmed',
   },
+  'stand-down-not-rearmed': {
+    level: 'warn',
+    messageKey: 'log.notice.standDownNotRearmed',
+  },
+  'stand-down-account-replaced': {
+    level: 'warn',
+    messageKey: 'log.notice.standDownAccountReplaced',
+  },
 } as const;
 
 export type RuntimeNoticeCode = keyof typeof RUNTIME_NOTICES;

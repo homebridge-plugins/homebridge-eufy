@@ -59,6 +59,17 @@ export const RUNTIME_DEVICES_PATH = '/runtime/devices';
 /** The path a diagnostics authorization is notified on, so the runtime reads the file at once. */
 export const RUNTIME_DIAGNOSTICS_PATH = '/diagnostics/authorization';
 
+/** The path a stand-down is requested on, so another process may own the account session. */
+export const RUNTIME_STAND_DOWN_PATH = '/runtime/stand-down';
+
+/**
+ * How long a client waits for a requested stand-down, measured from the request.
+ *
+ * It outlasts the runtime's own bounded shutdown, which is ten seconds, because a stand-down runs that shutdown
+ * and the endpoint closes at the end of it. A client observes the closing, not the answer.
+ */
+export const RUNTIME_CHANNEL_STAND_DOWN_TIMEOUT_MS = 15_000;
+
 /**
  * What a diagnostics notification carries: which authorized evidence window the sender wrote.
  *
@@ -313,6 +324,7 @@ interface RuntimeChannelServerOptions {
   frameBytes?: number;
   devices?: () => RuntimeChannelDevice[];
   diagnostics?: (notice: RuntimeChannelAuthorization) => boolean;
+  standDown?: () => boolean;
 }
 
 /**
@@ -333,6 +345,7 @@ export class RuntimeChannelServer {
   private readonly frameBytes: number;
   private readonly devices?: () => RuntimeChannelDevice[];
   private readonly diagnostics?: (notice: RuntimeChannelAuthorization) => boolean;
+  private readonly standDown?: () => boolean;
 
   constructor(
     private readonly endpoint: RuntimeChannelEndpoint,
@@ -344,6 +357,7 @@ export class RuntimeChannelServer {
     this.frameBytes = options.frameBytes ?? RUNTIME_CHANNEL_FRAME_BYTES;
     this.devices = options.devices;
     this.diagnostics = options.diagnostics;
+    this.standDown = options.standDown;
   }
 
   /** Binds the endpoint, reporting whether it bound. An unbound channel is an absent one. */
@@ -408,6 +422,9 @@ export class RuntimeChannelServer {
       if (request.path === RUNTIME_DIAGNOSTICS_PATH && this.diagnostics) {
         const notice = noticedAuthorization(request.body);
         return { id: request.id, ok: notice !== undefined && this.diagnostics(notice) };
+      }
+      if (request.path === RUNTIME_STAND_DOWN_PATH && this.standDown) {
+        return { id: request.id, ok: this.standDown() };
       }
     } catch {
       return { id: request.id, ok: false };

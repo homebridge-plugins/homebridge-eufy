@@ -10,8 +10,10 @@ import {
   RUNTIME_CHANNEL_CONNECT_TIMEOUT_MS,
   RUNTIME_CHANNEL_PROTOCOL,
   RUNTIME_CHANNEL_RESPONSE_TIMEOUT_MS,
+  RUNTIME_CHANNEL_STAND_DOWN_TIMEOUT_MS,
   RUNTIME_DEVICES_PATH,
   RUNTIME_DIAGNOSTICS_PATH,
+  RUNTIME_STAND_DOWN_PATH,
   RUNTIME_STATUS_PATH,
   type RuntimeChannelDevice,
   type RuntimeChannelEndpoint,
@@ -23,6 +25,7 @@ import {
 const STATUS_REQUEST = 1;
 const DEVICES_REQUEST = 2;
 const DIAGNOSTICS_REQUEST = 3;
+const STAND_DOWN_REQUEST = 4;
 
 /**
  * One answered read of the live runtime view.
@@ -58,13 +61,24 @@ export interface RuntimeDiagnosticsChannel {
   notifyAuthorization(supportCaseId: string): Promise<void>;
 }
 
+/**
+ * The runtime's willingness to release the account session, when a runtime is there to release it.
+ *
+ * Declared beside its consumer. The answer is the runtime's claim about itself, so a caller that needs the
+ * session must still prove it holds the lease; this only says whether waiting for that is worth anything.
+ */
+export interface RuntimeStandDownChannel {
+  requestStandDown(): Promise<boolean>;
+}
+
 interface RuntimeChannelClientOptions {
   connectTimeoutMs?: number;
   responseTimeoutMs?: number;
+  standDownTimeoutMs?: number;
 }
 
 /**
- * Reads the live runtime status over the channel the runtime serves while it owns the account session.
+ * Speaks the channel the runtime serves while it owns the account session: reads, notifications, requests.
  *
  * Every failure resolves to absence rather than rejecting: an unreachable address, a refused connection, a
  * protocol this client does not speak, a bound endpoint that never answers within the response bound, a
@@ -73,11 +87,12 @@ interface RuntimeChannelClientOptions {
  * refused request is not one of them: a path this runtime does not serve leaves its own answer out and the
  * rest of the reading stands.
  *
- * One connection per read, carrying both requests correlated by identity, closed once both are answered.
+ * One connection per operation, its requests correlated by identity, closed once the operation settles.
  */
-export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagnosticsChannel {
+export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagnosticsChannel, RuntimeStandDownChannel {
   private readonly connectTimeoutMs: number;
   private readonly responseTimeoutMs: number;
+  private readonly standDownTimeoutMs: number;
 
   constructor(
     private readonly endpoint: RuntimeChannelEndpoint,
@@ -85,6 +100,7 @@ export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagno
   ) {
     this.connectTimeoutMs = options.connectTimeoutMs ?? RUNTIME_CHANNEL_CONNECT_TIMEOUT_MS;
     this.responseTimeoutMs = options.responseTimeoutMs ?? RUNTIME_CHANNEL_RESPONSE_TIMEOUT_MS;
+    this.standDownTimeoutMs = options.standDownTimeoutMs ?? RUNTIME_CHANNEL_STAND_DOWN_TIMEOUT_MS;
   }
 
   async read(): Promise<RuntimeChannelReading | undefined> {
@@ -119,6 +135,30 @@ export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagno
       await this.notified(connection, supportCaseId);
     } catch {
       return;
+    } finally {
+      connection?.destroy();
+    }
+  }
+
+  /**
+   * Asks the runtime to release the account session, reporting whether it stood down.
+   *
+   * True means the runtime accepted and its endpoint then closed, which happens inside the ownership release
+   * guard, so the lease was released. It is still a claim about another process: a caller that needs the session
+   * proves it by acquiring the lease. False is every other outcome — a refusal, a runtime that is absent or
+   * speaks another protocol, and one that did not finish within the bound — and each leaves the caller reporting
+   * exactly what it reports without this channel.
+   */
+  async requestStandDown(): Promise<boolean> {
+    if (this.endpoint.shared && !(await ownedSocket(this.endpoint.path))) {
+      return false;
+    }
+    let connection: Socket | undefined;
+    try {
+      connection = await this.connect();
+      return await this.stoodDown(connection);
+    } catch {
+      return false;
     } finally {
       connection?.destroy();
     }
@@ -196,6 +236,61 @@ export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagno
               body: { supportCaseId },
             })}\n`,
           );
+        }
+      });
+    });
+  }
+
+  /**
+   * Sends one stand-down request after the greeting and reports what became of it.
+   *
+   * A runtime standing down closes its endpoint at the end of its own bounded shutdown, so the closing is the
+   * completion this waits for and an explicit refusal is the one answer that ends it early. A protocol this
+   * client does not speak is never sent the request, because a frame an older runtime reads as something else
+   * could take a session down that nothing asked for.
+   */
+  private stoodDown(connection: Socket): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const settle = setTimeout(() => resolve(false), this.standDownTimeoutMs);
+      settle.unref();
+      const conclude = (stoodDown: boolean): void => {
+        clearTimeout(settle);
+        resolve(stoodDown);
+      };
+      const reader = new FrameReader();
+      let requested = false;
+      connection.once('error', () => conclude(requested));
+      connection.once('close', () => conclude(requested));
+      connection.on('data', (chunk) => {
+        const frames = reader.accept(chunk);
+        if (!frames) {
+          conclude(false);
+          return;
+        }
+        for (const frame of frames) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(frame);
+          } catch {
+            conclude(false);
+            return;
+          }
+          if (!requested) {
+            if ((parsed as RuntimeChannelGreeting)?.protocol !== RUNTIME_CHANNEL_PROTOCOL) {
+              conclude(false);
+              return;
+            }
+            requested = true;
+            connection.write(
+              `${JSON.stringify({ v: RUNTIME_CHANNEL_PROTOCOL, id: STAND_DOWN_REQUEST, path: RUNTIME_STAND_DOWN_PATH })}\n`,
+            );
+            continue;
+          }
+          const response = parsed as RuntimeChannelResponse;
+          if (response?.id === STAND_DOWN_REQUEST && !response.ok) {
+            conclude(false);
+            return;
+          }
         }
       });
     });

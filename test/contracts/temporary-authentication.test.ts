@@ -160,6 +160,97 @@ describe('temporary authentication', () => {
     expect(persistence.stage).not.toHaveBeenCalled();
   });
 
+  /**
+   * The one thing this ticket is for: a runtime that is running no longer refuses the authentication with an
+   * instruction to stop Homebridge by hand. It is asked to stand down, and the authentication proceeds. The
+   * evidence that it did is the lease this flow then acquires, not the answer it gave.
+   */
+  it('asks a running runtime to stand down and proceeds on the lease it then acquires', async () => {
+    const calls: string[] = [];
+    const fresh = vi.fn(async () =>
+      calls.includes('stand-down') ? null : { state: 'ready' as const, updatedAt: '2026-08-11T12:00:00.000Z' },
+    );
+    const acquire = vi.fn(async () => {
+      calls.push('acquire');
+      return {
+        state: 'owner' as const,
+        lease: { release: vi.fn(async () => ({ state: 'stopped' as const })) },
+        recovered: false,
+      };
+    });
+    const stage = vi.fn(async () => {
+      calls.push('stage');
+      throw new Error('synthetic staging failure');
+    });
+    const authentication = new TemporaryAuthentication(
+      { acquire },
+      { stage },
+      vi.fn(),
+      { flowTimeoutMs: 1_000, cleanupTimeoutMs: 100 },
+      { fresh },
+      {
+        requestStandDown: vi.fn(async () => {
+          calls.push('stand-down');
+          return true;
+        }),
+      },
+    );
+
+    await expect(authentication.start(authenticationInput())).resolves.toEqual({ status: 'failed' });
+    expect(calls).toEqual(['stand-down', 'acquire', 'stage']);
+  });
+
+  /**
+   * A runtime that refuses, is absent, or runs code older than the path leaves this flow reporting exactly what
+   * it reported before the channel existed, which is what keeps the manual instruction correct.
+   */
+  it('reports a running plugin when nothing stands down', async () => {
+    const ownership = { acquire: vi.fn() };
+    const persistence = { stage: vi.fn() };
+    const requestStandDown = vi.fn(async () => false);
+    const authentication = new TemporaryAuthentication(
+      ownership,
+      persistence,
+      vi.fn(),
+      { flowTimeoutMs: 1_000, cleanupTimeoutMs: 100 },
+      { fresh: vi.fn(async () => ({ state: 'ready' as const, updatedAt: '2026-08-11T12:00:00.000Z' })) },
+      { requestStandDown },
+    );
+
+    await expect(authentication.start(authenticationInput())).resolves.toEqual({
+      status: 'plugin-running',
+      state: 'ready',
+      updatedAt: '2026-08-11T12:00:00.000Z',
+    });
+    expect(requestStandDown).toHaveBeenCalledOnce();
+    expect(ownership.acquire).not.toHaveBeenCalled();
+    expect(persistence.stage).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A stand-down is only asked for where a runtime is actually running, so a first setup and a deliberately
+   * stopped Homebridge never take a session away from anything.
+   */
+  it('asks nothing of a runtime that is not running', async () => {
+    const requestStandDown = vi.fn(async () => true);
+    const authentication = new TemporaryAuthentication(
+      {
+        acquire: vi.fn(async () => ({
+          state: 'owner-conflict' as const,
+          owner: { acquiredAt: '2026-08-11T12:00:00.000Z', kind: 'runtime' as const, pid: 4242 },
+        })),
+      },
+      { stage: vi.fn() },
+      vi.fn(),
+      { flowTimeoutMs: 1_000, cleanupTimeoutMs: 100 },
+      { fresh: vi.fn(async () => null) },
+      { requestStandDown },
+    );
+
+    await expect(authentication.start(authenticationInput())).resolves.toMatchObject({ status: 'blocked' });
+    expect(requestStandDown).not.toHaveBeenCalled();
+  });
+
   it('fails without exposing an authentication error and discards staged stores', async () => {
     const release = vi.fn(async () => ({ state: 'stopped' as const }));
     const stores = {

@@ -214,6 +214,49 @@ account, device, or host fact.
 Nothing is reported back. A runtime that is absent, older than the path, or unconvinced by the file leaves the
 authorization exactly as the file states it, which is the behaviour without the channel.
 
+### Standing the runtime down on request
+
+An interactive authentication requires that nothing else own the account session, and the runtime owns it
+whenever the plugin is working. For most of V5 the UI detected that and refused, telling the human to run
+`sudo systemctl stop homebridge` — which stops every other plugin on the host to free one plugin's session, and
+refuses rather than warns if they did not. The channel retires that instruction.
+
+Two ways to free the session were considered. Ending the process and letting Homebridge respawn the child
+bridge is cheap and was measured working, but it is conditional on the user having configured a child bridge,
+and the detection is the gate: a misfire ends all of Homebridge, and the running child bridge's `environ` was
+not readable even under `sudo`, so no reliable detection was established. Cycling `RuntimeOwner` is correct on
+every host, drops no HAP connection, and touches no other plugin, so that is what this is. Its cost is that
+`RuntimeOwner` converges on one idempotent cleanup by design, and cycling must not turn that into two release
+paths.
+
+The protocol separates the request from the evidence. The runtime answers that it accepted the request, which
+is a claim and nothing more; standing down then runs the same bounded cleanup a shutdown runs, and the endpoint
+closes inside the release guard. A client that observes its connection close has therefore observed a released
+lease, and a client that observes nothing has observed nothing. Either way the authentication proves the
+session is free the only way it can: by acquiring the lease itself, through the gate that was always there. A
+runtime that refuses, is absent, runs code older than the path, or does not finish within its own bounded
+shutdown leaves the authentication reporting exactly what it reports today.
+
+A stand-down with no way back would be worse than the instruction it replaces. Stopping Homebridge by hand is
+deliberate enough that the human knows to start it again; one click that silently costs a user their cameras
+until they notice is not. So a runtime that stood down on request takes the lease back on its own. Nothing can
+tell it when to: the endpoint's lifetime is the lease, so the channel is gone for exactly as long as the reason
+to re-arm lasts, and the UI process that asked may itself be gone. It therefore retries acquiring the lease on
+a bounded interval, over a window that must outlast the interactive authentication it stood down for, whose own
+deadline is five minutes. An attempt that finds the lease still held is the ordinary case rather than a fault,
+so it reports no state and writes no record; the runtime is stopped for the whole window until it is not, which
+is what it is.
+
+Re-arming does not re-read a replaced account. `accounts/active.json` is read at every start, so a cycle would
+otherwise pick up a new generation and a new configuration without the HomeKit reconciliation a restart
+performs, quietly making account replacement re-entrant. That is a separate decision with its own record, so a
+re-arm is abandoned when the active generation is no longer the one the runtime stood down from, and
+`restart-required` stands. A Homebridge shutdown arriving during or after a stand-down cancels the re-arm
+rather than racing it.
+
+The retained registry view is not withdrawn while the runtime is down. A stopped runtime keeps its latest
+complete inventory for HomeKit topology, and standing down on request is a stopped runtime.
+
 ## Module design
 
 Interfaces live beside the consumer that needs them. The exception is the domain-owned type-only media seam

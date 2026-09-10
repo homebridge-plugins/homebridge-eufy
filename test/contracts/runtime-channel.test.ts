@@ -22,6 +22,7 @@ import {
   RUNTIME_CHANNEL_IDLE_TIMEOUT_MS,
   RUNTIME_CHANNEL_PROTOCOL,
   RUNTIME_CHANNEL_RESPONSE_TIMEOUT_MS,
+  RUNTIME_CHANNEL_STAND_DOWN_TIMEOUT_MS,
   RUNTIME_DIAGNOSTICS_PATH,
   type RuntimeChannelAuthorization,
   type RuntimeChannelDevice,
@@ -1335,5 +1336,93 @@ describe('a runtime picking up an authorization it is notified of', () => {
 
     expect(existsSync(join(root, 'logs', 'homebridge-eufy.jsonl'))).toBe(false);
     await runtime.stop();
+  });
+});
+
+describe('a stand-down requested over the channel', () => {
+  let root: string;
+  let servers: RuntimeChannelServer[];
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'homebridge-eufy-channel-stand-down-'));
+    servers = [];
+  });
+
+  afterEach(async () => {
+    for (const server of servers) {
+      server.close();
+    }
+    await rm(root, { force: true, recursive: true });
+  });
+
+  /**
+   * The runtime answers that it accepted the request and then closes the endpoint inside its release guard, so
+   * the closing is what a client observes. Acceptance is a claim; only the lease is evidence, and this reports
+   * the claim so a caller knows whether to wait for the lease at all.
+   */
+  it('reports a stand-down the runtime accepted and then completed', async () => {
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    const server = new RuntimeChannelServer(endpoint, () => status(), {
+      standDown: () => {
+        setTimeout(() => server.close(), 5);
+        return true;
+      },
+    });
+    servers.push(server);
+    await server.open();
+
+    await expect(new RuntimeChannelClient(endpoint).requestStandDown()).resolves.toBe(true);
+  });
+
+  /**
+   * A runtime that holds no lease has nothing to release and refuses, which the caller must distinguish from a
+   * stand-down, because the manual instruction still applies.
+   */
+  it('reports a refusal as no stand-down', async () => {
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    const server = new RuntimeChannelServer(endpoint, () => status(), { standDown: () => false });
+    servers.push(server);
+    await server.open();
+
+    await expect(new RuntimeChannelClient(endpoint).requestStandDown()).resolves.toBe(false);
+  });
+
+  /**
+   * A runtime running code older than this path serves no stand-down and answers a refusal, and one that is not
+   * there answers nothing. Both are the behaviour without the channel.
+   */
+  it('reports no stand-down from a runtime that serves none, or none at all', async () => {
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    const server = new RuntimeChannelServer(endpoint, () => status());
+    servers.push(server);
+
+    await expect(new RuntimeChannelClient(endpoint).requestStandDown()).resolves.toBe(false);
+    await server.open();
+    await expect(new RuntimeChannelClient(endpoint).requestStandDown()).resolves.toBe(false);
+  });
+
+  /**
+   * A protocol this client does not speak is never sent a stand-down, because a frame read as something else by
+   * an older runtime could take a session down without anything asking it to.
+   */
+  it('sends nothing to a runtime that speaks another protocol', async () => {
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    const standDown = vi.fn(() => true);
+    const server = new RuntimeChannelServer(endpoint, () => status(), {
+      protocol: RUNTIME_CHANNEL_PROTOCOL + 1,
+      standDown,
+    });
+    servers.push(server);
+    await server.open();
+
+    await expect(new RuntimeChannelClient(endpoint).requestStandDown()).resolves.toBe(false);
+    expect(standDown).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The bound outlasts the runtime's own bounded shutdown, because the endpoint closes at the end of it.
+   */
+  it('waits longer for a stand-down than the runtime shutdown deadline it must outlast', () => {
+    expect(RUNTIME_CHANNEL_STAND_DOWN_TIMEOUT_MS).toBeGreaterThan(10_000);
   });
 });

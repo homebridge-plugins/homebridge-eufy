@@ -31,6 +31,7 @@ import { readDashboard } from './dashboard.js';
 import {
   RuntimeChannelClient,
   type RuntimeDiagnosticsChannel,
+  type RuntimeStandDownChannel,
   type RuntimeStatusChannel,
 } from './runtime-channel-client.js';
 
@@ -224,7 +225,7 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
   private readonly ownership: AccountOwnership;
   private readonly persistence: AccountSessionPersistence;
   private readonly runtimeTracker: RuntimeTracker;
-  private readonly runtimeChannel: RuntimeStatusChannel & RuntimeDiagnosticsChannel;
+  private readonly runtimeChannel: RuntimeStatusChannel & RuntimeDiagnosticsChannel & RuntimeStandDownChannel;
   private readonly images: PersistedLastSuccessfulImages;
   private readonly diagnostics: GuidedDiagnostics;
   private startPending = false;
@@ -300,6 +301,7 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
           cleanupTimeoutMs: AUTHENTICATION_CLEANUP_TIMEOUT_MS,
         },
         this.runtimeTracker,
+        this.runtimeChannel,
       );
       return await this.authentication.start(parseAuthenticationStart(payload));
     } finally {

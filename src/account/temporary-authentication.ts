@@ -92,6 +92,17 @@ interface TemporaryRuntimeActivity {
   fresh(): Promise<TemporaryRuntimeEvidence | null>;
 }
 
+/**
+ * The running runtime's willingness to release the account session so this flow may own it.
+ *
+ * Declared beside its consumer, so this module depends on an answer rather than on a transport. A false answer
+ * covers every way it could not be asked, and the answer is never taken as proof: the lease this flow acquires
+ * afterwards is what proves the session is free.
+ */
+interface TemporaryRuntimeStandDown {
+  requestStandDown(): Promise<boolean>;
+}
+
 interface TemporaryRuntimeEvidence {
   state: string;
   updatedAt: string;
@@ -133,6 +144,7 @@ export class TemporaryAuthentication {
     private readonly clientFactory: TemporaryAuthenticationClientFactory,
     private readonly options: TemporaryAuthenticationOptions,
     private readonly runtimeActivity?: TemporaryRuntimeActivity,
+    private readonly runtimeStandDown?: TemporaryRuntimeStandDown,
   ) {}
 
   async start(input: TemporaryAuthenticationInput): Promise<TemporaryAuthenticationResult> {
@@ -149,10 +161,18 @@ export class TemporaryAuthentication {
         return this.expire();
       }
       if (runtime) {
-        this.state = 'settled';
-        const result = { status: 'plugin-running', ...runtime } as const;
-        this.terminalResult = result;
-        return result;
+        const stoodDown = this.runtimeStandDown
+          ? await this.waitForFlow(this.runtimeStandDown.requestStandDown())
+          : false;
+        if (stoodDown === FLOW_TIMEOUT) {
+          return this.expire();
+        }
+        if (!stoodDown) {
+          this.state = 'settled';
+          const result = { status: 'plugin-running', ...runtime } as const;
+          this.terminalResult = result;
+          return result;
+        }
       }
       if (this.isSettled()) {
         return this.terminalResult ?? { status: 'closed' };
