@@ -600,19 +600,29 @@ button.diagnostics-quiet-action {
   text-transform: uppercase;
 }
 
+/* The grid measures itself against this, so a row height can be stated as a fraction of a column width. */
+.device-group {
+  container-type: inline-size;
+}
+
 .device-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  /* Tiles of two heights share this grid, so a row keeps each at its own rather than stretching the short ones. */
-  align-items: start;
+  /*
+   * A row is half a column tall, so a camera spanning two of them plus the gap between is exactly square and two
+   * short tiles stack into the height one camera holds. Stated in container units because the row has to follow
+   * the column, and the column is a fraction of a width only the container knows.
+   */
+  grid-auto-rows: calc(((100cqw - 24px) / 3 - 12px) / 2);
+  /* Short tiles fill the space beside a camera rather than starting a row of their own. */
+  grid-auto-flow: row dense;
   gap: 12px;
 }
 
 .device-tile {
   position: relative;
   min-width: 0;
-  min-height: 180px;
-  aspect-ratio: 1;
+  grid-row: span 2;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
@@ -629,8 +639,7 @@ button.diagnostics-quiet-action {
  * on nothing, and a household of sensors pushes the cameras off the screen.
  */
 .device-tile:not([data-device-class='camera']) {
-  aspect-ratio: 2;
-  min-height: 90px;
+  grid-row: span 1;
 }
 
 /* Half a tile is too little for the photograph to sit behind the copy, so it keeps to a strip beside it. */
@@ -649,11 +658,16 @@ button.diagnostics-quiet-action {
 }
 
 /*
- * A device that has to explain itself keeps the full square, because its settings face is a paragraph rather
- * than a switch and half a tile truncates it. Rank 2 is the diagnostic-only device, the only one that explains.
+ * The explanation on a short tile gives up the icon and the deep padding to fit, because the words are the point
+ * and the badge on the front face already carries the same icon.
  */
-.device-tile[data-rank='2'] {
-  aspect-ratio: 1;
+.device-tile:not([data-device-class='camera']) .diagnostic-panel {
+  gap: 2px;
+  padding: 12px;
+}
+
+.device-tile:not([data-device-class='camera']) .diagnostic-panel img {
+  display: none;
 }
 
 .device-tile-changed {
@@ -1739,6 +1753,7 @@ input:focus-visible {
 @media (max-width: 760px) {
   .device-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: calc(((100cqw - 12px) / 2 - 12px) / 2);
   }
 }
 
@@ -1774,6 +1789,13 @@ input:focus-visible {
 
   .device-grid {
     grid-template-columns: 1fr;
+    /* One column is already a stack, so the row unit and the spans give way to the tile's own ratio. */
+    grid-auto-rows: auto;
+  }
+
+  .device-tile,
+  .device-tile:not([data-device-class='camera']) {
+    grid-row: auto;
   }
 
   .device-summary {
