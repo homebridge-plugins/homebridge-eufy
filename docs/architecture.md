@@ -72,7 +72,7 @@ Dependencies follow these directions:
 | `runtime/`    | account, configuration, device                                                                              |
 | `media/`      | configuration, device                                                                                       |
 | `homekit/`    | device, plus type-only imports from `media/contracts.ts`                                                    |
-| `ui/`         | account, configuration, device, HomeKit admission policy, media retention, persisted runtime views, storage |
+| `ui/`         | account, configuration, device, HomeKit admission policy, media retention, persisted and live runtime views, storage |
 | `platform.ts` | configuration, runtime, HomeKit, media, storage                                                             |
 | `index.ts`    | platform and settings                                                                                       |
 
@@ -122,6 +122,72 @@ scroll position, so nothing in the shell claims to be.
 Only `runtime/sdk-client.ts` and `ui/server.ts` may construct a concrete SDK client. Other modules may
 consume public typed SDK capabilities relevant to their policy, but may not import SDK transports,
 private package paths, or the client facade.
+
+### The live runtime channel
+
+The custom UI runs in its own child process and shares nothing with the runtime but the storage directory,
+so for most of V5 it could read what the runtime had written and nothing else. The persisted tracker record
+carries runtime state as far as its last heartbeat, which is up to a minute old, and that is long enough for
+the dashboard to tell a user to restart Homebridge while the plugin is demonstrably running. `runtime/`
+therefore serves a bounded request/response channel that the UI consumes when it is there.
+
+The channel is additive, and the acceptance property is not that it works but that the interface is unchanged
+without it. It is absent in four ordinary situations, not one: a first setup where nothing is configured, a
+runtime that is failing to start — which is the case support diagnostics exist for — a Homebridge deliberately
+stopped so an account can be authenticated, and a package upgraded without a restart, where the UI child
+process runs this file's newest copy while the runtime runs the previously installed one. The last of those is
+why the protocol carries a version the client refuses to speak across: without one, that skew is an
+intermittent fault reported by users rather than a silent degradation to the files.
+
+The endpoint's lifetime is the ownership lease. It is opened once this process is the account's owner and
+closed inside the release guard, before a successor can acquire, so a bound endpoint always belongs to the
+process that owns the session. That ordering is what makes removing a predecessor's socket safe — a live owner
+would hold the lease, so an entry found at a private address belongs to a process that is gone — and it is
+also why the endpoint is opened before the SDK client starts rather than after: a runtime that answers
+`ready: false` is more informative to the UI than a refused connection, and a bound endpoint is not readiness.
+
+The endpoint is never evidence of ownership. Every gate that consults the lease still consults it. A message
+saying a runtime has stood down is a claim; a pid whose recorded start time still matches is evidence, and
+only the lease carries that.
+
+Its address is derived from the platform and the storage root both processes already resolve, never
+discovered, so the UI cannot learn an address from a file and the two sides cannot disagree about one.
+Windows has no filesystem socket, so the address is a named pipe scoped by the storage root's digest, which
+also keeps two Homebridge instances on one host from colliding; a pipe has no inode, so nothing is left behind
+to remove. Elsewhere it is an owner-only socket inside the storage root, unless that path would exceed
+`sun_path` — 104 bytes on macOS, 108 on Linux, both including the terminator — in which case it moves to the
+temporary directory under the same digest. That limit is measured in bytes rather than characters because an
+accented home directory is the ordinary way a path that looks short crosses it, and exceeding it fails at
+`listen` with a bare `EINVAL`: unguarded, the feature would be silently dead on some hosts and working
+everywhere it was tested. The fallback is the one address another local user can create an entry at, so an
+existing entry there is proven to be an owner-only socket belonging to this user before it is connected to or
+removed; otherwise a user who created the name first would be handed this runtime's answers.
+
+What crosses is a closed set of scalar fields, projected onto that set rather than copied from the provider.
+The socket is outside the type system that stops `runtime/` importing `ui/`, which is what mechanically keeps
+credentials out of the runtime process, so the ban is re-enforced at the wire and asserted there. The complete
+device snapshot is deliberately not carried: the UI reads it from the tracker file, it does not change between
+state transitions, and copying a megabyte of manifests onto every read would make the channel slower than the
+file it exists to be fresher than. The devices a dashboard shows therefore still come only from a published
+inventory, which is the allowlisted read model and the one thing a stale or degraded runtime is defined to
+retain, while the state beside them is the one the runtime holds now.
+
+Every failure is one outcome for the consumer: absence. An unreachable address, a refused connection, an
+unshared protocol, a bound endpoint that never answers, an oversized or malformed frame, and a shared address
+owned by someone else all resolve to nothing rather than to an error, because the UI's behaviour for all of
+them is to read the files it already reads, and reporting them apart would invite a caller to treat a first
+setup as a fault. A runtime that cannot bind its endpoint reports that and starts anyway, because trading a
+degraded interface for no plugin at all is the worse failure.
+
+Five designs were considered and rejected. A loopback TCP port is reachable by every local user and would
+need an authenticator of its own, where a filesystem socket inherits the exclusion the storage root already
+has and a named pipe inherits the creating token's. A top-level module for the transport would put the server
+outside the module that owns the state it answers about, and the module set is closed. Widening the polled
+file instead would have cost nothing to build — the diagnostics session file is already read live by the
+runtime — but a file carries no bounded answer to a question, and polling it faster spends the one thread the
+whole plugin shares. A pooled connection would have to be reconciled with a runtime that releases its lease
+underneath it, and a dashboard opening is not a hot path. Letting a bound endpoint stand for ownership would
+replace evidence with a claim.
 
 ## Module design
 

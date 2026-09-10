@@ -927,6 +927,7 @@ describe('persisted runtime owner', () => {
     const runtime = new RuntimeOwner({ error: vi.fn(), warn }, config, () => client, {
       storageRoot: '/synthetic-runtime',
       shutdownTimeoutMs: 1_000,
+      channel: { open: async () => true, close: () => undefined },
       ownership: {
         acquire: vi.fn(async () => ({
           state: 'owner' as const,

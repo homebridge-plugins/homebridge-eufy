@@ -112,6 +112,14 @@ _Avoid_: UI client, secondary client
 A versioned, allowlisted view of the latest complete device information published for configuration and diagnostics consumers.
 _Avoid_: SDK cache, raw device dump
 
+**Live runtime channel**:
+The bounded request/response channel the runtime owner serves for as long as it holds the ownership lease, and the custom UI consumes when it is present; it answers a closed set of fields, carries no credential, and is never ownership evidence.
+_Avoid_: IPC, socket API, runtime RPC
+
+**Runtime channel endpoint**:
+The address the live runtime channel is served on, derived from the platform and the storage root rather than discovered, and existing only while its lease is held.
+_Avoid_: Socket path, pipe name
+
 ## Configuration
 
 **Configuration-block identity**:

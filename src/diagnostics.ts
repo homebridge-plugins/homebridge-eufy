@@ -1825,6 +1825,10 @@ const RUNTIME_NOTICES = {
     level: 'warn',
     messageKey: 'log.notice.stateSubscriberFailed',
   },
+  'channel-serve-failed': {
+    level: 'warn',
+    messageKey: 'log.notice.channelServeFailed',
+  },
 } as const;
 
 export type RuntimeNoticeCode = keyof typeof RUNTIME_NOTICES;

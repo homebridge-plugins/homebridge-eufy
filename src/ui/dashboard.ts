@@ -4,6 +4,7 @@ import { describeHomeKitRepresentation } from '../homekit/representation.js';
 import { MOTION_EVENT_REQUIREMENTS } from '../homekit/adapters/motion.js';
 import { DOORBELL_PRESS_EVENT } from '../homekit/adapters/doorbell.js';
 import type { RuntimeTrackerRecord } from '../runtime/tracker.js';
+import type { RuntimeStatusChannel } from './runtime-channel-client.js';
 
 const DASHBOARD_FRESH_THRESHOLD_MS = 90_000;
 
@@ -105,27 +106,35 @@ function projectDevice(manifest: DeviceManifest, representationEnabled: boolean 
   };
 }
 
-function stateOf(record: RuntimeTrackerRecord): DashboardState {
-  if (record.state === 'authentication-required') {
+/** Classifies runtime evidence, whether it was published to a file or stated by the running process. */
+function stateOf(evidence: Pick<RuntimeTrackerRecord, 'state' | 'status' | 'complete'>): DashboardState {
+  if (evidence.state === 'authentication-required') {
     return 'authentication-required';
   }
-  if (record.state === 'owner-conflict') {
+  if (evidence.state === 'owner-conflict') {
     return 'owner-conflict';
   }
-  if (record.state === 'degraded' && record.status === 'transport-degraded') {
+  if (evidence.state === 'degraded' && evidence.status === 'transport-degraded') {
     return 'degraded';
   }
-  if (record.state === 'ready' && record.complete) {
+  if (evidence.state === 'ready' && evidence.complete) {
     return 'ready';
   }
   return 'incomplete';
 }
 
-/** Projects one persisted runtime snapshot without opening an Eufy connection. */
+/**
+ * Projects one persisted runtime snapshot without opening an Eufy connection.
+ *
+ * The devices only ever come from a published inventory, which is the allowlisted read model and the one
+ * thing a stale or degraded runtime retains. The runtime's state is the live one whenever a runtime is there
+ * to state it, and the file's own state and freshness alone when none is.
+ */
 export async function readDashboard(
   tracker: DashboardTracker,
   now: () => number = Date.now,
   representationPreferences: Readonly<Record<string, boolean>> = {},
+  channel?: RuntimeStatusChannel,
 ): Promise<DashboardSnapshot> {
   const record = await tracker.read();
   if (!record) {
@@ -146,6 +155,10 @@ export async function readDashboard(
         .filter((event) => mediaTriggering.has(event)),
     ),
   ].sort();
+  const live = await channel?.read();
+  if (live) {
+    return { state: stateOf(live.status), updatedAt: live.status.updatedAt, devices, warmUpCandidates };
+  }
   if (!Number.isFinite(updatedAt) || age < -5_000 || age > DASHBOARD_FRESH_THRESHOLD_MS) {
     return { state: 'stale', updatedAt: record.updatedAt, devices, warmUpCandidates };
   }

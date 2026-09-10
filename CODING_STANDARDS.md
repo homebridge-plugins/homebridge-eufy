@@ -124,6 +124,12 @@ The canonical vocabulary is defined in [CONTEXT.md](./CONTEXT.md).
   challenge answers do not cross runtime IPC.
 - UI and runtime access to a shared SDK session must use an explicit, bounded handoff. Never run two
   realtime owners against the same session by accident.
+- The runtime serves a bounded request/response channel that the UI consumes when it is there. Its endpoint
+  is derived from the platform and the storage root, opened only once the ownership lease is held, and closed
+  inside the release guard. It is never evidence of ownership, it carries a protocol version a client refuses
+  to speak across, and what crosses it is a closed set of fields projected onto that set. The UI must behave
+  exactly as it does without the channel, because the channel is absent during a first setup, a runtime that
+  will not start, a deliberate stop, and an upgrade without a restart.
 - The dashboard consumes runtime summaries or deliberate one-shot reads; it must not recreate a
   second capability model from SDK internals.
 - IPC has bounded connection and response timeouts. A bound socket is not readiness; expose an

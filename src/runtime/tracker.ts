@@ -65,7 +65,8 @@ export interface RuntimeTrackerUpdate {
   status?: RuntimeStatus;
 }
 
-function defaultStatus(state: RuntimeState): RuntimeStatus {
+/** The status a state implies when no caller states one, and the one mapping between the two. */
+export function runtimeStatusFor(state: RuntimeState): RuntimeStatus {
   switch (state) {
     case 'ready':
       return 'connected';
@@ -181,7 +182,7 @@ export class RuntimeTracker {
       generation: update.generation ?? this.current?.generation,
       complete: update.complete ?? state === 'ready',
       snapshot,
-      status: update.status ?? defaultStatus(state),
+      status: update.status ?? runtimeStatusFor(state),
     };
     if (!ACTIVE_RUNTIME_STATES.has(state)) {
       clearInterval(this.heartbeat);
@@ -192,6 +193,11 @@ export class RuntimeTracker {
     }
     this.current = record;
     return true;
+  }
+
+  /** The record this publisher last published. */
+  latest(): RuntimeTrackerRecord | undefined {
+    return this.current;
   }
 
   stop(): void {

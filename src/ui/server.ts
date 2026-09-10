@@ -23,9 +23,11 @@ import {
   type DiagnosticsUiEvent,
 } from '../diagnostics.js';
 import { PersistedLastSuccessfulImages } from '../media/last-successful-image.js';
+import { runtimeChannelEndpointForHost } from '../runtime/channel.js';
 import { RuntimeTracker } from '../runtime/tracker.js';
 import { resolveStorageRoot } from '../storage.js';
 import { readDashboard } from './dashboard.js';
+import { RuntimeChannelClient, type RuntimeStatusChannel } from './runtime-channel-client.js';
 
 const AUTHENTICATION_FLOW_TIMEOUT_MS = 5 * 60_000;
 const AUTHENTICATION_CLEANUP_TIMEOUT_MS = 10_000;
@@ -198,6 +200,7 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
   private readonly ownership: AccountOwnership;
   private readonly persistence: AccountSessionPersistence;
   private readonly runtimeTracker: RuntimeTracker;
+  private readonly runtimeChannel: RuntimeStatusChannel;
   private readonly diagnostics: GuidedDiagnostics;
   private startPending = false;
   private flowGeneration = 0;
@@ -215,6 +218,7 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
       new PersistedLastSuccessfulImages(root).discardAll(),
     );
     this.runtimeTracker = new RuntimeTracker(join(root, 'tracker.json'));
+    this.runtimeChannel = new RuntimeChannelClient(runtimeChannelEndpointForHost(root));
     this.diagnostics = new GuidedDiagnostics(root);
 
     this.onRequest('/auth/start', (payload) => this.startAuthentication(payload));
@@ -222,7 +226,7 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
     this.onRequest('/auth/two-factor', (payload) => this.continueTwoFactor(payload));
     this.onRequest('/auth/close', () => this.closeAuthentication());
     this.onRequest('/dashboard', (payload) =>
-      readDashboard(this.runtimeTracker, Date.now, parseRepresentationPreferences(payload)),
+      readDashboard(this.runtimeTracker, Date.now, parseRepresentationPreferences(payload), this.runtimeChannel),
     );
     this.onRequest('/diagnostics/status', () => this.diagnostics.status());
     this.onRequest('/diagnostics/authorize', (payload) => {

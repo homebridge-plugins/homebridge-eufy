@@ -32,6 +32,7 @@ describe('verification gate', () => {
       adapters: /-adapter\.test\.ts$/,
       migration: /^(?:configuration|storage-root)\.test\.ts$/,
       ownership: /^(?:account-ownership|runtime-owner)\.test\.ts$/,
+      'runtime channel': /^runtime-channel\.test\.ts$/,
       media: /^(?:live|recording)-media\.test\.ts$/,
       dashboard: /^dashboard\.test\.ts$/,
       diagnostics: /^(?:guided-diagnostics|diagnostic-conditions)\.test\.ts$/,

@@ -7,8 +7,9 @@ import { AccountSessionPersistence } from '../account/persistence.js';
 import type { EufyConfig } from '../configuration.js';
 import { reportRuntimeNotice, type PlatformLogger, type RuntimeState, type UnconfirmedWrite } from '../diagnostics.js';
 import { parseCompleteDeviceSnapshot, type CompleteDeviceSnapshot } from '../device/snapshot.js';
+import { RuntimeChannelServer, runtimeChannelEndpointForHost, type RuntimeChannelStatus } from './channel.js';
 import type { SdkClient, SdkClientFactory, SdkStartResult } from './sdk-client.js';
-import { RuntimeTracker, type RuntimeTrackerUpdate } from './tracker.js';
+import { RuntimeTracker, runtimeStatusFor, type RuntimeTrackerRecord, type RuntimeTrackerUpdate } from './tracker.js';
 
 export type RuntimeLogger = Pick<PlatformLogger, 'error' | 'warn'> & Partial<Pick<PlatformLogger, 'debug' | 'info'>>;
 
@@ -47,7 +48,20 @@ export interface RuntimeActiveAccount {
 export interface RuntimeStatusPublisher {
   start(state?: RuntimeState, update?: RuntimeTrackerUpdate): boolean;
   update(state: RuntimeState, update?: RuntimeTrackerUpdate): boolean;
+  latest?(): RuntimeTrackerRecord | undefined;
   stop(): void;
+}
+
+/**
+ * The live status channel this runtime serves while it owns the account session.
+ *
+ * Declared beside its consumer, so the runtime depends on an endpoint's lifetime rather than on a transport.
+ * `open` reports whether it bound. `close` is synchronous and complete when it returns, so it may be called
+ * from inside the ownership release guard.
+ */
+export interface RuntimeChannelHost {
+  open(): Promise<boolean>;
+  close(): void;
 }
 
 export interface RuntimeOwnerOptions {
@@ -56,6 +70,7 @@ export interface RuntimeOwnerOptions {
   ownership?: RuntimeOwnership;
   persistence?: RuntimePersistence;
   statusPublisher?: RuntimeStatusPublisher;
+  channel?: RuntimeChannelHost;
 }
 
 export interface RuntimeRegistryView {
@@ -77,6 +92,7 @@ export class RuntimeOwner {
   private stopPromise?: Promise<void>;
   private statusPublisher?: RuntimeStatusPublisher;
   private statusPublisherActive = false;
+  private channel?: RuntimeChannelHost;
   private ownership?: RuntimeOwnership;
   private accountScope?: string;
   private runtimeLease?: RuntimeLease;
@@ -104,6 +120,7 @@ export class RuntimeOwner {
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? 10_000;
     this.ownership = options.ownership;
     this.statusPublisher = options.statusPublisher;
+    this.channel = options.channel;
     if (this.storageRoot) {
       this.persistence = options.persistence ?? new AccountSessionPersistence(join(this.storageRoot, 'accounts'));
     } else {
@@ -218,6 +235,7 @@ export class RuntimeOwner {
           return;
         }
         this.runtimeLease = ownership.lease;
+        await this.openChannel();
         const previousSnapshot = active.snapshot.load() ?? undefined;
         if (
           !this.statusPublisher?.start('starting', {
@@ -409,7 +427,10 @@ export class RuntimeOwner {
     const cleanupFailedBeforeRelease = clientStopped !== true || ownershipSettled !== true;
     let publishedTerminalState = cleanupFailedBeforeRelease ? 'failed' : (this.cleanupTerminalState ?? completedState);
     const leaseReleased = await this.boundedCleanup(
-      this.releaseRuntimeLease(() => this.publishTerminalState(publishedTerminalState, update)),
+      this.releaseRuntimeLease(() => {
+        this.channel?.close();
+        this.publishTerminalState(publishedTerminalState, update);
+      }),
       deadline,
     );
     const timedOut = clientStopped === 'timeout' || ownershipSettled === 'timeout' || leaseReleased === 'timeout';
@@ -422,6 +443,42 @@ export class RuntimeOwner {
     }
     const terminalState = leaseReleased === true ? publishedTerminalState : 'failed';
     this.transitionTo(terminalState);
+  }
+
+  /**
+   * Binds the live channel once this process is the account's owner.
+   *
+   * The endpoint's lifetime is the lease's: opened here, and closed inside the release guard. An unbound
+   * endpoint is reported and the runtime starts without one.
+   */
+  private async openChannel(): Promise<void> {
+    if (this.storageRoot) {
+      this.channel ??= new RuntimeChannelServer(runtimeChannelEndpointForHost(this.storageRoot), () =>
+        this.channelStatus(),
+      );
+    }
+    if (this.channel && !(await this.channel.open())) {
+      reportRuntimeNotice(this.log, 'channel-serve-failed');
+    }
+  }
+
+  /**
+   * What the live channel answers: the state this runtime holds now, and the inventory it last published.
+   *
+   * `status` accompanies the state it was published with, and is otherwise derived from the live state
+   * through the one mapping the tracker uses, so the pair cannot disagree. `generation` and `complete`
+   * describe the published inventory and outlive a state change. `updatedAt` is when this answer was given.
+   */
+  private channelStatus(): RuntimeChannelStatus {
+    const published = this.statusPublisher?.latest?.();
+    const current = published?.state === this.runtimeState ? published : undefined;
+    return {
+      state: this.runtimeState,
+      status: current?.status ?? runtimeStatusFor(this.runtimeState),
+      ...(published?.generation === undefined ? {} : { generation: published.generation }),
+      complete: published?.complete ?? false,
+      updatedAt: new Date().toISOString(),
+    };
   }
 
   private publishTerminalState(

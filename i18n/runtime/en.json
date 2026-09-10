@@ -84,6 +84,7 @@
   "log.notice.shutdownTimeoutWithDuration": "The Eufy runtime exceeded its shutdown deadline; Homebridge shutdown will continue. ({durationMs} ms)",
   "log.notice.stateSubscriberFailed": "A runtime state consumer failed; review Homebridge Eufy health in the dashboard.",
   "log.notice.statusPublicationFailed": "Runtime status could not be published; dashboard status may be stale.",
+  "log.notice.channelServeFailed": "Live runtime status could not be served to the plugin settings page; it will show the last published status instead.",
   "log.runtime.authenticationRequired": "Eufy authentication is required",
   "log.runtime.failed": "The Eufy runtime failed",
   "log.runtime.ownerConflict": "Another process owns the Eufy account session",
