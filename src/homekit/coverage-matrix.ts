@@ -44,8 +44,6 @@ const COVERAGE_BY_ROW = new Map<string, { adapter: string; productEvidence?: str
 
 const BLOCKED = new Set([
   'ptz.rotationSpeed.read',
-  'ptz.panAngle.read',
-  'ptz.tiltAngle.read',
   'camera.imageFlipped.persistent-operation',
   'leak.leakDetected.read',
   'smoke.smokeDetected.read',
