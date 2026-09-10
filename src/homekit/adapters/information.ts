@@ -27,6 +27,17 @@ const REPRESENTED_INFORMATION = Object.entries(INFORMATION_POLICY).filter(
 /** The complete DeviceInfo surface reviewed by the plugin, including diagnostic-only members. */
 export const INFORMATION_SDK_ROWS = [...Object.keys(INFORMATION_POLICY).map((member) => `info.${member}.read`)];
 
+/**
+ * Answers the AccessoryInformation revision a reported vendor version represents: its leading two or
+ * three decimal components, or undefined when it leads with none.
+ *
+ * A controller substitutes `0.0` for a revision string outside that format, so a fourth component and
+ * a build suffix are not carried.
+ */
+function hapRevision(reported: string): string | undefined {
+  return /^\d+\.\d+(?:\.\d+)?/.exec(reported)?.[0];
+}
+
 /** The typed SDK identity accessor consumed by HomeKit. */
 export interface InformationSdkDevice {
   info?: () => DeviceInfo | undefined;
@@ -51,8 +62,12 @@ function attachInformation(context: AdapterAttachmentContext): AttachedAdapter |
 
   const service = context.accessory.getService(context.hap.Service.AccessoryInformation)!;
   for (const [member, characteristic] of REPRESENTED_INFORMATION) {
-    const value = info[member];
-    if (typeof value === 'string') {
+    const reported = info[member];
+    if (typeof reported !== 'string') {
+      continue;
+    }
+    const value = member === 'firmwareVersion' ? hapRevision(reported) : reported;
+    if (value !== undefined) {
       service.updateCharacteristic(context.hap.Characteristic[characteristic], value);
     }
   }
