@@ -1,11 +1,54 @@
+/*
+ * The scales this sheet holds to. A value outside one of them is a defect, not a preference.
+ *
+ * Spacing is a 4px grid. 2px appears only as an optical nudge, never as a gap or padding step.
+ * Radius, edge intensity, text level, and easing are tokens; no rule states one of them as a literal.
+ * Weight is 400 body, 500 label, 600 emphasis, 700 heading.
+ * Depth is edges. A border carries structure and only a floating layer carries a shadow.
+ */
 :root {
   color-scheme: light dark;
   --accent: #00bfc4;
   --accent-ink: #006f73;
-  --accent-soft: #fefefe;
+  --on-accent: #07383a;
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, var(--panel));
+
+  /*
+   * The four text levels: default, supporting, metadata, and disabled.
+   *
+   * The supporting and disabled levels are mixed against the panel rather than stated, so a host theme that
+   * moves `--bs-body-color` carries all four levels with it. The mix is redeclared in the dark block because a
+   * custom property resolves `var()` where it is declared, not where it is used.
+   */
   --ink: var(--bs-body-color, #182033);
+  --ink-secondary: color-mix(in srgb, var(--ink) 78%, var(--panel));
   --muted: var(--bs-secondary-color, #667085);
-  --line: var(--bs-border-color, #d9dfeb);
+  --ink-disabled: color-mix(in srgb, var(--muted) 55%, var(--panel));
+
+  --alert: #d99a21;
+  --fault: #b42318;
+
+  /*
+   * The two edge intensities. `--line` divides and encloses; `--line-strong` is for a control the user must
+   * find without looking for it. Both are alpha over the surface, so an edge belongs to whatever it sits on.
+   */
+  --line: rgb(23 32 44 / 11%);
+  --line-strong: rgb(23 32 44 / 19%);
+
+  --radius-sm: 4px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-panel: 16px;
+  --radius-pill: 999px;
+
+  --focus-ring: 2px solid var(--accent-ink);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  /* The one shadow in the sheet, for a layer that floats over content it does not belong to. */
+  --shadow-overlay:
+    0 0 0 1px rgb(23 32 44 / 6%),
+    0 4px 12px rgb(23 32 44 / 10%);
+
   --panel: #ffffff;
   --tile-bg: #edf2f7;
   --tile-ink: #17202c;
@@ -47,6 +90,8 @@ body {
     BlinkMacSystemFont,
     'Segoe UI',
     sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .shell {
@@ -56,7 +101,7 @@ body {
   margin: 0 auto;
   overflow: visible !important;
   scrollbar-width: none;
-  padding: 4px 0 18px;
+  padding: 4px 0 20px;
   color: var(--ink);
 }
 
@@ -67,15 +112,14 @@ body {
 .masthead {
   display: flex;
   align-items: center;
-  gap: 13px;
-  margin-bottom: 18px;
+  gap: 12px;
+  margin-bottom: 20px;
 }
 
 .eufy-logo {
   width: 100px;
   flex: 0 0 auto;
-  border-radius: 14px;
-  padding: 5px;
+  padding: 4px;
 }
 
 .eufy-logo img {
@@ -94,6 +138,17 @@ p {
   margin-top: 0;
 }
 
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+p,
+small {
+  text-wrap: pretty;
+}
+
 h1 {
   margin-bottom: 0;
   font-size: clamp(22px, 5vw, 30px);
@@ -105,29 +160,29 @@ h2 {
   margin-bottom: 0;
   font-size: 18px;
   line-height: 1.25;
+  letter-spacing: -0.01em;
 }
 
 .eyebrow {
-  margin-bottom: 3px;
+  margin-bottom: 4px;
   color: var(--muted);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.11em;
   text-transform: uppercase;
 }
 
 .panel {
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: var(--panel);
-  padding: clamp(18px, 5vw, 30px);
-  box-shadow: 0 14px 40px rgb(32 48 78 / 9%);
+  padding: clamp(16px, 5vw, 32px);
 }
 
 .legacy-notice {
   margin-bottom: 16px;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: var(--panel);
   padding: clamp(16px, 4vw, 24px);
 }
@@ -141,7 +196,7 @@ h2 {
 
 .dashboard-panel {
   display: grid;
-  gap: 18px;
+  gap: 20px;
   margin: 0;
   border: 0;
   background: transparent;
@@ -160,16 +215,16 @@ h2 {
 }
 
 .dashboard-panel-header .summary {
-  margin: 5px 0 0;
+  margin: 4px 0 0;
 }
 
 .dashboard-page-back {
   display: grid;
-  width: 38px;
-  min-height: 38px;
+  width: 40px;
+  min-height: 40px;
   place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
   background: var(--panel);
   color: var(--ink);
   padding: 0;
@@ -183,7 +238,10 @@ h2 {
   opacity: 0.72;
 }
 
-.diagnostics-panel .summary,
+.diagnostics-panel .summary {
+  margin-bottom: 0;
+}
+
 .diagnostics-status {
   margin-bottom: 0;
   color: var(--muted);
@@ -191,13 +249,13 @@ h2 {
 
 .diagnostics-panel select {
   width: 100%;
-  min-height: 42px;
-  margin-top: 6px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
+  min-height: 44px;
+  margin-top: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
   background: var(--panel);
   color: var(--ink);
-  padding: 8px 10px;
+  padding: 8px 12px;
 }
 
 .diagnostics-actions {
@@ -211,7 +269,7 @@ h2 {
 
 .diagnostics-surface {
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   background: var(--panel);
   padding: clamp(16px, 4vw, 24px);
 }
@@ -221,7 +279,7 @@ h2 {
 .diagnostics-frequency,
 .diagnostics-match {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .diagnostics-question > strong,
@@ -229,6 +287,8 @@ h2 {
 .diagnostics-match > strong {
   font-size: clamp(17px, 4vw, 21px);
   line-height: 1.35;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
 }
 
 .diagnostics-match p {
@@ -238,7 +298,7 @@ h2 {
 .diagnostics-choice-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .diagnostics-choice-actions button {
@@ -247,33 +307,19 @@ h2 {
 }
 
 button.diagnostics-secondary-action {
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: transparent;
   color: var(--ink);
 }
 
-/*
- * The keyboard focus ring for the controls that carry no ring of their own.
- *
- * The device tiles are the dashboard's primary interaction and the diagnostics panel's buttons carry no class,
- * so both fell through every other rule here to the user agent's own ring — a 1px hairline with no offset,
- * thinner and lower in contrast than the 2px accent ring this interface uses everywhere else.
- */
-.diagnostics-panel button:focus-visible,
-.diagnostics-panel select:focus-visible,
-.diagnostics-panel input:focus-visible,
-.device-flip-control:focus-visible,
-.device-mobile-close:focus-visible {
-  outline: 2px solid var(--accent-ink);
-  outline-offset: 2px;
-}
-
 button.diagnostics-quiet-action {
+  display: inline-flex;
   width: fit-content;
-  min-height: 30px;
+  min-height: 40px;
+  align-items: center;
   background: transparent;
   color: var(--muted);
-  padding: 2px 0;
+  padding: 0;
   font-size: 12px;
   font-weight: 600;
   text-decoration: underline;
@@ -287,7 +333,7 @@ button.diagnostics-quiet-action {
 
 .diagnostics-guidance > div {
   border-top: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
-  padding-top: 10px;
+  padding-top: 8px;
 }
 
 .diagnostics-guidance p {
@@ -296,10 +342,10 @@ button.diagnostics-quiet-action {
 
 .guidance-label {
   display: block;
-  margin-bottom: 3px;
+  margin-bottom: 4px;
   color: var(--accent-ink);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -319,14 +365,14 @@ button.diagnostics-quiet-action {
 
 .diagnostics-result {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .diagnostics-result a {
   display: inline-block;
-  margin-top: 10px;
+  margin-top: 8px;
   color: var(--accent-ink);
-  font-weight: 750;
+  font-weight: 600;
 }
 
 .diagnostics-result button {
@@ -338,6 +384,7 @@ button.diagnostics-quiet-action {
   border-block: 1px solid var(--line);
   padding-block: 8px;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .diagnostics-manifest ul {
@@ -357,34 +404,34 @@ button.diagnostics-quiet-action {
 .advanced-fields {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 18px;
+  gap: 20px;
 }
 
 .advanced-field {
   display: grid;
   align-content: start;
-  gap: 6px;
+  gap: 8px;
 }
 
 .advanced-field-label {
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .advanced-fields label {
   display: grid;
   align-content: start;
-  gap: 6px;
-  font-weight: 700;
+  gap: 8px;
+  font-weight: 500;
 }
 
 .advanced-fields input {
   width: 100%;
-  min-height: 42px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
+  min-height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
   background: var(--panel);
   color: var(--ink);
-  padding: 8px 10px;
+  padding: 8px 12px;
   font: inherit;
 }
 
@@ -402,17 +449,17 @@ button.diagnostics-quiet-action {
 .advanced-status {
   min-height: 20px;
   margin-bottom: 0;
-  color: #b42318;
+  color: var(--fault);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .legacy-notice {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 18px;
-  border-left: 4px solid #d99a21;
+  gap: 16px;
+  border-left: 4px solid var(--alert);
 }
 
 .notice-icon,
@@ -423,12 +470,12 @@ button.diagnostics-quiet-action {
 }
 
 .legacy-notice p {
-  margin-bottom: 5px;
+  margin-bottom: 4px;
 }
 
 .legacy-notice button {
   width: auto;
-  padding-inline: 18px;
+  padding-inline: 16px;
 }
 
 .legacy-settings {
@@ -457,26 +504,26 @@ button.diagnostics-quiet-action {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 0 0 auto;
 }
 
 .dashboard-action {
   position: relative;
   display: grid;
-  width: 38px;
-  height: 38px;
-  min-height: 38px;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
   place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
   background: var(--panel);
   padding: 0;
 }
 
 .dashboard-action img {
-  width: 19px;
-  height: 19px;
+  width: 20px;
+  height: 20px;
   opacity: 0.72;
 }
 
@@ -484,30 +531,25 @@ button.diagnostics-quiet-action {
   content: attr(aria-label);
   position: absolute;
   z-index: 20;
-  top: calc(100% + 7px);
+  top: calc(100% + 8px);
   right: 0;
   width: max-content;
-  max-width: 190px;
+  max-width: 192px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--panel);
   color: var(--ink);
-  padding: 5px 8px;
-  box-shadow: 0 8px 24px rgb(15 23 42 / 16%);
+  padding: 4px 8px;
+  box-shadow: var(--shadow-overlay);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 500;
   line-height: 1.25;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-3px);
+  transform: translateY(-4px);
   transition:
-    opacity 120ms ease,
-    transform 120ms ease;
-}
-
-.dashboard-action:hover,
-.dashboard-action:focus-visible {
-  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+    opacity 150ms var(--ease-out),
+    transform 150ms var(--ease-out);
 }
 
 .dashboard-action[data-collecting] {
@@ -524,8 +566,8 @@ button.diagnostics-quiet-action {
 .dashboard[data-state='degraded'] .status,
 .dashboard[data-state='incomplete'] .status,
 .dashboard[data-state='stale'] .status {
-  background: color-mix(in srgb, #d99a21 16%, var(--panel));
-  color: color-mix(in srgb, #d99a21 75%, var(--ink));
+  background: color-mix(in srgb, var(--alert) 16%, var(--panel));
+  color: color-mix(in srgb, var(--alert) 75%, var(--ink));
 }
 
 .device-group + .device-group {
@@ -533,7 +575,7 @@ button.diagnostics-quiet-action {
 }
 
 .device-group > h2 {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   font-size: 13px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -552,28 +594,28 @@ button.diagnostics-quiet-action {
   aspect-ratio: 1;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 13px;
+  border-radius: var(--radius-card);
   background: var(--tile-bg);
   perspective: 1000px;
+  transition: border-color 150ms var(--ease-out);
 }
 
 .device-tile-changed {
-  border-color: #d99a21;
-  box-shadow: 0 0 0 2px color-mix(in srgb, #d99a21 24%, transparent);
+  border-color: var(--alert);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--alert) 24%, transparent);
 }
 
 .device-tile-changed::after {
   content: '';
   position: absolute;
   z-index: 5;
-  top: 11px;
-  left: 11px;
-  width: 9px;
-  height: 9px;
+  top: 12px;
+  left: 12px;
+  width: 8px;
+  height: 8px;
   border: 2px solid var(--tile-bg);
   border-radius: 50%;
-  background: #d99a21;
-  box-shadow: 0 1px 4px rgb(0 0 0 / 28%);
+  background: var(--alert);
   pointer-events: none;
 }
 
@@ -587,7 +629,7 @@ button.diagnostics-quiet-action {
   justify-content: flex-end;
   gap: 8px;
   overflow: hidden;
-  padding: 14px;
+  padding: 16px;
   list-style: none;
 }
 
@@ -698,9 +740,9 @@ button.diagnostics-quiet-action {
   background: repeating-linear-gradient(
     -45deg,
     transparent 0,
-    transparent 11px,
-    var(--tile-stripe) 11px,
-    var(--tile-stripe) 18px
+    transparent 12px,
+    var(--tile-stripe) 12px,
+    var(--tile-stripe) 20px
   );
   pointer-events: none;
 }
@@ -709,23 +751,28 @@ button.diagnostics-quiet-action {
   filter: var(--tile-disabled-filter);
 }
 
+/*
+ * The placeholder shown until the device photograph loads, centred with its icon rather than sat on the tile's
+ * floor, where it printed on top of the device name for every device with no artwork on file.
+ */
 .device-art {
   position: absolute;
   z-index: 0;
   inset: 0;
   display: grid;
-  grid-template-rows: 1fr auto;
-  place-items: center;
+  align-content: center;
+  justify-items: center;
+  gap: 8px;
   background: var(--tile-bg);
   color: var(--tile-ink);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .device-art img[data-device-artwork] {
   position: absolute;
-  inset: 22px;
-  width: calc(100% - 44px);
-  height: calc(100% - 44px);
+  inset: 24px;
+  width: calc(100% - 48px);
+  height: calc(100% - 48px);
   object-fit: contain;
   opacity: 1;
   filter: var(--tile-image-filter);
@@ -738,10 +785,8 @@ button.diagnostics-quiet-action {
 }
 
 .device-art span {
-  align-self: end;
   overflow: hidden;
   max-width: 90%;
-  margin-bottom: 12px;
   font-size: 10px;
   letter-spacing: 0.08em;
   opacity: 0.75;
@@ -762,10 +807,13 @@ button.diagnostics-quiet-action {
 
 .device-copy h3 {
   overflow: hidden;
-  margin: 1px 0 2px;
+  margin: 0 0 2px;
   font-size: 17px;
+  font-weight: 600;
   line-height: 1.2;
+  letter-spacing: -0.01em;
   text-overflow: ellipsis;
+  text-wrap: nowrap;
   white-space: nowrap;
 }
 
@@ -786,24 +834,24 @@ button.diagnostics-quiet-action {
   right: 12px;
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 4px;
 }
 
 .device-badges span {
   position: relative;
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border: 1px solid var(--tile-badge-border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--tile-badge-bg);
   backdrop-filter: blur(5px);
 }
 
 .device-badges img {
-  width: 17px;
-  height: 17px;
+  width: 16px;
+  height: 16px;
   filter: var(--tile-icon-filter);
 }
 
@@ -816,31 +864,33 @@ button.diagnostics-quiet-action {
 }
 
 .device-badges .device-badge-troubleshoot img {
-  width: 29px;
-  height: 29px;
+  width: 28px;
+  height: 28px;
 }
 
 .device-badges span::after {
   content: attr(data-tooltip);
   position: absolute;
   z-index: 4;
-  top: calc(100% + 7px);
+  top: calc(100% + 8px);
   right: 0;
   width: max-content;
-  max-width: 170px;
-  border-radius: 6px;
+  max-width: 168px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
   background: var(--tile-tooltip-bg);
   color: var(--tile-tooltip-ink);
-  padding: 5px 8px;
+  padding: 4px 8px;
+  box-shadow: var(--shadow-overlay);
   font-size: 10px;
-  font-weight: 650;
+  font-weight: 500;
   line-height: 1.3;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-3px);
+  transform: translateY(-4px);
   transition:
-    opacity 120ms ease,
-    transform 120ms ease;
+    opacity 150ms var(--ease-out),
+    transform 150ms var(--ease-out);
 }
 
 .device-badges span:hover::after,
@@ -851,7 +901,7 @@ button.diagnostics-quiet-action {
 
 .preference-panel {
   width: 100%;
-  padding: 40px 14px 14px;
+  padding: 40px 16px 16px;
 }
 
 .diagnostic-panel {
@@ -859,19 +909,20 @@ button.diagnostics-quiet-action {
   place-items: center;
   gap: 8px;
   width: 100%;
-  padding: 42px 18px 18px;
+  padding: 40px 16px 16px;
   color: var(--tile-ink);
   text-align: center;
 }
 
 .diagnostic-panel img {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   filter: var(--tile-icon-filter);
 }
 
 .diagnostic-panel strong {
   font-size: 14px;
+  font-weight: 600;
 }
 
 .diagnostic-panel p {
@@ -883,8 +934,8 @@ button.diagnostics-quiet-action {
 
 .preference-grid {
   display: grid;
-  gap: 9px;
-  padding-top: 6px;
+  gap: 8px;
+  padding-top: 8px;
 }
 
 .preference-grid p {
@@ -902,7 +953,7 @@ button.diagnostics-quiet-action {
 }
 
 .preference-grid .preference-changed {
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .preference-grid .preference-changed .snapshot-description {
@@ -912,12 +963,12 @@ button.diagnostics-quiet-action {
 .setting-label {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .snapshot-setting {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   color: var(--muted);
   font-size: 11px;
 }
@@ -926,8 +977,8 @@ button.diagnostics-quiet-action {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
   background: var(--panel);
 }
 
@@ -954,27 +1005,22 @@ button.diagnostics-quiet-action {
 
 .snapshot-segment span {
   display: block;
-  padding: 7px 3px;
+  padding: 8px 4px;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
   text-align: center;
   transition:
-    background 120ms ease,
-    color 120ms ease;
+    background 150ms var(--ease-out),
+    color 150ms var(--ease-out);
 }
 
 .snapshot-segment input:checked + span {
   background: var(--accent);
-  color: #07383a;
-}
-
-.snapshot-segment input:focus-visible + span {
-  outline: 2px solid var(--accent-ink);
-  outline-offset: -2px;
+  color: var(--on-accent);
 }
 
 .snapshot-description {
-  min-height: 30px;
+  min-height: 32px;
   margin: 0;
   color: var(--muted);
   font-size: 10px;
@@ -982,7 +1028,7 @@ button.diagnostics-quiet-action {
 }
 
 .preference-grid .toggle {
-  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr);
   align-items: center;
   cursor: pointer;
 }
@@ -994,15 +1040,16 @@ button.diagnostics-quiet-action {
   min-height: 20px;
   height: 20px;
   margin: 0;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--muted) 28%, var(--panel));
   padding: 0;
   transition:
-    background 140ms ease,
-    border-color 140ms ease;
+    background 140ms var(--ease-out),
+    border-color 140ms var(--ease-out);
 }
 
+/* The knob, the one element in the sheet whose shadow states a physical position rather than a layer. */
 .preference-grid .toggle input::before {
   content: '';
   position: absolute;
@@ -1012,8 +1059,8 @@ button.diagnostics-quiet-action {
   height: 14px;
   border-radius: 50%;
   background: var(--panel);
-  box-shadow: 0 1px 3px rgb(0 0 0 / 25%);
-  transition: transform 140ms ease;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 22%);
+  transition: transform 140ms var(--ease-out);
 }
 
 .preference-grid .toggle input:checked {
@@ -1034,9 +1081,9 @@ button.diagnostics-quiet-action {
   margin-bottom: 16px;
   border: 1px solid var(--line);
   border-left: 4px solid var(--accent);
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   background: var(--accent-soft);
-  padding: 16px 18px;
+  padding: 16px 20px;
 }
 
 .first-setup::before {
@@ -1057,21 +1104,16 @@ button.diagnostics-quiet-action {
 }
 
 .first-setup p {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .first-setup-reason {
-  color: var(--muted);
+  color: var(--ink-secondary);
 }
 
 .first-setup a {
   color: var(--accent-ink);
-  font-weight: 700;
-}
-
-.first-setup a:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
+  font-weight: 600;
 }
 
 .first-setup-confirmation {
@@ -1083,7 +1125,7 @@ button.diagnostics-quiet-action {
 .first-setup-confirmation label {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 12px;
   cursor: pointer;
 }
 
@@ -1098,7 +1140,7 @@ button.diagnostics-quiet-action {
   flex: 0 0 auto;
   margin-top: 2px;
   border: 2px solid var(--accent-ink);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--panel);
   padding: 0;
 }
@@ -1108,8 +1150,8 @@ button.diagnostics-quiet-action {
   content: '';
   width: 8px;
   height: 4px;
-  border-bottom: 2px solid #07383a;
-  border-left: 2px solid #07383a;
+  border-bottom: 2px solid var(--on-accent);
+  border-left: 2px solid var(--on-accent);
   transform: rotate(-45deg) scale(0);
 }
 
@@ -1124,60 +1166,56 @@ button.diagnostics-quiet-action {
   transform: rotate(-45deg) scale(1);
 }
 
-.first-setup-confirmation input:focus-visible,
-.diagnostics-review-confirm input:focus-visible {
-  outline: 2px solid var(--accent-ink);
-  outline-offset: 2px;
-}
-
 .status-row {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
+  gap: 16px;
 }
 
 .status {
   flex: 0 0 auto;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent-soft);
   color: var(--accent-ink);
-  padding: 5px 9px;
+  padding: 4px 8px;
   font-size: 11px;
-  font-weight: 750;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .summary {
-  margin: 17px 0;
-  color: var(--muted);
+  margin: 16px 0;
+  color: var(--ink-secondary);
   font-size: 15px;
 }
 
 .handoff {
+  border: 1px solid var(--line);
   border-left: 4px solid var(--accent);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   background: var(--accent-soft);
-  padding: 13px 15px;
+  padding: 12px 16px;
 }
 
 .handoff p {
   margin: 4px 0 0;
-  color: #3f4f75;
+  color: var(--ink-secondary);
   font-size: 12px;
 }
 
 .steps {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 7px;
-  margin: 22px 0;
+  gap: 8px;
+  margin: 24px 0;
   padding: 0;
   list-style: none;
 }
 
 .steps li {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   border-top: 3px solid var(--line);
   padding-top: 8px;
   color: var(--muted);
@@ -1193,21 +1231,22 @@ button.diagnostics-quiet-action {
 
 .steps span {
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .authentication-form,
 .challenge-form {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .authentication-form label,
 .challenge-form label {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .field-row {
@@ -1219,58 +1258,49 @@ button.diagnostics-quiet-action {
 input {
   width: 100%;
   min-height: 44px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
   background: var(--panel);
   color: var(--ink);
-  padding: 9px 11px;
+  padding: 8px 12px;
   font: inherit;
-}
-
-input:focus-visible {
-  border-color: var(--accent);
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  font-variant-numeric: tabular-nums;
 }
 
 .challenge-form {
-  margin-top: 14px;
+  margin-top: 16px;
   border-top: 1px solid var(--line);
-  padding-top: 14px;
+  padding-top: 16px;
 }
 
+/* The plate the captcha image sits on, white in both themes because the image Eufy returns has a white ground. */
 .captcha {
   width: min(100%, 260px);
   min-height: 72px;
   justify-self: center;
-  border: 1px solid var(--line);
-  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
   background: #ffffff;
   object-fit: contain;
 }
 
 .authentication-status {
-  min-height: 21px;
+  min-height: 20px;
   margin: 12px 0 0;
   color: var(--muted);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 button {
   width: 100%;
   min-height: 44px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background: var(--accent);
-  color: #07383a;
+  color: var(--on-accent);
   font: inherit;
-  font-weight: 750;
+  font-weight: 600;
   cursor: pointer;
-}
-
-button:disabled {
-  opacity: 0.48;
-  cursor: not-allowed;
 }
 
 .footnote {
@@ -1278,6 +1308,209 @@ button:disabled {
   color: var(--muted);
   font-size: 11px;
   text-align: center;
+}
+
+/* One setting per row, so a control that needs width gets it and nothing sits half-read beside it. */
+.warm-up-transfer {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: stretch;
+  gap: 8px;
+  font-weight: 400;
+}
+
+.warm-up-column {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  min-width: 0;
+}
+
+.warm-up-column > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.warm-up-column ul {
+  list-style: none;
+  margin: 0;
+  /*
+   * Four rows, then scroll: the list is long enough that showing all of it pushes the help text off-screen.
+   * The height is the content of four rows at the current row metric, not a step on the spacing grid.
+   */
+  min-height: 172px;
+  max-height: 172px;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  padding: 4px;
+}
+
+.warm-up-column li {
+  margin: 0;
+}
+
+/* Concentric with the list that clips it: the list's 8px radius less its 4px padding. */
+.warm-up-column button {
+  width: 100%;
+  text-align: left;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Without this the click leaves no mark, so the user cannot tell whether the entry was taken. */
+.warm-up-column button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.warm-up-controls {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+}
+
+.warm-up-controls button {
+  min-width: 40px;
+  min-height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+/*
+ * The diagnostics entry in the masthead, which is the header shown before an account exists.
+ *
+ * The dashboard's own entry disappears with the dashboard, so on the setup and authentication screens this is
+ * the only way to start collecting — and those are the screens a startup or sign-in failure is visible on.
+ */
+.masthead-action {
+  margin-inline-start: auto;
+  align-self: center;
+}
+
+/*
+ * Every interactive state in the sheet, in one place and in cascade order: the filled default first, then each
+ * variant that keeps its own surface.
+ *
+ * A variant is declared beside the rule that gives it its resting surface, far above here, so a `:hover` written
+ * there would lose to the filled default's `:hover` on source order alone and repaint a secondary button in the
+ * accent. Ordering them here is what keeps a "No" button from turning teal under the pointer.
+ */
+button {
+  transition:
+    background 150ms var(--ease-out),
+    border-color 150ms var(--ease-out),
+    transform 100ms var(--ease-out);
+}
+
+button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, var(--on-accent));
+}
+
+button:active:not(:disabled, .device-flip-control, .device-mobile-close) {
+  transform: scale(0.97);
+}
+
+button:disabled {
+  background: color-mix(in srgb, var(--accent) 28%, var(--panel));
+  color: color-mix(in srgb, var(--on-accent) 60%, var(--panel));
+  cursor: not-allowed;
+}
+
+button.diagnostics-secondary-action:hover:not(:disabled),
+.dashboard-page-back:hover:not(:disabled),
+.warm-up-controls button:hover:not(:disabled),
+.warm-up-column button:hover:not(:disabled),
+.warm-up-column button:focus-visible {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--ink) 5%, var(--panel));
+}
+
+button.diagnostics-quiet-action:hover:not(:disabled) {
+  background: transparent;
+  color: var(--ink);
+}
+
+.dashboard-action:hover,
+.dashboard-action:focus-visible {
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+}
+
+.device-flip-control:hover,
+.device-mobile-close:hover {
+  background: transparent;
+}
+
+/*
+ * The tile is the dashboard's primary target and artwork covers everything but its edge, so the edge carries the
+ * hover. A step in `--line` alone was too quiet to register as feedback; the accent in the edge is not.
+ */
+.device-tile:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+}
+
+.warm-up-controls button:disabled,
+.warm-up-column button:disabled,
+button.diagnostics-secondary-action:disabled {
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--ink-disabled);
+  cursor: default;
+}
+
+/*
+ * The one keyboard focus ring, on everything that takes focus.
+ *
+ * The device tiles are the dashboard's primary interaction and the diagnostics panel's buttons carry no class, so
+ * both used to fall through to the user agent's own ring — a hairline with no offset, thinner and lower in
+ * contrast than the ring the rest of the interface draws. Naming the focusables once is what keeps the ring from
+ * drifting into a fourth variant.
+ */
+:is(button, input, select, textarea, a, [tabindex]):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+input:focus-visible {
+  border-color: var(--accent);
+}
+
+/*
+ * The segmented control's ring, drawn inside.
+ *
+ * Its radio input is a 1px sliver and the group clips overflow, so a ring on the input is invisible and a ring
+ * outside the label is cut off. The visible segment carries it, inset.
+ */
+.snapshot-segment input:focus-visible {
+  outline: none;
+}
+
+.snapshot-segment input:focus-visible + span {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button:active {
+    transform: none;
+  }
 }
 
 @media (max-width: 420px) {
@@ -1305,6 +1538,17 @@ button:disabled {
 @media (max-width: 760px) {
   .device-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 540px) {
+  .warm-up-transfer {
+    grid-template-columns: 1fr;
+  }
+
+  .warm-up-controls {
+    grid-auto-flow: column;
+    justify-content: center;
   }
 }
 
@@ -1337,7 +1581,7 @@ button:disabled {
 
   .device-tile {
     aspect-ratio: 2 / 1;
-    min-height: 150px;
+    min-height: 152px;
   }
 
   .device-art img[data-device-artwork] {
@@ -1350,12 +1594,12 @@ button:disabled {
 
   .diagnostic-panel {
     gap: 4px;
-    padding: 34px 12px 10px;
+    padding: 32px 16px 8px;
   }
 
   .diagnostic-panel img {
-    width: 26px;
-    height: 26px;
+    width: 24px;
+    height: 24px;
   }
 
   .diagnostic-panel p {
@@ -1368,7 +1612,7 @@ button:disabled {
   }
 
   .device-card-settings .preference-panel {
-    padding: 22px 20px 6px;
+    padding: 24px 20px 8px;
   }
 
   .device-card-settings::after {
@@ -1403,10 +1647,16 @@ button:disabled {
   color-scheme: dark;
   --accent: #00bfc4;
   --accent-ink: #67e1e4;
-  --accent-soft: #232323;
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, var(--panel));
   --ink: #edf1f7;
+  --ink-secondary: color-mix(in srgb, var(--ink) 78%, var(--panel));
   --muted: #aab3c2;
-  --line: #465064;
+  --ink-disabled: color-mix(in srgb, var(--muted) 55%, var(--panel));
+  --alert: #d9a53f;
+  --fault: #fda29b;
+  --line: rgb(255 255 255 / 10%);
+  --line-strong: rgb(255 255 255 / 18%);
+  --shadow-overlay: 0 0 0 1px rgb(255 255 255 / 9%);
   --panel: #262d39;
   --tile-bg: #17202c;
   --tile-ink: #f4f7fb;
@@ -1420,10 +1670,6 @@ button:disabled {
   --tile-icon-filter: invert(1);
   --tile-tooltip-bg: #080e18;
   --tile-tooltip-ink: #f4f7fb;
-}
-
-.shell[data-theme='dark'] .handoff p {
-  color: #c6d3f5;
 }
 
 .shell[data-theme='dark'] .notice-icon,
@@ -1440,117 +1686,4 @@ button:disabled {
 
 .shell[data-theme='dark'] .eufy-logo .logo-dark {
   display: block;
-}
-
-/* One setting per row, so a control that needs width gets it and nothing sits half-read beside it. */
-.warm-up-transfer {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: stretch;
-  gap: 10px;
-  font-weight: 400;
-}
-
-.warm-up-column {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  gap: 6px;
-  min-width: 0;
-}
-
-.warm-up-column > p {
-  margin: 0;
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: var(--muted, var(--ink));
-}
-
-.warm-up-column ul {
-  list-style: none;
-  margin: 0;
-  padding: 4px;
-  /* Four rows, then scroll: the list is long enough that showing all of it pushes the help text off-screen. */
-  min-height: 132px;
-  max-height: 168px;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--panel);
-  display: grid;
-  align-content: start;
-  gap: 2px;
-}
-
-.warm-up-column li {
-  margin: 0;
-}
-
-.warm-up-column button {
-  width: 100%;
-  text-align: left;
-  padding: 7px 9px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: none;
-  color: var(--ink);
-  font: inherit;
-  cursor: pointer;
-}
-
-.warm-up-column button:hover,
-.warm-up-column button:focus-visible {
-  border-color: var(--line);
-  background: var(--panel-hover, rgb(127 127 127 / 12%));
-}
-
-/* Without this the click leaves no mark, so the user cannot tell whether the entry was taken. */
-.warm-up-column button[aria-pressed='true'] {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent-ink);
-  font-weight: 700;
-}
-
-.warm-up-controls {
-  display: grid;
-  align-content: center;
-  gap: 6px;
-}
-
-.warm-up-controls button {
-  min-width: 42px;
-  min-height: 30px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--panel);
-  color: var(--ink);
-  font: inherit;
-  cursor: pointer;
-}
-
-.warm-up-controls button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-@media (max-width: 540px) {
-  .warm-up-transfer {
-    grid-template-columns: 1fr;
-  }
-
-  .warm-up-controls {
-    grid-auto-flow: column;
-    justify-content: center;
-  }
-}
-
-/*
- * The diagnostics entry in the masthead, which is the header shown before an account exists.
- *
- * The dashboard's own entry disappears with the dashboard, so on the setup and authentication screens this is
- * the only way to start collecting — and those are the screens a startup or sign-in failure is visible on.
- */
-.masthead-action {
-  margin-inline-start: auto;
-  align-self: center;
 }
