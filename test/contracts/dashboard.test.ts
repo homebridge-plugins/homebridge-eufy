@@ -297,3 +297,41 @@ describe('a superseded runtime', () => {
     expect(silent.runningVersion).toBeUndefined();
   });
 });
+
+/**
+ * A preference is offered only where the representation would obey it.
+ *
+ * A control that records a choice and changes nothing is worse than an absent one, and a station declares an
+ * `audio` capability for the speaker it sirens and chimes through, which no stream setting governs. Both stream
+ * preferences therefore require the camera capability rather than their own alone.
+ */
+describe('preferences offered per device', () => {
+  const withCapabilities = (...capabilities: string[]): DeviceManifest => ({
+    ...manifest('camera'),
+    capabilities: capabilities as DeviceManifest['capabilities'],
+  });
+
+  const offered = async (device: DeviceManifest): Promise<string[]> => {
+    const snapshot = await readDashboard(
+      {
+        read: async () => ({
+          state: 'ready' as const,
+          status: 'connected' as const,
+          generation: 'synthetic-generation',
+          complete: true,
+          updatedAt: '2026-08-13T12:00:00.000Z',
+          snapshot: { generation: 'synthetic-generation', devices: [device] },
+        }),
+      },
+      () => Date.parse('2026-08-13T12:00:30.000Z'),
+    );
+    return snapshot.devices[0]?.preferences ?? [];
+  };
+
+  it('offers a stream preference only to a device that streams', async () => {
+    expect(await offered(withCapabilities('camera', 'audio'))).toEqual(['represented', 'audio', 'snapshotMode']);
+    expect(await offered(withCapabilities('camera'))).toEqual(['represented', 'snapshotMode']);
+    // A station: a speaker for its siren and chimes, and no stream for either setting to reach.
+    expect(await offered(withCapabilities('arming', 'storage', 'audio', 'siren', 'info'))).toEqual(['represented']);
+  });
+});

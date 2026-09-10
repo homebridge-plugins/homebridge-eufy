@@ -134,14 +134,23 @@ function deviceClassOf(codec: DeviceManifest['codec']): DashboardDevice['deviceC
   return classes[codec];
 }
 
+/**
+ * One device as the interface states it, offering only the preferences that device's representation would obey.
+ *
+ * A preference nothing reads is worse than an absent one: it invites a choice, records it, and changes nothing.
+ * Audio and snapshot mode both reach a camera's stream and nowhere else, so both require the camera capability —
+ * an `audio` capability alone is a speaker, which a station has for its siren and chimes and which no stream
+ * setting governs.
+ */
 function projectDevice(manifest: DeviceManifest, representationEnabled: boolean | undefined): DashboardDevice {
   const admission = describeHomeKitRepresentation(manifest);
   const represented = admission.represented && representationEnabled !== false;
+  const streams = admission.represented && manifest.capabilities.includes('camera');
   const preferences: DashboardDevice['preferences'] = admission.represented ? ['represented'] : [];
-  if (admission.represented && manifest.capabilities.includes('audio')) {
+  if (streams && manifest.capabilities.includes('audio')) {
     preferences.push('audio');
   }
-  if (admission.represented && manifest.capabilities.includes('camera')) {
+  if (streams) {
     preferences.push('snapshotMode');
   }
   return {

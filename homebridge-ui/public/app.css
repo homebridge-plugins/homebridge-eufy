@@ -1114,9 +1114,13 @@ button.diagnostics-quiet-action {
   transform: translateY(0);
 }
 
+/*
+ * The settings face centres on the tile, so its padding is even. An uneven one is not centring with an offset: the
+ * face already centres the panel box, so more padding above than below simply lands the controls below the middle.
+ */
 .preference-panel {
   width: 100%;
-  padding: 40px 16px 16px;
+  padding: 16px;
 }
 
 .diagnostic-panel {
@@ -1124,7 +1128,7 @@ button.diagnostics-quiet-action {
   place-items: center;
   gap: 8px;
   width: 100%;
-  padding: 40px 16px 16px;
+  padding: 16px;
   color: var(--tile-ink);
   text-align: center;
 }
@@ -1150,7 +1154,6 @@ button.diagnostics-quiet-action {
 .preference-grid {
   display: grid;
   gap: 8px;
-  padding-top: 8px;
 }
 
 .preference-grid p {
