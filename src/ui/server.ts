@@ -263,7 +263,7 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
       const authorization = parseDiagnosticsAuthorization(payload);
       const status = await this.diagnostics.authorize(authorization.profile, authorization.reproductionMode);
       if (status.supportCaseId) {
-        await this.runtimeChannel.notifyAuthorization(status.supportCaseId);
+        void this.runtimeChannel.notifyAuthorization(status.supportCaseId);
       }
       return status;
     });

@@ -1163,7 +1163,7 @@ describe('persisted runtime owner', () => {
 
 describe('a runtime standing down on request and taking the session back', () => {
   function harness(
-    acquisitions: readonly ('owner' | 'conflict')[],
+    acquisitions: readonly ('owner' | 'conflict' | 'unreachable')[],
     options: {
       generations?: readonly string[];
       rearmIntervalMs?: number;
@@ -1196,26 +1196,28 @@ describe('a runtime standing down on request and taking the session back', () =>
     let generation = 0;
     const statusPublisher = { start: vi.fn(() => true), update: vi.fn(() => true), stop: vi.fn() };
     const channel = { open: vi.fn(async () => true), close: vi.fn() };
+    const acquire = vi.fn(async () => {
+      const outcome = acquisitions[Math.min(attempt++, acquisitions.length - 1)]!;
+      if (outcome === 'unreachable') {
+        throw new Error('synthetic ownership failure');
+      }
+      if (outcome === 'conflict') {
+        return {
+          state: 'owner-conflict' as const,
+          owner: { acquiredAt: '2026-09-01T00:00:00.000Z', kind: 'temporary-authentication' as const, pid: 4242 },
+        };
+      }
+      const release = vi.fn(releaseLease);
+      releases.push(release);
+      return { state: 'owner' as const, lease: { release }, recovered: false };
+    });
     const runtime = new RuntimeOwner({ error: vi.fn(), info, warn }, config, () => client, {
       storageRoot: '/synthetic-runtime',
       shutdownTimeoutMs: 1_000,
       rearmIntervalMs: options.rearmIntervalMs ?? 5,
       rearmWindowMs: options.rearmWindowMs ?? 5_000,
       channel,
-      ownership: {
-        acquire: vi.fn(async () => {
-          const outcome = acquisitions[Math.min(attempt++, acquisitions.length - 1)]!;
-          if (outcome === 'conflict') {
-            return {
-              state: 'owner-conflict' as const,
-              owner: { acquiredAt: '2026-09-01T00:00:00.000Z', kind: 'temporary-authentication' as const, pid: 4242 },
-            };
-          }
-          const release = vi.fn(releaseLease);
-          releases.push(release);
-          return { state: 'owner' as const, lease: { release }, recovered: false };
-        }),
-      },
+      ownership: { acquire },
       persistence: {
         active: vi.fn(async () => ({
           account: 'runtime@example.invalid',
@@ -1230,7 +1232,7 @@ describe('a runtime standing down on request and taking the session back', () =>
       statusPublisher,
     });
     runtime.subscribeState((state) => states.push(state));
-    return { channel, client, info, releases, runtime, states, statusPublisher, warn };
+    return { acquire, channel, client, info, releases, runtime, states, statusPublisher, warn };
   }
 
   /**
@@ -1330,6 +1332,24 @@ describe('a runtime standing down on request and taking the session back', () =>
 
     expect(runtime.currentState()).toBe('stopped');
     expect(client.start).toHaveBeenCalledOnce();
+    await runtime.stop();
+  });
+
+  /**
+   * Only a lease another process still holds is worth another attempt. Any other outcome is a state this runtime
+   * reached and reported, and retrying it would report it again on every interval of a fifteen-minute window.
+   */
+  it('retries a held lease and nothing else', async () => {
+    const { acquire, client, runtime } = harness(['owner', 'unreachable'], { rearmIntervalMs: 5 });
+    await runtime.start();
+    expect(runtime.standDown()).toBe(true);
+
+    await vi.waitFor(() => expect(runtime.currentState()).toBe('failed'));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(client.start).toHaveBeenCalledOnce();
+    expect(runtime.currentState()).toBe('failed');
     await runtime.stop();
   });
 

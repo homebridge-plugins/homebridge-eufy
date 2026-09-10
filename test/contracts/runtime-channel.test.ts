@@ -1155,7 +1155,7 @@ describe('diagnostics authorization notified over the channel', () => {
 
   function serve(pickUp: (notice: RuntimeChannelAuthorization) => boolean): RuntimeChannelClient {
     const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
-    const server = new RuntimeChannelServer(endpoint, () => status(), { diagnostics: pickUp });
+    const server = new RuntimeChannelServer(endpoint, () => status(), { authorization: pickUp });
     servers.push(server);
     return new RuntimeChannelClient(endpoint);
   }
@@ -1186,7 +1186,7 @@ describe('diagnostics authorization notified over the channel', () => {
     const picked: RuntimeChannelAuthorization[] = [];
     const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
     const server = new RuntimeChannelServer(endpoint, () => status(), {
-      diagnostics: (notice) => {
+      authorization: (notice) => {
         picked.push(notice);
         return true;
       },

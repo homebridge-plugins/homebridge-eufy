@@ -25,7 +25,6 @@ import { parseCompleteDeviceSnapshot, type CompleteDeviceSnapshot } from '../dev
 import {
   RuntimeChannelServer,
   runtimeChannelEndpointForHost,
-  type RuntimeChannelAuthorization,
   type RuntimeChannelDevice,
   type RuntimeChannelStatus,
 } from './channel.js';
@@ -37,8 +36,7 @@ export type RuntimeLogger = Pick<PlatformLogger, 'error' | 'warn'> & Partial<Pic
 /**
  * How long a runtime that stood down on request keeps trying to take the account session back.
  *
- * It outlasts the interactive authentication a stand-down is requested for, whose own deadline is five minutes,
- * so a flow that runs to its limit still ends with a runtime that came back.
+ * It outlasts the interactive authentication a stand-down is requested for, whose own deadline is five minutes.
  */
 const REARM_WINDOW_MS = 15 * 60_000;
 
@@ -150,6 +148,7 @@ export class RuntimeOwner {
   private rearming = false;
   private rearmTimer?: NodeJS.Timeout;
   private rearmGeneration?: string;
+  private rearmBlocked = false;
   private activeGeneration?: string;
 
   constructor(
@@ -237,7 +236,7 @@ export class RuntimeOwner {
     }
     this.standingDown = true;
     this.rearmGeneration = this.activeGeneration;
-    void this.stopOwnership().then(() => {
+    void this.stopOwnership().finally(() => {
       this.standingDown = false;
       if (!this.shuttingDown) {
         this.scheduleRearm(Date.now() + this.rearmWindowMs);
@@ -295,21 +294,28 @@ export class RuntimeOwner {
   }
 
   /**
-   * Takes the account session back if it is free, and schedules another attempt if it is not.
+   * Takes the account session back if it is free, and schedules another attempt only if the lease is still held.
    *
-   * An attempt that finds the lease held is the ordinary case for as long as the authentication this runtime
-   * stood down for is running, so it reports nothing and leaves this runtime stopped, which is what it is.
+   * A held lease is the ordinary case for as long as the authentication this runtime stood down for is running,
+   * so it reports nothing and leaves this runtime stopped, which is what it is. Any other outcome is a state this
+   * runtime reached and reported, and retrying it would report it again on every interval of the window.
    */
   private async attemptRearm(deadline: number): Promise<void> {
     this.rearmTimer = undefined;
     if (this.shuttingDown || !this.rearming) {
       return;
     }
+    this.rearmBlocked = false;
     this.resetForRearm();
     await this.start();
-    if (this.rearming) {
-      this.scheduleRearm(deadline);
+    if (!this.rearming) {
+      return;
     }
+    if (!this.rearmBlocked) {
+      this.clearRearm();
+      return;
+    }
+    this.scheduleRearm(deadline);
   }
 
   /**
@@ -333,6 +339,7 @@ export class RuntimeOwner {
     clearTimeout(this.rearmTimer);
     this.rearmTimer = undefined;
     this.rearming = false;
+    this.rearmBlocked = false;
     this.rearmGeneration = undefined;
   }
 
@@ -371,7 +378,9 @@ export class RuntimeOwner {
         }
         this.pendingOwnership = undefined;
         if (ownership.state === 'owner-conflict') {
-          if (!this.rearming) {
+          if (this.rearming) {
+            this.rearmBlocked = true;
+          } else {
             this.transitionTo('owner-conflict');
           }
           return;
@@ -602,7 +611,7 @@ export class RuntimeOwner {
         () => this.channelStatus(),
         {
           devices: () => this.channelDevices(),
-          diagnostics: (notice) => this.pickUpDiagnosticsAuthorization(storageRoot, notice),
+          authorization: (notice) => armDiagnosticsAuthorization(this.log, storageRoot, notice.supportCaseId),
           standDown: () => this.standDown(),
         },
       );
@@ -610,17 +619,6 @@ export class RuntimeOwner {
     if (this.channel && !(await this.channel.open())) {
       reportRuntimeNotice(this.log, 'channel-serve-failed');
     }
-  }
-
-  /**
-   * Reads the persisted diagnostics session the notification names, reporting whether the file confirms it.
-   *
-   * The file is the authority and this is only what makes it read now rather than when a later record arrives,
-   * so a notification the file does not confirm changes nothing. Without a notification the same file decides
-   * every record's retention exactly as it does when no channel is there at all.
-   */
-  private pickUpDiagnosticsAuthorization(storageRoot: string, notice: RuntimeChannelAuthorization): boolean {
-    return armDiagnosticsAuthorization(this.log, storageRoot, notice.supportCaseId);
   }
 
   /**

@@ -65,8 +65,7 @@ export const RUNTIME_STAND_DOWN_PATH = '/runtime/stand-down';
 /**
  * How long a client waits for a requested stand-down, measured from the request.
  *
- * It outlasts the runtime's own bounded shutdown, which is ten seconds, because a stand-down runs that shutdown
- * and the endpoint closes at the end of it. A client observes the closing, not the answer.
+ * It outlasts the runtime's own bounded shutdown, at whose end the endpoint closes.
  */
 export const RUNTIME_CHANNEL_STAND_DOWN_TIMEOUT_MS = 15_000;
 
@@ -323,7 +322,7 @@ interface RuntimeChannelServerOptions {
   idleTimeoutMs?: number;
   frameBytes?: number;
   devices?: () => RuntimeChannelDevice[];
-  diagnostics?: (notice: RuntimeChannelAuthorization) => boolean;
+  authorization?: (notice: RuntimeChannelAuthorization) => boolean;
   standDown?: () => boolean;
 }
 
@@ -344,7 +343,7 @@ export class RuntimeChannelServer {
   private readonly idleTimeoutMs: number;
   private readonly frameBytes: number;
   private readonly devices?: () => RuntimeChannelDevice[];
-  private readonly diagnostics?: (notice: RuntimeChannelAuthorization) => boolean;
+  private readonly authorization?: (notice: RuntimeChannelAuthorization) => boolean;
   private readonly standDown?: () => boolean;
 
   constructor(
@@ -356,7 +355,7 @@ export class RuntimeChannelServer {
     this.idleTimeoutMs = options.idleTimeoutMs ?? RUNTIME_CHANNEL_IDLE_TIMEOUT_MS;
     this.frameBytes = options.frameBytes ?? RUNTIME_CHANNEL_FRAME_BYTES;
     this.devices = options.devices;
-    this.diagnostics = options.diagnostics;
+    this.authorization = options.authorization;
     this.standDown = options.standDown;
   }
 
@@ -419,9 +418,9 @@ export class RuntimeChannelServer {
       if (request.path === RUNTIME_DEVICES_PATH && this.devices) {
         return { id: request.id, ok: true, data: this.devices().map(answeredDevice) };
       }
-      if (request.path === RUNTIME_DIAGNOSTICS_PATH && this.diagnostics) {
+      if (request.path === RUNTIME_DIAGNOSTICS_PATH && this.authorization) {
         const notice = noticedAuthorization(request.body);
-        return { id: request.id, ok: notice !== undefined && this.diagnostics(notice) };
+        return { id: request.id, ok: notice !== undefined && this.authorization(notice) };
       }
       if (request.path === RUNTIME_STAND_DOWN_PATH && this.standDown) {
         return { id: request.id, ok: this.standDown() };

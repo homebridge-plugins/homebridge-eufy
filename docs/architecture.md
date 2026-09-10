@@ -245,7 +245,10 @@ to re-arm lasts, and the UI process that asked may itself be gone. It therefore 
 a bounded interval, over a window that must outlast the interactive authentication it stood down for, whose own
 deadline is five minutes. An attempt that finds the lease still held is the ordinary case rather than a fault,
 so it reports no state and writes no record; the runtime is stopped for the whole window until it is not, which
-is what it is.
+is what it is. Only a held lease is retried: any other outcome is a state the runtime reached and reported, and
+retrying it would report it again on every interval. The two ends of the window are reported once each — a
+window that expired, and an account that was replaced — because a plugin that stays down for either reason
+explains itself nowhere else.
 
 Re-arming does not re-read a replaced account. `accounts/active.json` is read at every start, so a cycle would
 otherwise pick up a new generation and a new configuration without the HomeKit reconciliation a restart

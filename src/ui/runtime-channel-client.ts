@@ -64,8 +64,8 @@ export interface RuntimeDiagnosticsChannel {
 /**
  * The runtime's willingness to release the account session, when a runtime is there to release it.
  *
- * Declared beside its consumer. The answer is the runtime's claim about itself, so a caller that needs the
- * session must still prove it holds the lease; this only says whether waiting for that is worth anything.
+ * Declared beside its consumer. The answer is the runtime's claim about itself and never proof that the session
+ * is free; only the ownership lease is that.
  */
 export interface RuntimeStandDownChannel {
   requestStandDown(): Promise<boolean>;
@@ -104,61 +104,49 @@ export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagno
   }
 
   async read(): Promise<RuntimeChannelReading | undefined> {
-    if (this.endpoint.shared && !(await ownedSocket(this.endpoint.path))) {
-      return undefined;
-    }
-    let connection: Socket | undefined;
-    try {
-      connection = await this.connect();
-      return await this.exchange(connection);
-    } catch {
-      return undefined;
-    } finally {
-      connection?.destroy();
-    }
+    return this.over(undefined, (connection) => this.exchange(connection));
   }
 
   /**
    * Tells the runtime which authorized evidence window was written, so it reads the file now.
    *
-   * Settles once the runtime has answered, so a caller's next step follows the pickup rather than racing it,
-   * and settles within the same bounds a read observes for every way the channel cannot be used. Nothing is
-   * reported either way: the file the runtime reads is the authority, and it decided before this was sent.
+   * Settles once the runtime has answered, within the same bounds a read observes. Nothing is reported either
+   * way: the file the runtime reads is the authority, and it decided before this was sent.
    */
   async notifyAuthorization(supportCaseId: string): Promise<void> {
-    if (this.endpoint.shared && !(await ownedSocket(this.endpoint.path))) {
-      return;
-    }
-    let connection: Socket | undefined;
-    try {
-      connection = await this.connect();
-      await this.notified(connection, supportCaseId);
-    } catch {
-      return;
-    } finally {
-      connection?.destroy();
-    }
+    return this.over(undefined, (connection) => this.notified(connection, supportCaseId));
   }
 
   /**
    * Asks the runtime to release the account session, reporting whether it stood down.
    *
-   * True means the runtime accepted and its endpoint then closed, which happens inside the ownership release
-   * guard, so the lease was released. It is still a claim about another process: a caller that needs the session
-   * proves it by acquiring the lease. False is every other outcome — a refusal, a runtime that is absent or
-   * speaks another protocol, and one that did not finish within the bound — and each leaves the caller reporting
-   * exactly what it reports without this channel.
+   * True means the request was sent and the endpoint then closed without refusing it. A runtime closes it inside
+   * the ownership release guard, so the lease is released, but this remains a claim about another process and
+   * never proof: only acquiring the lease is that. False is every other outcome — an explicit refusal, a runtime
+   * that is absent or speaks another protocol, and one that did not finish within the bound — and they are one
+   * answer, which is that the session was not freed.
    */
   async requestStandDown(): Promise<boolean> {
+    return this.over(false, (connection) => this.stoodDown(connection));
+  }
+
+  /**
+   * Runs one operation over its own connection, answering `absent` wherever the endpoint could not be used.
+   *
+   * The connection is closed however the operation ends. A shared address is proven to be an owner-only socket of
+   * this user before it is connected to, because an address another local user can create an entry at is one they
+   * could be answering at.
+   */
+  private async over<T>(absent: T, operation: (connection: Socket) => Promise<T>): Promise<T> {
     if (this.endpoint.shared && !(await ownedSocket(this.endpoint.path))) {
-      return false;
+      return absent;
     }
     let connection: Socket | undefined;
     try {
       connection = await this.connect();
-      return await this.stoodDown(connection);
+      return await operation(connection);
     } catch {
-      return false;
+      return absent;
     } finally {
       connection?.destroy();
     }
@@ -186,9 +174,8 @@ export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagno
   /**
    * Sends one notification after the greeting and concludes when it is answered.
    *
-   * Concludes rather than fails on every other outcome, because there is nothing a caller could do with any of
-   * them. A protocol this client does not speak concludes without sending, so a runtime running older code is
-   * never handed a frame it would read as something else.
+   * Concludes rather than fails on every other outcome. A protocol this client does not speak concludes without
+   * sending, so a runtime running older code is never handed a frame it would read as something else.
    */
   private notified(connection: Socket, supportCaseId: string): Promise<void> {
     return new Promise<void>((resolve) => {
@@ -245,9 +232,10 @@ export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagno
    * Sends one stand-down request after the greeting and reports what became of it.
    *
    * A runtime standing down closes its endpoint at the end of its own bounded shutdown, so the closing is the
-   * completion this waits for and an explicit refusal is the one answer that ends it early. A protocol this
-   * client does not speak is never sent the request, because a frame an older runtime reads as something else
-   * could take a session down that nothing asked for.
+   * completion this waits for and an explicit refusal is the one answer that ends it early. Acceptance is not
+   * waited for, because a runtime that closes the connection may not have flushed it. A protocol this client does
+   * not speak is never sent the request, so a frame an older runtime reads as something else cannot take a
+   * session down that nothing asked for.
    */
   private stoodDown(connection: Socket): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
