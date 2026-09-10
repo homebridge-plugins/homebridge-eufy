@@ -1489,9 +1489,18 @@ button {
 }
 
 /* One setting per row, so a control that needs width gets it and nothing sits half-read beside it. */
+/*
+ * Two lists with a column of transfer buttons between them, sharing the parent's rows so the three columns line up.
+ *
+ * The buttons belong beside the lists, not beside the lists plus their titles: centred over the whole column they
+ * sit below the middle of what they act on, by half a title. Subgrid puts each list's title and body in the
+ * parent's own rows, which is what lets the buttons occupy the second row alone. Where subgrid is unavailable the
+ * columns keep their own rows and the buttons centre as they did.
+ */
 .warm-up-transfer {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
+  grid-template-rows: auto 1fr;
   align-items: stretch;
   gap: 8px;
   font-weight: 400;
@@ -1499,7 +1508,8 @@ button {
 
 .warm-up-column {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
   gap: 8px;
   min-width: 0;
 }
@@ -1520,6 +1530,11 @@ button {
    */
   min-height: 172px;
   max-height: 172px;
+  /*
+   * Centred in its row rather than filling it. The row is as tall as the button column beside it, which needs more
+   * than four rows of list, so a list pinned to the top of that row sits above the buttons that act on it.
+   */
+  align-self: center;
   overflow-y: auto;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-control);
@@ -1557,13 +1572,26 @@ button {
 
 .warm-up-controls {
   display: grid;
+  /*
+   * Both placed explicitly. Grid resolves items with a definite row before auto-placing the rest, so naming only
+   * the row let this claim the first column and pushed both lists along one.
+   */
+  grid-row: 2;
+  grid-column: 2;
   align-content: center;
   gap: 8px;
 }
 
+.warm-up-arrow {
+  width: 20px;
+  height: 20px;
+}
+
 .warm-up-controls button {
-  min-width: 40px;
-  min-height: 40px;
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-control);
   background: var(--panel);
@@ -1821,6 +1849,7 @@ input:focus-visible {
 .shell[data-theme='dark'] .status-icon,
 .shell[data-theme='dark'] .dashboard-page-icon,
 .shell[data-theme='dark'] .dashboard-action img,
+.shell[data-theme='dark'] .warm-up-arrow,
 .shell[data-theme='dark'] .device-class-icon {
   filter: invert(1);
 }
