@@ -6,6 +6,7 @@ import { posix } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
 import type { RuntimeState } from '../diagnostics.js';
+import { isSupportCaseId } from '../diagnostics.js';
 import type { RuntimeStatus } from './tracker.js';
 
 /**
@@ -55,6 +56,20 @@ export const RUNTIME_STATUS_PATH = '/runtime/status';
  */
 export const RUNTIME_DEVICES_PATH = '/runtime/devices';
 
+/** The path a diagnostics authorization is notified on, so the runtime reads the file at once. */
+export const RUNTIME_DIAGNOSTICS_PATH = '/diagnostics/authorization';
+
+/**
+ * What a diagnostics notification carries: which authorized evidence window the sender wrote.
+ *
+ * The persisted session file remains the authority for whether that window is open, so this names one and
+ * asserts nothing about it. A support case identifier is randomly generated and carries no account, device,
+ * or host fact.
+ */
+export interface RuntimeChannelAuthorization {
+  supportCaseId: string;
+}
+
 /**
  * The live runtime status: the persisted record's scalar fields, stated by the process that holds them.
  *
@@ -96,6 +111,7 @@ export interface RuntimeChannelRequest {
   v: number;
   id: number;
   path: string;
+  body?: RuntimeChannelAuthorization;
 }
 
 /** One answer, correlated by `id`. */
@@ -236,6 +252,21 @@ export function answeredDevice(device: RuntimeChannelDevice): RuntimeChannelDevi
   };
 }
 
+/**
+ * Projects a notified body onto the closed set of fields this protocol carries inbound, or nothing.
+ *
+ * The only reader of a request body. A body arriving here is untrusted input in the process that owns the Eufy
+ * session, so it is narrowed to one identifier of a known shape and nothing beside it crosses into the
+ * runtime. Nothing is the answer for a body that carries no such identifier.
+ */
+export function noticedAuthorization(value: unknown): RuntimeChannelAuthorization | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const candidate = value as Record<string, unknown>;
+  return isSupportCaseId(candidate.supportCaseId) ? { supportCaseId: candidate.supportCaseId } : undefined;
+}
+
 /** Whether a value is the device observations this protocol version carries, each with its declared shape. */
 export function areRuntimeChannelDevices(value: unknown): value is RuntimeChannelDevice[] {
   return (
@@ -281,6 +312,7 @@ interface RuntimeChannelServerOptions {
   idleTimeoutMs?: number;
   frameBytes?: number;
   devices?: () => RuntimeChannelDevice[];
+  diagnostics?: (notice: RuntimeChannelAuthorization) => boolean;
 }
 
 /**
@@ -300,6 +332,7 @@ export class RuntimeChannelServer {
   private readonly idleTimeoutMs: number;
   private readonly frameBytes: number;
   private readonly devices?: () => RuntimeChannelDevice[];
+  private readonly diagnostics?: (notice: RuntimeChannelAuthorization) => boolean;
 
   constructor(
     private readonly endpoint: RuntimeChannelEndpoint,
@@ -310,6 +343,7 @@ export class RuntimeChannelServer {
     this.idleTimeoutMs = options.idleTimeoutMs ?? RUNTIME_CHANNEL_IDLE_TIMEOUT_MS;
     this.frameBytes = options.frameBytes ?? RUNTIME_CHANNEL_FRAME_BYTES;
     this.devices = options.devices;
+    this.diagnostics = options.diagnostics;
   }
 
   /** Binds the endpoint, reporting whether it bound. An unbound channel is an absent one. */
@@ -358,10 +392,10 @@ export class RuntimeChannelServer {
   /**
    * Answers one request, refusing rather than propagating a provider that faults.
    *
-   * A provider reaches into the runtime's own registry and manifest evidence, either of which may throw. This
-   * runs inside a socket's data listener, where a thrown error is an uncaught exception in the process that
-   * owns the Eufy session, so no read of this channel may be able to end it. A refusal is a state every
-   * consumer already handles.
+   * A provider reaches into the runtime's own registry and manifest evidence, or reads a file and writes a
+   * record, any of which may throw. This runs inside a socket's data listener, where a thrown error is an
+   * uncaught exception in the process that owns the Eufy session, so no request on this channel may be able to
+   * end it. A refusal is a state every consumer already handles.
    */
   private answered(request: RuntimeChannelRequest): RuntimeChannelResponse {
     try {
@@ -370,6 +404,10 @@ export class RuntimeChannelServer {
       }
       if (request.path === RUNTIME_DEVICES_PATH && this.devices) {
         return { id: request.id, ok: true, data: this.devices().map(answeredDevice) };
+      }
+      if (request.path === RUNTIME_DIAGNOSTICS_PATH && this.diagnostics) {
+        const notice = noticedAuthorization(request.body);
+        return { id: request.id, ok: notice !== undefined && this.diagnostics(notice) };
       }
     } catch {
       return { id: request.id, ok: false };

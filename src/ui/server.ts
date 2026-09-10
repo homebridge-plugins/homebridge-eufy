@@ -28,7 +28,11 @@ import { runtimeChannelEndpointForHost } from '../runtime/channel.js';
 import { RuntimeTracker } from '../runtime/tracker.js';
 import { resolveStorageRoot } from '../storage.js';
 import { readDashboard } from './dashboard.js';
-import { RuntimeChannelClient, type RuntimeStatusChannel } from './runtime-channel-client.js';
+import {
+  RuntimeChannelClient,
+  type RuntimeDiagnosticsChannel,
+  type RuntimeStatusChannel,
+} from './runtime-channel-client.js';
 
 const AUTHENTICATION_FLOW_TIMEOUT_MS = 5 * 60_000;
 const AUTHENTICATION_CLEANUP_TIMEOUT_MS = 10_000;
@@ -220,7 +224,7 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
   private readonly ownership: AccountOwnership;
   private readonly persistence: AccountSessionPersistence;
   private readonly runtimeTracker: RuntimeTracker;
-  private readonly runtimeChannel: RuntimeStatusChannel;
+  private readonly runtimeChannel: RuntimeStatusChannel & RuntimeDiagnosticsChannel;
   private readonly images: PersistedLastSuccessfulImages;
   private readonly diagnostics: GuidedDiagnostics;
   private startPending = false;
@@ -254,9 +258,13 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
       readDeviceImage(this.images, this.runtimeChannel, parseDeviceImageRequest(payload)),
     );
     this.onRequest('/diagnostics/status', () => this.diagnostics.status());
-    this.onRequest('/diagnostics/authorize', (payload) => {
+    this.onRequest('/diagnostics/authorize', async (payload) => {
       const authorization = parseDiagnosticsAuthorization(payload);
-      return this.diagnostics.authorize(authorization.profile, authorization.reproductionMode);
+      const status = await this.diagnostics.authorize(authorization.profile, authorization.reproductionMode);
+      if (status.supportCaseId) {
+        await this.runtimeChannel.notifyAuthorization(status.supportCaseId);
+      }
+      return status;
     });
     this.onRequest('/diagnostics/reproduction/start', () => this.diagnostics.startReproduction());
     this.onRequest('/diagnostics/reproduction/end', () => this.diagnostics.endReproduction());

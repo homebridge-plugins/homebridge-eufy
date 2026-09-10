@@ -189,6 +189,31 @@ whole plugin shares. A pooled connection would have to be reconciled with a runt
 underneath it, and a dashboard opening is not a hot path. Letting a bound endpoint stand for ownership would
 replace evidence with a claim.
 
+### A diagnostics authorization the runtime is told about
+
+An authorized support window lives in `diagnostics/session.json`, and the runtime reads that file to decide
+whether a verbose record is retained. The file stays authoritative and remains the only part of this that
+survives a restart, so the channel carries a notification and never the authorization itself. Two facts make
+that binding rather than cautious: the `startup-authentication` profile is needed precisely when the runtime
+does not get far enough to serve an endpoint, so an authorization that depended on a socket would be
+unavailable in the one case it exists for, and the 72-hour window must outlive a Homebridge restart, which a
+socket persists nothing across.
+
+What the notification buys is when the runtime looks. Without it the file is consulted only when a record
+arrives, so the moment a window opened is recorded nowhere in the process the evidence comes from, and an
+archive assembled after a quiet interval states no arming at all. With it the runtime reads the file at once
+and writes one operational record, which every profile declares, so the log window begins at the authorization
+rather than at whatever unrelated record happens next.
+
+The notification names a session and asserts nothing about it. The runtime re-reads the file and refuses a
+session the file does not hold as active, which is what keeps the shared temporary-directory address from
+becoming a way to open an evidence window: an address another local user can create an entry at must not be
+able to authorize collection. What crosses is one randomly generated support case identifier, carrying no
+account, device, or host fact.
+
+Nothing is reported back. A runtime that is absent, older than the path, or unconvinced by the file leaves the
+authorization exactly as the file states it, which is the behaviour without the channel.
+
 ## Module design
 
 Interfaces live beside the consumer that needs them. The exception is the domain-owned type-only media seam

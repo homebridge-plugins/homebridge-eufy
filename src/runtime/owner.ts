@@ -12,13 +12,20 @@ import type {
 import { AccountOwnership, type AccountOwnerEvidence, type AccountReleaseResult } from '../account/ownership.js';
 import { AccountSessionPersistence } from '../account/persistence.js';
 import type { EufyConfig } from '../configuration.js';
-import { reportRuntimeNotice, type PlatformLogger, type RuntimeState, type UnconfirmedWrite } from '../diagnostics.js';
+import {
+  armDiagnosticsAuthorization,
+  reportRuntimeNotice,
+  type PlatformLogger,
+  type RuntimeState,
+  type UnconfirmedWrite,
+} from '../diagnostics.js';
 import { indexDeviceEvidence } from '../device/member-evidence.js';
 import { cameraEnablement } from '../device/member-trust.js';
 import { parseCompleteDeviceSnapshot, type CompleteDeviceSnapshot } from '../device/snapshot.js';
 import {
   RuntimeChannelServer,
   runtimeChannelEndpointForHost,
+  type RuntimeChannelAuthorization,
   type RuntimeChannelDevice,
   type RuntimeChannelStatus,
 } from './channel.js';
@@ -467,15 +474,30 @@ export class RuntimeOwner {
    */
   private async openChannel(): Promise<void> {
     if (this.storageRoot) {
+      const storageRoot = this.storageRoot;
       this.channel ??= new RuntimeChannelServer(
-        runtimeChannelEndpointForHost(this.storageRoot),
+        runtimeChannelEndpointForHost(storageRoot),
         () => this.channelStatus(),
-        { devices: () => this.channelDevices() },
+        {
+          devices: () => this.channelDevices(),
+          diagnostics: (notice) => this.pickUpDiagnosticsAuthorization(storageRoot, notice),
+        },
       );
     }
     if (this.channel && !(await this.channel.open())) {
       reportRuntimeNotice(this.log, 'channel-serve-failed');
     }
+  }
+
+  /**
+   * Reads the persisted diagnostics session the notification names, reporting whether the file confirms it.
+   *
+   * The file is the authority and this is only what makes it read now rather than when a later record arrives,
+   * so a notification the file does not confirm changes nothing. Without a notification the same file decides
+   * every record's retention exactly as it does when no channel is there at all.
+   */
+  private pickUpDiagnosticsAuthorization(storageRoot: string, notice: RuntimeChannelAuthorization): boolean {
+    return armDiagnosticsAuthorization(this.log, storageRoot, notice.supportCaseId);
   }
 
   /**

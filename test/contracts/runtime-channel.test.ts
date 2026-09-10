@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createConnection, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseConfig } from '../../src/configuration.js';
 import { AccountOwnership } from '../../src/account/ownership.js';
+import { createDiagnosticLogger, GuidedDiagnostics } from '../../src/diagnostics.js';
 import {
   FrameReader,
   runtimeChannelEndpoint,
@@ -21,11 +22,13 @@ import {
   RUNTIME_CHANNEL_IDLE_TIMEOUT_MS,
   RUNTIME_CHANNEL_PROTOCOL,
   RUNTIME_CHANNEL_RESPONSE_TIMEOUT_MS,
+  RUNTIME_DIAGNOSTICS_PATH,
+  type RuntimeChannelAuthorization,
   type RuntimeChannelDevice,
   type RuntimeChannelEndpoint,
   type RuntimeChannelStatus,
 } from '../../src/runtime/channel.js';
-import { RuntimeOwner, type RuntimeChannelHost } from '../../src/runtime/owner.js';
+import { RuntimeOwner, type RuntimeChannelHost, type RuntimeLogger } from '../../src/runtime/owner.js';
 import type { CompleteDeviceSnapshot } from '../../src/device/snapshot.js';
 import type { RuntimeTrackerRecord } from '../../src/runtime/tracker.js';
 import type { SdkClient } from '../../src/runtime/sdk-client.js';
@@ -74,6 +77,9 @@ const ANSWERED_FIELDS = ['complete', 'generation', 'state', 'status', 'updatedAt
 
 const SUBMITTED_PASSWORD = 'synthetic-password-must-never-be-answered';
 const SUBMITTED_ANSWER = 'synthetic-challenge-answer-must-never-be-answered';
+
+/** A support case identifier of the shape one is accepted in, naming no session any file holds. */
+const SYNTHETIC_SUPPORT_CASE_ID = 'support-00000000-0000-4000-8000-000000000000';
 
 const STORAGE_ROOT = '/var/lib/homebridge/homebridge-eufy';
 const OTHER_STORAGE_ROOT = '/homebridge/homebridge-eufy';
@@ -464,7 +470,7 @@ interface HarnessRegistry {
 function ownerHarness(
   channel: RuntimeChannelHost | undefined,
   calls: string[],
-  log: { error: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> } = { error: vi.fn(), warn: vi.fn() },
+  log: RuntimeLogger = { error: vi.fn(), warn: vi.fn() },
   view?: HarnessRegistry,
 ) {
   const config = runtimeConfig();
@@ -1127,5 +1133,207 @@ describe('runtime channel refuses rather than propagates', () => {
     const stopping = runtime.stop();
     await vi.waitFor(async () => await expect(client.read()).resolves.toMatchObject({ devices: [] }));
     await stopping;
+  });
+});
+
+describe('diagnostics authorization notified over the channel', () => {
+  let root: string;
+  let servers: RuntimeChannelServer[];
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'homebridge-eufy-channel-diagnostics-'));
+    servers = [];
+  });
+
+  afterEach(async () => {
+    for (const server of servers) {
+      server.close();
+    }
+    await rm(root, { force: true, recursive: true });
+  });
+
+  function serve(pickUp: (notice: RuntimeChannelAuthorization) => boolean): RuntimeChannelClient {
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    const server = new RuntimeChannelServer(endpoint, () => status(), { diagnostics: pickUp });
+    servers.push(server);
+    return new RuntimeChannelClient(endpoint);
+  }
+
+  /**
+   * The notification carries the identity of the session the sender wrote and nothing else, projected onto
+   * that one field on the way in, because a request arriving on this channel is untrusted input in the
+   * process that owns the Eufy session.
+   */
+  it('carries the session identity the protocol declares and no other field', async () => {
+    const picked: RuntimeChannelAuthorization[] = [];
+    const client = serve((notice) => {
+      picked.push(notice);
+      return true;
+    });
+    await servers[0]!.open();
+
+    await client.notifyAuthorization(SYNTHETIC_SUPPORT_CASE_ID);
+
+    expect(picked).toEqual([{ supportCaseId: SYNTHETIC_SUPPORT_CASE_ID }]);
+  });
+
+  /**
+   * A body that does not carry a support case identifier is refused without reaching the pickup, so no
+   * supplied string becomes a path, a filter, or a record inside the runtime process.
+   */
+  it('refuses a body that carries no session identity this protocol accepts', async () => {
+    const picked: RuntimeChannelAuthorization[] = [];
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    const server = new RuntimeChannelServer(endpoint, () => status(), {
+      diagnostics: (notice) => {
+        picked.push(notice);
+        return true;
+      },
+    });
+    servers.push(server);
+    await server.open();
+
+    const connection = createConnection(endpoint.path);
+    await once(connection, 'connect');
+    let received = '';
+    connection.on('data', (chunk: Buffer) => (received += chunk.toString('utf8')));
+    await once(connection, 'data');
+    for (const body of [undefined, { supportCaseId: '../../etc/passwd' }, { supportCaseId: 42 }, []]) {
+      connection.write(
+        `${JSON.stringify({ v: RUNTIME_CHANNEL_PROTOCOL, id: 3, path: RUNTIME_DIAGNOSTICS_PATH, body })}\n`,
+      );
+    }
+    await vi.waitFor(() => expect(received.trimEnd().split('\n')).toHaveLength(5));
+    connection.destroy();
+
+    expect(
+      received
+        .trimEnd()
+        .split('\n')
+        .slice(1)
+        .map((frame) => JSON.parse(frame)),
+    ).toEqual([
+      { id: 3, ok: false },
+      { id: 3, ok: false },
+      { id: 3, ok: false },
+      { id: 3, ok: false },
+    ]);
+    expect(picked).toEqual([]);
+  });
+
+  /**
+   * A notification the file does not confirm is refused, and a refusal is not a client error: the file is the
+   * authority, so the sender learns nothing new and the UI behaves as it does without the channel.
+   */
+  it('resolves when the runtime refuses the notification', async () => {
+    const client = serve(() => false);
+    await servers[0]!.open();
+
+    await expect(client.notifyAuthorization(SYNTHETIC_SUPPORT_CASE_ID)).resolves.toBeUndefined();
+  });
+
+  /**
+   * Absence is the one outcome for every way the channel cannot be used, and a notification is delivered on
+   * the same terms as a read: there is nothing to tell, and nothing to report.
+   */
+  it('resolves when no runtime is there to notify', async () => {
+    const client = new RuntimeChannelClient(runtimeChannelEndpoint(root, process.platform, tmpdir()));
+
+    await expect(client.notifyAuthorization(SYNTHETIC_SUPPORT_CASE_ID)).resolves.toBeUndefined();
+  });
+
+  /**
+   * The pickup reads a file and writes a record, either of which may throw, and it runs inside a socket data
+   * listener in the process that owns the Eufy session. A refusal is the answer instead.
+   */
+  it('refuses rather than propagates a pickup that faults', async () => {
+    const client = serve(() => {
+      throw new Error('synthetic pickup failure');
+    });
+    await servers[0]!.open();
+
+    await expect(client.notifyAuthorization(SYNTHETIC_SUPPORT_CASE_ID)).resolves.toBeUndefined();
+    await expect(client.read()).resolves.toMatchObject({ ready: true });
+  });
+
+  /**
+   * A runtime older than this path serves no pickup at all, which is a refusal and not a fault, so an
+   * upgrade without a Homebridge restart notifies a runtime that ignores it and nothing surfaces.
+   */
+  it('resolves against a runtime that serves no pickup', async () => {
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    const server = new RuntimeChannelServer(endpoint, () => status());
+    servers.push(server);
+    await server.open();
+
+    await expect(
+      new RuntimeChannelClient(endpoint).notifyAuthorization(SYNTHETIC_SUPPORT_CASE_ID),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('a runtime picking up an authorization it is notified of', () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'homebridge-eufy-channel-pickup-'));
+  });
+
+  afterEach(async () => {
+    await rm(root, { force: true, recursive: true });
+  });
+
+  async function records(): Promise<Record<string, unknown>[]> {
+    return (await readFile(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  /**
+   * The whole chain the latency change exists for: the UI writes the file, notifies over the channel, and the
+   * runtime reads the file it was told about at once rather than whenever an unrelated record next arrives.
+   * The record the runtime writes is the evidence that the window opened in the process the evidence comes
+   * from.
+   */
+  it('reads the file at once and records the window it opened', async () => {
+    const authorized = await new GuidedDiagnostics(root).authorize('startup-authentication', 'now');
+    const log = createDiagnosticLogger({ error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root);
+    const runtime = ownerHarness(undefined, [], log, {
+      storageRoot: root,
+      snapshot: { version: 1, complete: true, devices: [] },
+      registry: new Map(),
+    });
+    await runtime.start();
+
+    await new RuntimeChannelClient(runtimeChannelEndpointForHost(root)).notifyAuthorization(authorized.supportCaseId!);
+    await vi.waitFor(async () => {
+      await log.flush?.();
+      expect(await records()).toEqual([
+        expect.objectContaining({ scope: 'runtime-notice', level: 'info', code: 'diagnostics-authorization-armed' }),
+      ]);
+    });
+    await runtime.stop();
+  });
+
+  /**
+   * The file is the authority. A notification naming a session it does not hold changes nothing, which is
+   * what keeps a shared address from letting another local process open an evidence window.
+   */
+  it('changes nothing when the file does not confirm the session', async () => {
+    await new GuidedDiagnostics(root).authorize('startup-authentication', 'now');
+    const log = createDiagnosticLogger({ error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root);
+    const runtime = ownerHarness(undefined, [], log, {
+      storageRoot: root,
+      snapshot: { version: 1, complete: true, devices: [] },
+      registry: new Map(),
+    });
+    await runtime.start();
+
+    await new RuntimeChannelClient(runtimeChannelEndpointForHost(root)).notifyAuthorization(SYNTHETIC_SUPPORT_CASE_ID);
+    await log.flush?.();
+
+    expect(existsSync(join(root, 'logs', 'homebridge-eufy.jsonl'))).toBe(false);
+    await runtime.stop();
   });
 });

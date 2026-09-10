@@ -403,6 +403,17 @@ function diagnosticsSessionPath(storageRoot: string): string {
   return join(storageRoot, DIAGNOSTICS_DIRECTORY, GUIDED_SESSION_FILE);
 }
 
+/**
+ * Whether a value has the shape a support case identifier is issued in, which is the only shape one is
+ * accepted in from anywhere.
+ *
+ * A support case identifier names one authorized evidence window. It is randomly generated and carries no
+ * account, device, or host fact, which is why it may cross a process boundary.
+ */
+export function isSupportCaseId(value: unknown): value is string {
+  return typeof value === 'string' && /^support-[0-9a-f-]{36}$/.test(value);
+}
+
 function readDiagnosticsSession(storageRoot: string): PersistedDiagnosticsSession | undefined {
   try {
     const candidate = JSON.parse(
@@ -411,8 +422,7 @@ function readDiagnosticsSession(storageRoot: string): PersistedDiagnosticsSessio
     const reproductionMode = candidate.reproductionMode ?? 'now';
     if (
       candidate.version !== 1 ||
-      typeof candidate.supportCaseId !== 'string' ||
-      !/^support-[0-9a-f-]{36}$/.test(candidate.supportCaseId) ||
+      !isSupportCaseId(candidate.supportCaseId) ||
       typeof candidate.profile !== 'string' ||
       !isDiagnosticsProfile(candidate.profile) ||
       !isDiagnosticsReproductionMode(reproductionMode) ||
@@ -1829,6 +1839,10 @@ const RUNTIME_NOTICES = {
     level: 'warn',
     messageKey: 'log.notice.channelServeFailed',
   },
+  'diagnostics-authorization-armed': {
+    level: 'info',
+    messageKey: 'log.notice.diagnosticsAuthorizationArmed',
+  },
 } as const;
 
 export type RuntimeNoticeCode = keyof typeof RUNTIME_NOTICES;
@@ -2094,7 +2108,7 @@ function sanitizeStructuredEvent(message: string): Record<string, unknown> | und
 
 /** Emits one fixed-shape operational notice selected by its allowlisted runtime code. */
 export function reportRuntimeNotice(
-  target: Pick<PlatformLogger, 'error' | 'warn'> & Partial<Pick<PlatformLogger, 'debug'>>,
+  target: Pick<PlatformLogger, 'error' | 'warn'> & Partial<Pick<PlatformLogger, 'debug' | 'info'>>,
   code: RuntimeNoticeCode,
   fields: { durationMs?: number } = {},
 ): void {
@@ -2102,7 +2116,7 @@ export function reportRuntimeNotice(
   const durationMs = fields.durationMs === undefined ? undefined : Math.max(0, Math.trunc(fields.durationMs));
   const messageKey =
     durationMs !== undefined && 'durationMessageKey' in notice ? notice.durationMessageKey : notice.messageKey;
-  target[notice.level](`[${code}] ${localize(target, messageKey, { durationMs: durationMs ?? 0 })}`);
+  target[notice.level]?.(`[${code}] ${localize(target, messageKey, { durationMs: durationMs ?? 0 })}`);
   target.debug?.(
     JSON.stringify({
       scope: 'runtime-notice',
@@ -2112,6 +2126,30 @@ export function reportRuntimeNotice(
       ...(durationMs === undefined ? {} : { durationMs }),
     }),
   );
+}
+
+/**
+ * Picks up an authorization the persisted session file confirms, reporting whether it did.
+ *
+ * The file is the authority: the supplied identifier only names which window the caller believes was opened,
+ * and a session the file does not hold as active changes nothing and reports nothing. A confirmed pickup emits
+ * one operational record, which is the evidence that this process began retaining the window's scopes, taken
+ * at the moment it did rather than whenever a later record arrives.
+ */
+export function armDiagnosticsAuthorization(
+  target: Pick<PlatformLogger, 'error' | 'warn'> & Partial<Pick<PlatformLogger, 'debug' | 'info'>>,
+  storageRoot: string,
+  supportCaseId: string,
+  now: () => number = Date.now,
+): boolean {
+  if (
+    !isSupportCaseId(supportCaseId) ||
+    activeDiagnosticsSession(storageRoot, now())?.supportCaseId !== supportCaseId
+  ) {
+    return false;
+  }
+  reportRuntimeNotice(target, 'diagnostics-authorization-armed');
+  return true;
 }
 
 /** Emits the startup notice for discarded settings awaiting acknowledgement. */

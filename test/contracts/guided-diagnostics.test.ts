@@ -9,7 +9,7 @@ import {
   randomBytes,
 } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,7 @@ import { gunzipSync, gzipSync } from 'node:zlib';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  armDiagnosticsAuthorization,
   createDiagnosticLogger,
   GuidedDiagnostics,
   recordFfmpegEnvironment,
@@ -1342,6 +1343,77 @@ describe('guided diagnostics session', () => {
         (await diagnostics.reviewSupportArchive()).manifest.evidence[0]!.fields,
         'a record whose own fields do not narrow is dropped rather than partly reported',
       ).toHaveLength(6);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+});
+
+describe('a diagnostics authorization the runtime is notified of', () => {
+  /**
+   * The runtime's pickup is the file, read when it is notified rather than whenever an unrelated record next
+   * arrives. It writes one operational record every profile declares, so a support archive states when the
+   * process the evidence comes from began retaining it.
+   */
+  it('reads the file and records the window it opened', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-armed-'));
+    const info = vi.fn();
+    const logger = createDiagnosticLogger({ debug: vi.fn(), error: vi.fn(), info, warn: vi.fn() }, root);
+
+    try {
+      const authorized = await new GuidedDiagnostics(root).authorize('startup-authentication', 'now');
+
+      expect(armDiagnosticsAuthorization(logger, root, authorized.supportCaseId!)).toBe(true);
+      await logger.flush?.();
+
+      expect(info).toHaveBeenCalledExactlyOnceWith(
+        '[diagnostics-authorization-armed] Diagnostic evidence collection is now active in the plugin runtime.',
+      );
+      const records = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(records).toEqual([
+        expect.objectContaining({
+          scope: 'runtime-notice',
+          level: 'info',
+          code: 'diagnostics-authorization-armed',
+          messageKey: 'log.notice.diagnosticsAuthorizationArmed',
+        }),
+      ]);
+      expect(JSON.stringify(records)).not.toContain(authorized.supportCaseId!);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /**
+   * The file is the authority and the notification is only a prompt to read it: a session it does not hold, a
+   * session that has expired, and a root with no session at all each change nothing and say nothing.
+   */
+  it('changes nothing for a session the file does not confirm', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-unconfirmed-'));
+    let now = Date.parse('2026-08-16T08:00:00.000Z');
+    const info = vi.fn();
+    const logger = createDiagnosticLogger(
+      { debug: vi.fn(), error: vi.fn(), info, warn: vi.fn() },
+      root,
+      undefined,
+      () => now,
+    );
+
+    try {
+      expect(armDiagnosticsAuthorization(logger, root, 'support-00000000-0000-4000-8000-000000000000')).toBe(false);
+      const authorized = await new GuidedDiagnostics(root, () => now).authorize('startup-authentication', 'now');
+      expect(armDiagnosticsAuthorization(logger, root, 'support-00000000-0000-4000-8000-000000000000')).toBe(false);
+      expect(armDiagnosticsAuthorization(logger, root, 'not-a-support-case-id')).toBe(false);
+
+      now += 73 * HOUR_MS;
+      expect(armDiagnosticsAuthorization(logger, root, authorized.supportCaseId!, () => now)).toBe(false);
+      await logger.flush?.();
+
+      expect(info).not.toHaveBeenCalled();
+      expect(existsSync(join(root, 'logs', 'homebridge-eufy.jsonl'))).toBe(false);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

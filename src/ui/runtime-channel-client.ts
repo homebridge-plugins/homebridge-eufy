@@ -11,6 +11,7 @@ import {
   RUNTIME_CHANNEL_PROTOCOL,
   RUNTIME_CHANNEL_RESPONSE_TIMEOUT_MS,
   RUNTIME_DEVICES_PATH,
+  RUNTIME_DIAGNOSTICS_PATH,
   RUNTIME_STATUS_PATH,
   type RuntimeChannelDevice,
   type RuntimeChannelEndpoint,
@@ -21,6 +22,7 @@ import {
 
 const STATUS_REQUEST = 1;
 const DEVICES_REQUEST = 2;
+const DIAGNOSTICS_REQUEST = 3;
 
 /**
  * One answered read of the live runtime view.
@@ -45,6 +47,17 @@ export interface RuntimeStatusChannel {
   read(): Promise<RuntimeChannelReading | undefined>;
 }
 
+/**
+ * The runtime's immediate pickup of a diagnostics authorization, when a runtime is there to perform it.
+ *
+ * Declared beside its consumer. The persisted session file is the authority and remains the only thing that
+ * survives a restart, so this reports nothing: a runtime that is absent, older, or unconvinced by the file all
+ * leave the authorization exactly as the file states it.
+ */
+export interface RuntimeDiagnosticsChannel {
+  notifyAuthorization(supportCaseId: string): Promise<void>;
+}
+
 interface RuntimeChannelClientOptions {
   connectTimeoutMs?: number;
   responseTimeoutMs?: number;
@@ -62,7 +75,7 @@ interface RuntimeChannelClientOptions {
  *
  * One connection per read, carrying both requests correlated by identity, closed once both are answered.
  */
-export class RuntimeChannelClient implements RuntimeStatusChannel {
+export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagnosticsChannel {
   private readonly connectTimeoutMs: number;
   private readonly responseTimeoutMs: number;
 
@@ -89,6 +102,28 @@ export class RuntimeChannelClient implements RuntimeStatusChannel {
     }
   }
 
+  /**
+   * Tells the runtime which authorized evidence window was written, so it reads the file now.
+   *
+   * Settles once the runtime has answered, so a caller's next step follows the pickup rather than racing it,
+   * and settles within the same bounds a read observes for every way the channel cannot be used. Nothing is
+   * reported either way: the file the runtime reads is the authority, and it decided before this was sent.
+   */
+  async notifyAuthorization(supportCaseId: string): Promise<void> {
+    if (this.endpoint.shared && !(await ownedSocket(this.endpoint.path))) {
+      return;
+    }
+    let connection: Socket | undefined;
+    try {
+      connection = await this.connect();
+      await this.notified(connection, supportCaseId);
+    } catch {
+      return;
+    } finally {
+      connection?.destroy();
+    }
+  }
+
   private connect(): Promise<Socket> {
     return new Promise<Socket>((resolve, reject) => {
       const connection = createConnection(this.endpoint.path);
@@ -104,6 +139,64 @@ export class RuntimeChannelClient implements RuntimeStatusChannel {
       connection.once('connect', () => {
         clearTimeout(settle);
         resolve(connection);
+      });
+    });
+  }
+
+  /**
+   * Sends one notification after the greeting and concludes when it is answered.
+   *
+   * Concludes rather than fails on every other outcome, because there is nothing a caller could do with any of
+   * them. A protocol this client does not speak concludes without sending, so a runtime running older code is
+   * never handed a frame it would read as something else.
+   */
+  private notified(connection: Socket, supportCaseId: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const settle = setTimeout(resolve, this.responseTimeoutMs);
+      settle.unref();
+      const conclude = (): void => {
+        clearTimeout(settle);
+        resolve();
+      };
+      const reader = new FrameReader();
+      let greeted = false;
+      connection.once('error', conclude);
+      connection.once('close', conclude);
+      connection.on('data', (chunk) => {
+        const frames = reader.accept(chunk);
+        if (!frames) {
+          conclude();
+          return;
+        }
+        for (const frame of frames) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(frame);
+          } catch {
+            conclude();
+            return;
+          }
+          if (greeted) {
+            if ((parsed as RuntimeChannelResponse)?.id === DIAGNOSTICS_REQUEST) {
+              conclude();
+              return;
+            }
+            continue;
+          }
+          if ((parsed as RuntimeChannelGreeting)?.protocol !== RUNTIME_CHANNEL_PROTOCOL) {
+            conclude();
+            return;
+          }
+          greeted = true;
+          connection.write(
+            `${JSON.stringify({
+              v: RUNTIME_CHANNEL_PROTOCOL,
+              id: DIAGNOSTICS_REQUEST,
+              path: RUNTIME_DIAGNOSTICS_PATH,
+              body: { supportCaseId },
+            })}\n`,
+          );
+        }
       });
     });
   }
