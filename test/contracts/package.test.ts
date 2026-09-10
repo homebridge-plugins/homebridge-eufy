@@ -94,7 +94,14 @@ async function renderUi(
   const dashboardBadge = { textContent: '' };
   const dashboardSummary = { hidden: false, textContent: '' };
   const dashboardAuthenticate = interactiveElement({ hidden: true });
-  const deviceGroups = interactiveElement({ hidden: false, innerHTML: '' });
+  /**
+   * The container the dashboard draws device tiles into.
+   *
+   * `querySelectorAll` answers nothing because this harness sets `innerHTML` as a string and parses no markup, so
+   * there are no tiles to walk. Answering it at all is what a browser does, and a container that cannot be
+   * queried would make the image pass throw instead of run.
+   */
+  const deviceGroups = interactiveElement({ hidden: false, innerHTML: '', querySelectorAll: () => [] });
   const pageTitle = { textContent: '' };
   const legacyNotice = { hidden: true };
   const legacySettings = { textContent: '' };

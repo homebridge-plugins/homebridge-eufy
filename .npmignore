@@ -196,3 +196,6 @@ tsconfig.configui.spec.json
 tsconfig.plugin.json
 karma.conf.js
 .idea
+
+# The specification suite and its runner configuration are not part of the published package.
+vitest.config.ts

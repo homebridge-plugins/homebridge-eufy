@@ -49,6 +49,22 @@ describe('verification gate', () => {
   });
 
   /**
+   * An unhandled rejection fails the specification it escaped from.
+   *
+   * The runner reports one and exits zero on its own, so a promise nothing observed can carry a fault out of the
+   * code under test and into no assertion at all, leaving a specification passing while the behaviour it names is
+   * broken. The setup file the suite installs is what turns that into a failure.
+   */
+  it('refuses an unhandled rejection rather than reporting one and passing', () => {
+    expect(readFileSync(join(repository, 'vitest.config.ts'), 'utf8')).toMatch(
+      /setupFiles:\s*\['\.\/test\/unhandled-rejections\.ts'\]/,
+    );
+    expect(readFileSync(join(repository, 'test', 'unhandled-rejections.ts'), 'utf8')).toMatch(
+      /process\.on\('unhandledRejection',\s*\(reason\) => \{\s*throw reason;/,
+    );
+  });
+
+  /**
    * A specification that moves time installs a fake clock to move, so the gate's result does not depend on
    * how fast the host ran it.
    */
