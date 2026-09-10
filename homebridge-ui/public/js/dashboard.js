@@ -80,21 +80,25 @@
    * The one thing worth saying about a device in place of its model, or nothing.
    *
    * Ordered by what displaces what: a device nothing can reach says nothing else useful about itself, a camera
-   * reports itself switched off only while it is reachable, and a device withheld from HomeKit is the user's own
-   * decision rather than a fault. A device with none of them keeps its model, which is what identifies it when
-   * there is nothing else to report, and so does one whose catalog carries no wording for the status it has.
+   * reports itself switched off only while it is reachable, a device withheld from HomeKit is the user's own
+   * decision rather than a fault, and a camera that reports itself on says so last, because that is the state a
+   * user assumes until one of the others contradicts it. A device that reports none of them keeps its model,
+   * which is what identifies it when there is nothing to report, and so does one whose catalog carries no
+   * wording for the status it has.
    */
   function deviceStatus(device, rank, messages) {
-    const [key, alert] =
+    const [key, tone] =
       device.availability === 'unavailable'
-        ? ['deviceStatusUnreachable', true]
+        ? ['deviceStatusUnreachable', 'alert']
         : device.enabled === false
-          ? ['deviceStatusSwitchedOff', true]
+          ? ['deviceStatusSwitchedOff', 'alert']
           : rank === 1
-            ? ['deviceStatusHidden', false]
-            : [];
+            ? ['deviceStatusHidden', 'quiet']
+            : device.enabled === true
+              ? ['deviceStatusOn', 'live']
+              : [];
     const label = key ? messages[key] : undefined;
-    return label ? { label, alert } : undefined;
+    return label ? { label, tone } : undefined;
   }
 
   function renderDevices(devices, config, messages, deviceGroups) {
@@ -135,7 +139,7 @@
               : '';
             const status = deviceStatus(device, rank, messages);
             const secondLine = status
-              ? `<p class="device-status${status.alert ? ' device-status-alert' : ''}"><span class="device-status-dot" aria-hidden="true"></span><span class="device-status-label">${escapeHtml(status.label)}</span></p>`
+              ? `<p class="device-status device-status-${status.tone}"><span class="device-status-dot" aria-hidden="true"></span><span class="device-status-label">${escapeHtml(status.label)}</span></p>`
               : `<p>${escapeHtml(device.modelName)}</p>`;
             const tile = `
               <div class="device-art" aria-hidden="true"><img class="device-class-icon" src="assets/icons/inventory.svg" alt=""><span>${escapeHtml(device.deviceClass)}</span>${artwork}</div>

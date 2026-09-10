@@ -1104,6 +1104,7 @@ describe('packed plugin', () => {
         'diagnosticsSummary',
         'deviceBattery',
         'deviceStatusHidden',
+        'deviceStatusOn',
         'deviceStatusSwitchedOff',
         'deviceStatusUnreachable',
         'preferenceAudio',
@@ -1770,6 +1771,19 @@ describe('packed plugin', () => {
               battery: 29,
             },
             {
+              serial: 'synthetic-working-camera',
+              name: 'Drive camera',
+              modelName: 'Synthetic working camera',
+              category: 'security',
+              deviceClass: 'camera',
+              recognized: true,
+              represented: true,
+              controllable: false,
+              diagnosticOnly: false,
+              preferences: ['represented'],
+              enabled: true,
+            },
+            {
               serial: 'synthetic-vacuum',
               name: 'Floor cleaner',
               modelName: 'Synthetic vacuum',
@@ -1813,13 +1827,22 @@ describe('packed plugin', () => {
       expect(dashboardUi.deviceGroups.innerHTML).toContain(catalogs['i18n/en.json'].deviceStatusSwitchedOff);
       expect(dashboardUi.deviceGroups.innerHTML).toContain(catalogs['i18n/en.json'].deviceStatusHidden);
       expect(
-        dashboardUi.deviceGroups.innerHTML.match(/class="device-status(?: device-status-alert)?"/g),
-        'a status displaces the model only where there is one: unreachable, switched off, and withheld',
-      ).toHaveLength(3);
+        dashboardUi.deviceGroups.innerHTML.match(/class="device-status device-status-(?:alert|quiet|live)"/g),
+        'every camera states its switch, and any device states being unreachable or withheld',
+      ).toHaveLength(4);
       expect(
         dashboardUi.deviceGroups.innerHTML.match(/device-status-alert/g),
-        'a device the user withheld is their own decision and takes no alert colour',
+        'only a fault takes the alert colour: unreachable, and a camera switched off',
       ).toHaveLength(2);
+      expect(
+        dashboardUi.deviceGroups.innerHTML,
+        'a camera that reports itself on says so, in the accent rather than an alert',
+      ).toContain(
+        `device-status device-status-live"><span class="device-status-dot" aria-hidden="true"></span><span class="device-status-label">${catalogs['i18n/en.json'].deviceStatusOn}`,
+      );
+      expect(dashboardUi.deviceGroups.innerHTML, 'a camera with a status shows it instead of its model').not.toContain(
+        'Synthetic working camera',
+      );
       expect(
         dashboardUi.deviceGroups.innerHTML,
         'a device with nothing to report keeps the model that identifies it',
@@ -1838,10 +1861,10 @@ describe('packed plugin', () => {
         dashboardUi.deviceGroups.innerHTML.match(/device-badge-battery/g),
         'only a device that reports a level gets a badge, never one running on mains power',
       ).toHaveLength(1);
-      expect(dashboardUi.deviceGroups.innerHTML.match(/device-tile-flippable/g)).toHaveLength(5);
-      expect(dashboardUi.deviceGroups.innerHTML.match(/device-mobile-close/g)).toHaveLength(5);
+      expect(dashboardUi.deviceGroups.innerHTML.match(/device-tile-flippable/g)).toHaveLength(6);
+      expect(dashboardUi.deviceGroups.innerHTML.match(/device-mobile-close/g)).toHaveLength(6);
       expect(dashboardUi.deviceGroups.innerHTML.match(/diagnostic-panel/g)).toHaveLength(2);
-      expect(dashboardUi.deviceGroups.innerHTML.match(/preference-panel/g)).toHaveLength(3);
+      expect(dashboardUi.deviceGroups.innerHTML.match(/preference-panel/g)).toHaveLength(4);
       await dashboardUi.deviceGroups.dispatch('change', {
         target: {
           checked: true,

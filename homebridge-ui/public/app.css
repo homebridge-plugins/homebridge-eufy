@@ -917,13 +917,31 @@ button.diagnostics-quiet-action {
   background: var(--alert);
 }
 
-/* The label mixes toward the ink of whichever ground it sits on, which is what an alert-coloured word does here. */
+.device-status-live .device-status-dot {
+  background: var(--accent);
+}
+
+/*
+ * A coloured status label mixes toward the ink of whichever ground it sits on.
+ *
+ * Neither the alert nor the accent clears contrast at 13px against both the pale panel and a scene's gradient, so
+ * the word is mixed and the dot beside it keeps the flat colour. A quiet status states no fault and takes the
+ * second line's own muted ink, which needs no rule.
+ */
 .device-copy p.device-status-alert {
   color: color-mix(in srgb, var(--alert) 75%, var(--tile-ink));
 }
 
 .device-tile[data-artwork-scene] .device-copy p.device-status-alert {
   color: color-mix(in srgb, var(--alert) 75%, var(--tile-scene-ink));
+}
+
+.device-copy p.device-status-live {
+  color: color-mix(in srgb, var(--accent) 70%, var(--tile-ink));
+}
+
+.device-tile[data-artwork-scene] .device-copy p.device-status-live {
+  color: color-mix(in srgb, var(--accent) 70%, var(--tile-scene-ink));
 }
 
 .device-badges {

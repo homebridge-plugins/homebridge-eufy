@@ -74,6 +74,7 @@
   "dashboardStaleTitle": "État des appareils obsolète",
   "deviceBattery": "Batterie {level} %",
   "deviceStatusHidden": "Masqué de HomeKit",
+  "deviceStatusOn": "Activée",
   "deviceStatusSwitchedOff": "Désactivée",
   "deviceStatusUnreachable": "Injoignable",
   "devicesEyebrow": "Appareils",
