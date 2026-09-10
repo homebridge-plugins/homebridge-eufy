@@ -600,6 +600,8 @@ button.diagnostics-quiet-action {
 .device-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* Tiles of two heights share this grid, so a row keeps each at its own rather than stretching the short ones. */
+  align-items: start;
   gap: 12px;
 }
 
@@ -614,6 +616,41 @@ button.diagnostics-quiet-action {
   background: var(--tile-bg);
   perspective: 1000px;
   transition: border-color 150ms var(--ease-out);
+}
+
+/*
+ * A device with no camera frame to show gets half the height, so two stack into the space one camera occupies.
+ *
+ * The square is the camera's, because a frame is what fills it and what the eye finds a camera by. A sensor's
+ * tile carries a product photograph that reads at any height and two lines of copy, so the other half is spent
+ * on nothing, and a household of sensors pushes the cameras off the screen.
+ */
+.device-tile:not([data-device-class='camera']) {
+  aspect-ratio: 2;
+  min-height: 90px;
+}
+
+/* Half a tile is too little for the photograph to sit behind the copy, so it keeps to a strip beside it. */
+.device-tile:not([data-device-class='camera']) .device-summary {
+  justify-content: center;
+}
+
+.device-tile:not([data-device-class='camera']) .device-art img[data-device-artwork] {
+  inset: 8px 8px 8px auto;
+  width: 36%;
+  height: calc(100% - 16px);
+}
+
+.device-tile:not([data-device-class='camera']) .device-copy {
+  max-width: 60%;
+}
+
+/*
+ * A device that has to explain itself keeps the full square, because its settings face is a paragraph rather
+ * than a switch and half a tile truncates it. Rank 2 is the diagnostic-only device, the only one that explains.
+ */
+.device-tile[data-rank='2'] {
+  aspect-ratio: 1;
 }
 
 .device-tile-changed {
