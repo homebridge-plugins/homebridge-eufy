@@ -37,6 +37,13 @@ export interface DashboardDevice {
   artwork?: string;
   preferences: Array<'represented' | 'audio' | 'snapshotMode'>;
   /**
+   * The adapters that will represent this device in HomeKit, so the interface can name what it becomes.
+   *
+   * Empty for a device nothing represents. These are the registry's own keys rather than words, because what a
+   * service is called belongs to the interface that shows it and has to be translated there.
+   */
+  representation: string[];
+  /**
    * Whether the runtime reports this device reachable, where a runtime is there to report it.
    *
    * Absent means unobserved, which is not unreachable. Nothing is inferred from the published inventory, which
@@ -165,6 +172,7 @@ function projectDevice(manifest: DeviceManifest, representationEnabled: boolean 
     diagnosticOnly: !admission.represented,
     artwork: artworkOf(manifest),
     preferences,
+    representation: admission.services,
   };
 }
 

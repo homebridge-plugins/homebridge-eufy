@@ -87,6 +87,26 @@
     </aside>
     <div data-device-groups></div>
 
+    <section
+      class="dashboard-panel device-panel"
+      data-device-settings
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="device-settings-title"
+    >
+      <div class="dashboard-panel-header">
+        <button type="button" class="dashboard-page-back" data-device-close data-i18n-aria-label="closeDetails">
+          <span aria-hidden="true">←</span>
+        </button>
+        <div>
+          <p class="eyebrow" data-device-settings-eyebrow></p>
+          <h2 id="device-settings-title" data-device-settings-title></h2>
+        </div>
+      </div>
+      <div class="preference-grid" data-device-settings-controls></div>
+    </section>
+
     <section class="dashboard-panel advanced-panel" data-advanced-settings hidden aria-labelledby="advanced-title">
       <div class="dashboard-panel-header">
         <button type="button" class="dashboard-page-back" data-advanced-close data-i18n-aria-label="closeAdvanced">

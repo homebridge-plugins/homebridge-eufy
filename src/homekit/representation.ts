@@ -23,10 +23,17 @@ export function admittedHomeKitAdapters(
   );
 }
 
-/** Summarizes the same HomeKit admission policy used by reconciliation. */
+/**
+ * Summarizes the same HomeKit admission policy used by reconciliation.
+ *
+ * `services` names the adapters that will represent this device, in the registry's own order, so an interface can
+ * say what the device becomes rather than only that it becomes something. Supplemental adapters are left out:
+ * they accompany a representation rather than being one, and every accessory carries them.
+ */
 export function describeHomeKitRepresentation(manifest: DeviceManifest): {
   represented: boolean;
   controllable: boolean;
+  services: string[];
 } {
   const primary = admittedHomeKitAdapters(manifest).filter(([, adapter]) => adapter.role === 'primary-purpose');
   return {
@@ -34,5 +41,6 @@ export function describeHomeKitRepresentation(manifest: DeviceManifest): {
     controllable: primary.some(([, adapter]) =>
       adapter.coverage.some((id) => id.endsWith('.persistent-operation') || id.endsWith('.momentary-action')),
     ),
+    services: primary.map(([key]) => key),
   };
 }

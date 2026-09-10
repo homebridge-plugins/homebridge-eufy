@@ -627,7 +627,6 @@ button.diagnostics-quiet-action {
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
   background: var(--tile-bg);
-  perspective: 1000px;
   transition: border-color 150ms var(--ease-out);
 }
 
@@ -666,7 +665,52 @@ button.diagnostics-quiet-action {
   padding: 12px;
 }
 
-.device-tile:not([data-device-class='camera']) .diagnostic-panel img {
+.device-tile:not([data-device-class='camera']) /*
+ * A device's settings are a page rather than a face on the tile, so they are read at the page's scale and have as
+ * much room as the device needs. The tile is the summary and the way in; nothing about its size bounds this.
+ */
+.device-panel .preference-grid {
+  gap: 20px;
+  max-width: 560px;
+}
+
+.device-panel .preference-grid label,
+.device-panel .preference-grid .setting-label,
+.device-panel .preference-grid p {
+  font-size: 13px;
+}
+
+.device-panel .preference-representation {
+  font-size: 13px;
+}
+
+/*
+ * A finger has no hover and no precision, so every row it can act on is at least 44px tall where the pointer is
+ * coarse. This is the whole interaction on an iPhone: there is no second way in.
+ */
+@media (pointer: coarse) {
+  .device-panel .preference-grid .toggle {
+    min-height: 44px;
+  }
+
+  /*
+   * The segment's fill is painted on its inner span, so the span is what grows. Giving the height to the label
+   * instead leaves the selected fill short of the row it sits in, which reads as the buttons being misaligned
+   * with the selection rather than as a tall label.
+   */
+  .device-panel .snapshot-segment span {
+    display: grid;
+    min-height: 44px;
+    place-items: center;
+  }
+
+  .dashboard-page-back {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+.diagnostic-panel img {
   display: none;
 }
 
@@ -703,7 +747,7 @@ button.diagnostics-quiet-action {
   list-style: none;
 }
 
-.device-flip-control {
+.device-open-control {
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -711,19 +755,6 @@ button.diagnostics-quiet-action {
   font: inherit;
   text-align: inherit;
   cursor: pointer;
-}
-
-.device-card-inner {
-  position: absolute;
-  inset: 0;
-  transform-style: preserve-3d;
-  transition: transform 420ms cubic-bezier(0.2, 0.75, 0.25, 1);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .device-card-inner {
-    transition: none;
-  }
 }
 
 .device-tile[data-artwork-scene] .device-art img[data-device-artwork] {
@@ -764,73 +795,6 @@ button.diagnostics-quiet-action {
     var(--tile-scene-stripe) 12px,
     var(--tile-scene-stripe) 20px
   );
-}
-
-.device-tile-flipped .device-card-inner {
-  transform: rotateY(180deg);
-}
-
-.device-card-face {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-}
-
-/*
- * The face turned away from the viewer, which must leave the tab order as well as the pointer's reach.
- *
- * `backface-visibility` and `opacity` hide it, and `pointer-events` puts it out of the mouse's reach, but none
- * of those remove a control from the tab order or the accessibility tree. Without `visibility` the away-facing
- * controls stayed reachable: tabbing a tile's front moved next into its own hidden back, where a keyboard user
- * could switch a camera out of HomeKit without ever seeing the panel. `visibility` carries the same 210ms delay
- * as the opacity swap, so the flip looks exactly as it did.
- */
-.device-card-front {
-  opacity: 1;
-  visibility: visible;
-  transform: rotateY(0deg);
-  transition:
-    opacity 0s linear 210ms,
-    visibility 0s linear 210ms;
-}
-
-.device-card-back {
-  display: flex;
-  align-items: center;
-  background: var(--tile-bg);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transform: rotateY(180deg);
-  transition:
-    opacity 0s linear 210ms,
-    visibility 0s linear 210ms;
-  cursor: pointer;
-}
-
-.device-tile-flipped .device-card-front {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.device-tile-flipped .device-card-back {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-}
-
-.device-mobile-close {
-  display: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .device-card-front,
-  .device-card-back {
-    transition: none;
-  }
 }
 
 .device-summary::after {
@@ -1114,22 +1078,12 @@ button.diagnostics-quiet-action {
   transform: translateY(0);
 }
 
-/*
- * The settings face centres on the tile, so its padding is even. An uneven one is not centring with an offset: the
- * face already centres the panel box, so more padding above than below simply lands the controls below the middle.
- */
-.preference-panel {
-  width: 100%;
-  padding: 16px;
-}
-
 .diagnostic-panel {
   display: grid;
   place-items: center;
   gap: 8px;
   width: 100%;
   padding: 16px;
-  color: var(--tile-ink);
   text-align: center;
 }
 
@@ -1160,6 +1114,12 @@ button.diagnostics-quiet-action {
   margin: 0;
   color: var(--muted);
   font-size: 11px;
+}
+
+/* What the device becomes, read before the switch that decides whether it becomes it. */
+.preference-representation {
+  color: var(--tile-muted);
+  font-weight: 600;
 }
 
 .preference-grid label {
@@ -1642,7 +1602,7 @@ button:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 88%, var(--on-accent));
 }
 
-button:active:not(:disabled, .device-flip-control, .device-mobile-close) {
+button:active:not(:disabled, .device-open-control) {
   transform: scale(0.97);
 }
 
@@ -1671,8 +1631,7 @@ button.diagnostics-quiet-action:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 9%, var(--panel));
 }
 
-.device-flip-control:hover,
-.device-mobile-close:hover {
+.device-open-control:hover {
   background: transparent;
 }
 
@@ -1823,50 +1782,6 @@ input:focus-visible {
     padding: 32px 16px 8px;
   }
 
-  .diagnostic-panel img {
-    width: 24px;
-    height: 24px;
-  }
-
-  .diagnostic-panel p {
-    font-size: 10px;
-  }
-
-  .device-card-settings {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .device-card-settings .preference-panel {
-    padding: 24px 20px 8px;
-  }
-
-  .device-card-settings::after {
-    content: '';
-    width: 100%;
-    min-height: 36px;
-    flex: 1;
-  }
-
-  .device-mobile-close {
-    position: absolute;
-    z-index: 4;
-    top: 0;
-    right: 0;
-    display: grid;
-    place-items: center;
-    width: 44px;
-    min-height: 44px;
-    height: 44px;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    color: var(--tile-ink);
-    padding: 0;
-    font-size: 28px;
-    font-weight: 400;
-    line-height: 1;
-  }
 }
 
 .shell[data-theme='dark'] {

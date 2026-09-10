@@ -74,6 +74,11 @@ const diagnosticsExport = document.querySelector('[data-diagnostics-export]');
 const diagnosticsResultHeading = document.querySelector('[data-diagnostics-result-heading]');
 const diagnosticsStartAnother = document.querySelector('[data-diagnostics-start-another]');
 const advancedPanel = document.querySelector('[data-advanced-settings]');
+const devicePanel = document.querySelector('[data-device-settings]');
+const deviceClose = document.querySelector('[data-device-close]');
+const deviceSettingsTitle = document.querySelector('[data-device-settings-title]');
+const deviceSettingsEyebrow = document.querySelector('[data-device-settings-eyebrow]');
+const deviceSettingsControls = document.querySelector('[data-device-settings-controls]');
 const advancedClose = document.querySelector('[data-advanced-close]');
 const advancedPolling = document.querySelector('[data-advanced-polling]');
 const advancedConcurrentMedia = document.querySelector('[data-advanced-concurrent-media]');
@@ -109,6 +114,9 @@ const dashboardElements = {
   summary: dashboardSummary,
   authenticate: dashboardAuthenticate,
   groups: deviceGroups,
+  deviceSettingsTitle,
+  deviceSettingsEyebrow,
+  deviceSettingsControls,
   updatePending,
   updatePendingSummary,
   updatePendingVersion,
@@ -569,26 +577,23 @@ function openDashboardPanel(panel, trigger) {
   masthead.hidden = true;
   firstSetup.hidden = true;
   setupContent.hidden = true;
-  if (panel === diagnosticsPanel) {
-    dashboard.hidden = true;
-    diagnosticsPanel.hidden = false;
-    advancedPanel.hidden = true;
-  } else {
-    dashboard.hidden = false;
-    dashboardState.hidden = true;
-    dashboardSummary.hidden = true;
-    deviceGroups.hidden = true;
-    advancedPanel.hidden = false;
-    diagnosticsPanel.hidden = true;
+  const insideDashboard = panel !== diagnosticsPanel;
+  dashboard.hidden = !insideDashboard;
+  dashboardState.hidden = insideDashboard;
+  dashboardSummary.hidden = insideDashboard;
+  deviceGroups.hidden = insideDashboard;
+  for (const other of [diagnosticsPanel, advancedPanel, devicePanel]) {
+    other.hidden = other !== panel;
   }
   panel.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-  (panel === diagnosticsPanel ? diagnosticsClose : advancedClose).focus?.();
+  panel.querySelector('.dashboard-page-back')?.focus?.();
 }
 
 /** Restores the screen a panel was opened over, rather than assuming it was the dashboard. */
 function closeDashboardPanel() {
   diagnosticsPanel.hidden = true;
   advancedPanel.hidden = true;
+  devicePanel.hidden = true;
   dashboardState.hidden = false;
   dashboardSummary.hidden = false;
   deviceGroups.hidden = false;
@@ -650,6 +655,10 @@ advancedClose.addEventListener('click', () => {
   closeDashboardPanel();
 });
 
+deviceClose.addEventListener('click', () => {
+  closeDashboardPanel();
+});
+
 async function updateAdvancedSettings() {
   const existing = configuredBlock();
   if (!existing) return;
@@ -699,6 +708,8 @@ warmUpRemoveAll.addEventListener('click', () => moveWarmUp('chosen', true));
 
 let warmUpSelection = ['doorbellPress'];
 let warmUpCandidates = [];
+// The devices the dashboard last drew, so opening a tile can find the one it speaks for.
+let dashboardDevices = [];
 /**
  * The entries the user has marked, in whichever column they sit.
  *
@@ -814,7 +825,12 @@ async function updateConfig(block) {
   else homebridge.enableSaveButton();
 }
 
-dashboardView.bindPreferences(dashboardElements, configuredBlock, updateConfig, () => messages);
+dashboardView.bindPreferences(dashboardElements, configuredBlock, updateConfig, () => messages, (serial, trigger) => {
+  const device = dashboardDevices.find((candidate) => candidate.serial === serial);
+  if (!device) return;
+  dashboardView.renderDeviceSettings(device, configuredBlock() ?? {}, messages, dashboardElements);
+  openDashboardPanel(devicePanel, trigger);
+});
 
 dashboardAuthenticate.addEventListener('click', () => {
   diagnosticsPanel.hidden = true;
@@ -866,6 +882,8 @@ async function showDashboard() {
     const snapshot = await requestWithinDeadline('/dashboard', { representationPreferences }, 12000);
     // What the warm-up setting may offer comes from the devices themselves, so it is learnt here.
     warmUpCandidates = Array.isArray(snapshot.warmUpCandidates) ? snapshot.warmUpCandidates : [];
+    // Kept beside the render that drew them, so opening a tile finds the device that tile stands for.
+    dashboardDevices = snapshot.devices ?? [];
     dashboardView.render(snapshot, configuredBlock() ?? {}, messages, dashboardElements);
     // The image pass runs beside the rendered dashboard, so its failure is dropped here rather than escaping.
     void dashboardView

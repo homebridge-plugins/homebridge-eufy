@@ -125,11 +125,6 @@
         if (categoryDevices.length === 0) return '';
         const tiles = categoryDevices
           .map(({ device, rank }) => {
-            const preference = {
-              represented: preferences[device.serial]?.represented ?? true,
-              audio: preferences[device.serial]?.audio ?? true,
-              snapshotMode: preferences[device.serial]?.snapshotMode ?? 'Refresh',
-            };
             const badges = [
               device.diagnosticOnly ? { icon: 'troubleshoot', label: messages.diagnosticOnly } : undefined,
               batteryBadge(device, messages),
@@ -145,14 +140,8 @@
               <div class="device-art" aria-hidden="true"><img class="device-class-icon" src="assets/icons/inventory.svg" alt=""><span>${escapeHtml(device.deviceClass)}</span>${artwork}</div>
               <div class="device-copy"><h3>${escapeHtml(device.name)}</h3>${secondLine}</div>
               <div class="device-badges">${badges.map(({ icon, label, variant }) => `<span class="device-badge device-badge-${variant ?? icon}" role="img" tabindex="0" aria-label="${escapeHtml(label)}" data-tooltip="${escapeHtml(label)}"><img src="assets/icons/${icon}.svg" alt=""></span>`).join('')}</div>`;
-            if (device.diagnosticOnly) {
-              return `<article class="device-tile device-tile-flippable" data-category="${category}" data-rank="${rank}" data-serial="${escapeHtml(device.serial)}" data-device-class="${escapeHtml(device.deviceClass)}"><div class="device-card-inner"><div class="device-card-face device-card-front"><button class="device-summary device-flip-control" type="button" aria-expanded="false">${tile}</button></div><div class="device-card-face device-card-back"><button class="device-mobile-close" type="button" aria-label="${escapeHtml(messages.closeDetails)}">×</button><div class="diagnostic-panel"><img src="assets/icons/troubleshoot.svg" alt=""><strong>${escapeHtml(messages.diagnosticOnly)}</strong><p>${escapeHtml(messages.diagnosticDescription)}</p></div></div></div></article>`;
-            }
-            const controls = device.preferences
-              .map((key) => preferenceControl(device, key, preference, messages))
-              .join('');
             const disabledClass = rank === 1 ? ' device-tile-disabled' : '';
-            return `<article class="device-tile device-tile-flippable${disabledClass}" data-category="${category}" data-rank="${rank}" data-serial="${escapeHtml(device.serial)}" data-device-class="${escapeHtml(device.deviceClass)}"><div class="device-card-inner"><div class="device-card-face device-card-front"><button class="device-summary device-flip-control" type="button" aria-expanded="false">${tile}</button></div><div class="device-card-face device-card-back device-card-settings"><button class="device-mobile-close" type="button" aria-label="${escapeHtml(messages.closeDetails)}">×</button><div class="preference-panel"><div class="preference-grid">${controls}</div></div></div></div></article>`;
+            return `<article class="device-tile${disabledClass}" data-category="${category}" data-rank="${rank}" data-serial="${escapeHtml(device.serial)}" data-device-class="${escapeHtml(device.deviceClass)}"><button class="device-summary device-open-control" type="button" aria-haspopup="dialog">${tile}</button></article>`;
           })
           .join('');
         const categoryKey = `category${category[0].toUpperCase()}${category.slice(1)}`;
@@ -168,6 +157,36 @@
    * offered only where ending the older build would replace it; elsewhere the copy asks for the restart instead,
    * so nobody is given a button that cannot work.
    */
+  /*
+   * What each adapter becomes in HomeKit, in words. Keyed by the adapter the projection names, because the name a
+   * user reads belongs here rather than in the code that decides which adapters apply.
+   */
+  const HOMEKIT_SERVICE_LABELS = {
+    'arming.security-system': 'serviceSecuritySystem',
+    'camera.streaming': 'serviceCamera',
+    'camera.controls': 'serviceCameraSwitches',
+    'contact.sensor': 'serviceContact',
+    'doorbell.press': 'serviceDoorbell',
+    'lock.mechanism': 'serviceLock',
+    'motion.sensor': 'serviceMotion',
+    'siren.test': 'serviceSiren',
+    'smart-light.lightbulb': 'serviceLight',
+  };
+
+  /**
+   * Names what the device becomes in HomeKit, above the switch that decides whether it becomes it at all.
+   *
+   * "Represent in HomeKit" says that something appears and never what, which is least obvious exactly where it
+   * matters most: a station appears as an alarm, and a camera as several things at once. An adapter this build has
+   * no words for is left out rather than shown as its key, and a device that names none — an answer from a build
+   * that predates this line — costs its tile the line rather than the whole dashboard.
+   */
+  function representationLine(device, messages) {
+    const named = (device.representation ?? []).map((key) => messages[HOMEKIT_SERVICE_LABELS[key]]).filter(Boolean);
+    if (named.length === 0) return '';
+    return `<p class="preference-representation">${escapeHtml(`${messages.representationLabel} ${named.join(', ')}`)}</p>`;
+  }
+
   function renderUpdatePending(result, messages, elements) {
     if (!elements.updatePending) {
       return;
@@ -206,16 +225,11 @@
     }
   }
 
-  function bindPreferences(elements, getConfig, saveConfig, getMessages) {
+  function bindPreferences(elements, getConfig, saveConfig, getMessages, openDevice) {
     elements.groups.addEventListener('click', (event) => {
-      const front = event.target.closest?.('.device-flip-control');
-      const close = event.target.closest?.('.device-mobile-close');
-      const back = event.target.closest?.('.device-card-back');
-      if (!front && !close && (!back || event.target.closest('input, select, option, label, button, a'))) return;
-      const tile = (front ?? close ?? back).closest('.device-tile-flippable');
-      const flipped = Boolean(front);
-      tile.classList.toggle('device-tile-flipped', flipped);
-      tile.querySelector('.device-flip-control').setAttribute('aria-expanded', String(flipped));
+      const opener = event.target.closest?.('.device-open-control');
+      if (!opener) return;
+      openDevice?.(opener.closest('.device-tile').dataset.serial, opener);
     });
     elements.groups.addEventListener(
       'load',
@@ -233,7 +247,7 @@
       },
       true,
     );
-    elements.groups.addEventListener('change', async (event) => {
+    (elements.deviceSettingsControls ?? elements.groups).addEventListener('change', async (event) => {
       const control = event.target;
       const serial = control?.dataset?.serial;
       const key = control?.dataset?.preference;
@@ -256,18 +270,47 @@
       try {
         await saveConfig({ ...existing, entityPreferences });
         if (key === 'represented') {
-          const tile = control.closest?.('.device-tile');
-          if (tile) {
-            tile.classList.toggle('device-tile-disabled', !value);
-            tile.querySelectorAll('[data-requires-representation]').forEach((setting) => {
+          // The control and the tile it speaks for are in two different places now, so the tile is found by serial.
+          const tile = [...elements.groups.querySelectorAll('.device-tile')].find(
+            (candidate) => candidate.dataset.serial === serial,
+          );
+          tile?.classList.toggle('device-tile-disabled', !value);
+          control
+            .closest('.preference-grid')
+            ?.querySelectorAll('[data-requires-representation]')
+            .forEach((setting) => {
               setting.hidden = !value;
             });
-          }
         }
       } catch {
         elements.summary.textContent = getMessages().preferenceSaveFailed;
       }
     });
+  }
+
+  /**
+   * Fills the settings page for one device, which is where its controls live rather than on the tile itself.
+   *
+   * The tile is a summary and a fixed square; a device's settings are neither, and grew past it. A device that
+   * nothing represents gets the explanation instead of controls, because there is nothing for it to obey.
+   */
+  function renderDeviceSettings(device, config, messages, elements) {
+    const preferences = config.entityPreferences ?? {};
+    elements.deviceSettingsTitle.textContent = device.name;
+    elements.deviceSettingsEyebrow.textContent = device.modelName;
+    if (device.diagnosticOnly) {
+      elements.deviceSettingsControls.innerHTML = `<div class="diagnostic-panel"><img src="assets/icons/troubleshoot.svg" alt=""><strong>${escapeHtml(messages.diagnosticOnly)}</strong><p>${escapeHtml(messages.diagnosticDescription)}</p></div>`;
+      return;
+    }
+    const preference = {
+      represented: preferences[device.serial]?.represented ?? true,
+      audio: preferences[device.serial]?.audio ?? true,
+      snapshotMode: preferences[device.serial]?.snapshotMode ?? 'Refresh',
+    };
+    const controls = device.preferences
+      .map((key) => preferenceControl(device, key, preference, messages))
+      .join('');
+    elements.deviceSettingsControls.innerHTML = `${representationLine(device, messages)}${controls}`;
   }
 
   /**
@@ -317,5 +360,11 @@
     }
   }
 
-  global.HomebridgeEufyDashboard = { applyDeviceImages, bindPreferences, render, renderUpdatePending };
+  global.HomebridgeEufyDashboard = {
+    applyDeviceImages,
+    bindPreferences,
+    render,
+    renderDeviceSettings,
+    renderUpdatePending,
+  };
 })(window);

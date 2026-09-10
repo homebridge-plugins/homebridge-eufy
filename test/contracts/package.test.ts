@@ -109,8 +109,8 @@ async function renderUi(
   const menuDiagnostics = labelledElement();
   const mastheadDiagnostics = labelledElement();
   const menuAdvanced = interactiveElement({});
-  const diagnosticsPanel = { hidden: true, scrollIntoView() {} };
   const diagnosticsClose = interactiveElement({ focus() {} });
+  const diagnosticsPanel = { hidden: true, scrollIntoView() {}, querySelector: () => diagnosticsClose };
   const diagnosticsWizardPanel = { hidden: false };
   const diagnosticsQuestion = { hidden: false };
   const diagnosticsQuestionText = {
@@ -185,8 +185,13 @@ async function renderUi(
     },
   };
   const diagnosticsStartAnother = interactiveElement({});
-  const advancedPanel = { hidden: true, scrollIntoView() {} };
   const advancedClose = interactiveElement({ focus() {} });
+  const advancedPanel = { hidden: true, scrollIntoView() {}, querySelector: () => advancedClose };
+  const deviceClose = interactiveElement({ focus() {} });
+  const devicePanel = { hidden: true, scrollIntoView() {}, querySelector: () => deviceClose };
+  const deviceSettingsTitle = { textContent: '' };
+  const deviceSettingsEyebrow = { textContent: '' };
+  const deviceSettingsControls = interactiveElement({ innerHTML: '' });
   const advancedPolling = interactiveElement({
     value: '',
     validityMessage: '',
@@ -343,6 +348,11 @@ async function renderUi(
           '[data-diagnostics-start-another]': diagnosticsStartAnother,
           '[data-advanced-settings]': advancedPanel,
           '[data-advanced-close]': advancedClose,
+          '[data-device-settings]': devicePanel,
+          '[data-device-close]': deviceClose,
+          '[data-device-settings-title]': deviceSettingsTitle,
+          '[data-device-settings-eyebrow]': deviceSettingsEyebrow,
+          '[data-device-settings-controls]': deviceSettingsControls,
           '[data-advanced-polling]': advancedPolling,
           '[data-advanced-concurrent-media]': advancedConcurrentMedia,
           '[data-advanced-ffmpeg]': advancedFfmpeg,
@@ -526,6 +536,9 @@ async function renderUi(
     dashboardAuthenticate,
     dashboardTitle,
     deviceGroups,
+    devicePanel,
+    deviceSettingsTitle,
+    deviceSettingsControls,
     menuAdvanced,
     warmUpAvailable,
     warmUpChosen,
@@ -880,8 +893,9 @@ describe('packed plugin', () => {
       expect(document).toContain('src="assets/icons/bug-report.svg"');
       expect(document).toContain('src="assets/icons/settings.svg"');
       expect(document).toContain('src="assets/icons/warning.svg"');
-      expect(document.match(/class="dashboard-page-back"/g)).toHaveLength(2);
-      expect(document.match(/aria-hidden="true">←<\/span>/g)).toHaveLength(2);
+      // Three panels now: diagnostics, advanced, and one device's settings, each with the same way back.
+      expect(document.match(/class="dashboard-page-back"/g)).toHaveLength(3);
+      expect(document.match(/aria-hidden="true">←<\/span>/g)).toHaveLength(3);
       expect(document).toContain('data-diagnostics-review');
       expect(document).toContain('data-diagnostics-manifest');
       expect(document).toContain('data-diagnostics-review-confirm');
@@ -990,6 +1004,7 @@ describe('packed plugin', () => {
         'advancedWarmUpRemove',
         'advancedWarmUpRemoveAll',
         'closeAdvanced',
+        'closeDetails',
         'closeDiagnostics',
         'dashboardActionsLabel',
         'menuAdvanced',
@@ -1018,7 +1033,6 @@ describe('packed plugin', () => {
         'categoryClean',
         'categoryLife',
         'categorySecurity',
-        'closeDetails',
         'dashboardAuthenticationRequiredBadge',
         'dashboardAuthenticationRequiredSummary',
         'dashboardAuthenticationRequiredTitle',
@@ -1116,6 +1130,16 @@ describe('packed plugin', () => {
         'snapshotModeCloudDescription',
         'snapshotModeLiveDescription',
         'snapshotModeRefreshDescription',
+        'representationLabel',
+        'serviceCamera',
+        'serviceCameraSwitches',
+        'serviceContact',
+        'serviceDoorbell',
+        'serviceLight',
+        'serviceLock',
+        'serviceMotion',
+        'serviceSecuritySystem',
+        'serviceSiren',
         'updatePendingBusy',
         'updatePendingFailed',
         'updatePendingManual',
@@ -1132,7 +1156,14 @@ describe('packed plugin', () => {
       expect(stylesheet).toContain('--accent: #00bfc4');
       expect(stylesheet).toContain('.device-tile-changed');
       expect(stylesheet).toContain('.preference-changed');
-      expect(stylesheet).toContain('.device-card-settings::after');
+      expect(stylesheet).toContain('.device-panel .preference-grid');
+      expect(
+        stylesheet,
+        'the flip apparatus is deleted rather than left unreachable, transforms and away-facing rules included',
+      ).not.toMatch(/device-card|device-tile-flipped|device-mobile-close|device-flip-control|perspective|backface/);
+      expect(stylesheet, 'a finger gets a 44px row wherever the pointer is coarse').toContain(
+        '@media (pointer: coarse)',
+      );
       expect(darkTheme).toContain('--ink: #edf1f7');
       expect(darkTheme).not.toContain('var(--bs-');
 
@@ -1812,7 +1843,24 @@ describe('packed plugin', () => {
       });
       expect(dashboardUi.deviceGroups.innerHTML).toContain('Front contact');
       expect(dashboardUi.deviceGroups.innerHTML).toContain('device-tile-disabled');
-      expect(dashboardUi.deviceGroups.innerHTML).toContain('data-requires-representation hidden');
+      // Opening a device is the only way to its settings now, so the settings are asserted through that path.
+      await dashboardUi.deviceGroups.dispatch('click', {
+        target: {
+          closest: (selector: string) =>
+            selector === '.device-open-control'
+              ? { closest: () => ({ dataset: { serial: 'synthetic-contact' } }) }
+              : undefined,
+        },
+      });
+      expect(
+        dashboardUi.deviceSettingsTitle.textContent,
+        'the settings that open belong to the device whose tile was pressed',
+      ).toBe('Front contact');
+      expect(
+        dashboardUi.deviceSettingsControls.innerHTML,
+        'a setting that only means something for a represented device is withheld while it is not',
+      ).toContain('data-requires-representation hidden');
+      expect(dashboardUi.devicePanel.hidden).toBe(false);
       expect(dashboardUi.deviceGroups.innerHTML).toContain('assets/devices/security/security-T8910.webp');
       expect(dashboardUi.deviceGroups.innerHTML.indexOf('Back contact')).toBeLessThan(
         dashboardUi.deviceGroups.innerHTML.indexOf('Front contact'),
@@ -1872,11 +1920,19 @@ describe('packed plugin', () => {
         dashboardUi.deviceGroups.innerHTML.match(/device-badge-battery/g),
         'only a device that reports a level gets a badge, never one running on mains power',
       ).toHaveLength(1);
-      expect(dashboardUi.deviceGroups.innerHTML.match(/device-tile-flippable/g)).toHaveLength(6);
-      expect(dashboardUi.deviceGroups.innerHTML.match(/device-mobile-close/g)).toHaveLength(6);
-      expect(dashboardUi.deviceGroups.innerHTML.match(/diagnostic-panel/g)).toHaveLength(2);
-      expect(dashboardUi.deviceGroups.innerHTML.match(/preference-panel/g)).toHaveLength(4);
-      await dashboardUi.deviceGroups.dispatch('change', {
+      expect(
+        dashboardUi.deviceGroups.innerHTML.match(/device-open-control/g),
+        'every tile is one face that opens its settings, with nothing behind it to turn over to',
+      ).toHaveLength(6);
+      expect(
+        dashboardUi.deviceGroups.innerHTML,
+        'the flip apparatus is gone rather than hidden: no second face, no away-facing controls, no close button',
+      ).not.toMatch(/device-card|device-tile-flippable|device-mobile-close|device-flip-control|preference-panel/);
+      expect(
+        dashboardUi.deviceGroups.innerHTML,
+        'a tile carries no control a finger could reach by accident, only the one that opens the device',
+      ).not.toMatch(/<input|role="radiogroup"/);
+      await dashboardUi.deviceSettingsControls.dispatch('change', {
         target: {
           checked: true,
           dataset: { preference: 'represented', serial: 'synthetic-contact' },
@@ -1888,7 +1944,7 @@ describe('packed plugin', () => {
       expect(dashboardUi.saveButtonEnables).toBe(1);
       expect(dashboardUi.saveButtonDisables).toBe(1);
       expect(dashboardUi.saves).toBe(0);
-      await dashboardUi.deviceGroups.dispatch('change', {
+      await dashboardUi.deviceSettingsControls.dispatch('change', {
         target: {
           checked: false,
           dataset: { preference: 'represented', serial: 'synthetic-contact' },
