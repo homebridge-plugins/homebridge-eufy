@@ -1,4 +1,4 @@
-import type { CameraActions } from '@mega-yfue/eufy-sdk';
+import type { BatteryActions, CameraActions } from '@mega-yfue/eufy-sdk';
 import { unreflectedMembers } from '@mega-yfue/eufy-sdk';
 
 import {
@@ -90,4 +90,49 @@ export function cameraEnablementReader(
     return () => undefined;
   }
   return () => readEnablement(camera);
+}
+
+/**
+ * The exact battery-level observation a reading is admitted against.
+ *
+ * A device reporting a level at all is what proves it is battery powered, so this one requirement carries both
+ * that fact and the admission of the reading itself.
+ */
+export const BATTERY_LEVEL_READ: DeviceMemberRequirement = {
+  id: 'battery.level.read',
+  kind: 'read',
+  type: 'number',
+  writable: false,
+};
+
+/** Whether a value is a battery level: a percentage, which is the only shape this reading is accepted in. */
+export function isBatteryLevel(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
+}
+
+/** Whether a device reports a battery level, which is the same evidence that proves it runs on a battery. */
+export function observesBatteryLevel(evidence: ReadonlyMap<string, DeviceMemberEvidence>): boolean {
+  return satisfiesMemberRequirements(evidence, [BATTERY_LEVEL_READ]);
+}
+
+/**
+ * What a battery-level reading says, where the device reports one.
+ *
+ * Nothing is answered for a value that is absent, that is not a percentage, or whose read faults: unobserved is
+ * not empty, and presenting it as empty would report a fault the device never reported. HomeKit tells those
+ * three apart because it must answer a characteristic either way; a consumer that may simply say nothing
+ * does not.
+ */
+export function batteryLevel(
+  battery: BatteryActions,
+  evidence: ReadonlyMap<string, DeviceMemberEvidence>,
+): number | undefined {
+  if (!observesBatteryLevel(evidence)) {
+    return undefined;
+  }
+  try {
+    return isBatteryLevel(battery.level) ? battery.level : undefined;
+  } catch {
+    return undefined;
+  }
 }

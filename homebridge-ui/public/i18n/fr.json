@@ -69,6 +69,7 @@
   "dashboardStaleBadge": "Obsolète",
   "dashboardStaleSummary": "L’instantané enregistré n’est plus actuel. Redémarrez Homebridge pour actualiser son état.",
   "dashboardStaleTitle": "État des appareils obsolète",
+  "deviceBattery": "Batterie {level} %",
   "deviceStatusHidden": "Masqué de HomeKit",
   "deviceStatusSwitchedOff": "Désactivée",
   "deviceStatusUnreachable": "Injoignable",

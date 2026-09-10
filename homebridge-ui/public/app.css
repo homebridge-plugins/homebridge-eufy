@@ -952,6 +952,11 @@ button.diagnostics-quiet-action {
   filter: var(--tile-icon-filter);
 }
 
+/* The battery reads as a gauge lying on its side, so the icon turns until its terminal points left. */
+.device-badges .device-badge-battery img {
+  transform: rotate(-90deg);
+}
+
 .device-badges .device-badge-troubleshoot {
   width: 36px;
   height: 36px;

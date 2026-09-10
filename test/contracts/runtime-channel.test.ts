@@ -75,6 +75,7 @@ function trackerRecord(update: Partial<RuntimeTrackerRecord> = {}): RuntimeTrack
 }
 
 const ANSWERED_FIELDS = ['complete', 'generation', 'state', 'status', 'updatedAt'];
+const ANSWERED_DEVICE_FIELDS = ['availability', 'battery', 'enabled', 'serial'];
 
 const SUBMITTED_PASSWORD = 'synthetic-password-must-never-be-answered';
 const SUBMITTED_ANSWER = 'synthetic-challenge-answer-must-never-be-answered';
@@ -849,6 +850,23 @@ describe('runtime channel device observations', () => {
   });
 
   /**
+   * A level is a percentage, and a served value that is not one resolves to absence like any other answer this
+   * client cannot use.
+   *
+   * A shared address is one another local user can create an entry at, so an answer on this channel is untrusted
+   * input: a level of 900 or of `null` must not become a gauge. Absence is the outcome rather than a partial
+   * reading, because a consumer that trusted the rest of a malformed answer would be trusting the same sender.
+   */
+  it('resolves to absence for a served battery level that is not a percentage', async () => {
+    for (const battery of [900, -1, Number.NaN, null, '75']) {
+      const client = await serveDevices(() => [{ serial: 'synthetic-camera', battery } as RuntimeChannelDevice]);
+
+      await expect(client.read(), String(battery)).resolves.toBeUndefined();
+      servers.pop()?.close();
+    }
+  });
+
+  /**
    * An unobserved field is absent, never false. A camera the SDK declines to stand behind and a device whose
    * reachability nothing has reported are both unknown, and reporting either as `false` would publish a
    * working camera as switched off.
@@ -887,14 +905,14 @@ describe('runtime channel device observations', () => {
   it('answers a closed device field set and nothing beside it', async () => {
     const client = await serveDevices(() => [
       Object.assign(
-        { serial: 'synthetic-camera', availability: 'available' as const, enabled: true },
+        { serial: 'synthetic-camera', availability: 'available' as const, enabled: true, battery: 42 },
         { address: '10.0.0.9', userId: 'synthetic-user', authToken: SUBMITTED_PASSWORD },
       ),
     ]);
 
     const reading = await client.read();
 
-    expect(Object.keys(reading!.devices![0]!).sort()).toEqual(['availability', 'enabled', 'serial']);
+    expect(Object.keys(reading!.devices![0]!).sort()).toEqual(ANSWERED_DEVICE_FIELDS);
     expect(JSON.stringify(reading)).not.toMatch(/password|credential|captcha|answer|authToken|cookie|secret/i);
   });
 });
@@ -910,7 +928,23 @@ describe('runtime observations taken from the live registry', () => {
     await rm(root, { force: true, recursive: true });
   });
 
-  function surfaceManifest(serial: string, codec: DeviceManifest['codec'], accessor: string): DeviceManifest {
+  function batteryDetail(): DeviceManifest['details'][number] {
+    return {
+      capability: 'battery',
+      accessor: 'battery',
+      reads: [{ accessor: 'level', property: 'synthetic', type: 'number', writable: false }],
+      actions: [],
+      undescribedActions: [],
+      events: [],
+    };
+  }
+
+  function surfaceManifest(
+    serial: string,
+    codec: DeviceManifest['codec'],
+    accessor: string,
+    battery = false,
+  ): DeviceManifest {
     return {
       sn: serial,
       name: `Synthetic ${codec}`,
@@ -919,7 +953,7 @@ describe('runtime observations taken from the live registry', () => {
       codec,
       source: 'security',
       bound: true,
-      capabilities: [accessor] as DeviceManifest['capabilities'],
+      capabilities: (battery ? [accessor, 'battery'] : [accessor]) as DeviceManifest['capabilities'],
       details: [
         {
           capability: accessor as DeviceManifest['details'][number]['capability'],
@@ -936,6 +970,7 @@ describe('runtime observations taken from the live registry', () => {
           undescribedActions: [],
           events: [],
         },
+        ...(battery ? [batteryDetail()] : []),
       ],
     };
   }
@@ -946,13 +981,14 @@ describe('runtime observations taken from the live registry', () => {
    * owner of the enablement trust gate, and read back by the client the UI uses. No second capability model is
    * built, and the UI opens no SDK client to learn any of it.
    *
-   * The camera reports itself switched off and its reachability is unavailable, so both are answered. The
-   * contact sensor beside it has no enablement to report and nothing has observed its reachability, so it is
-   * answered with its serial alone: unobserved is neither unreachable nor switched off.
+   * The camera reports itself switched off, its reachability is unavailable and its battery is at 55, so all
+   * three are answered. The contact sensor beside it has no enablement to report, nothing has observed its
+   * reachability and it declares no battery member, so it is answered with its serial alone: unobserved is
+   * neither unreachable, nor switched off, nor empty.
    */
   it('answers what it observes and no more, over the endpoint a runtime binds', async () => {
     const calls: string[] = [];
-    const camera = surfaceManifest('synthetic-camera', 'camera', 'camera');
+    const camera = surfaceManifest('synthetic-camera', 'camera', 'camera', true);
     const sensor = surfaceManifest('synthetic-sensor', 'sensor', 'contact');
     const observed: AvailabilityObservation = {
       entity: { kind: 'device', sn: 'synthetic-camera' },
@@ -966,7 +1002,14 @@ describe('runtime observations taken from the live registry', () => {
       storageRoot: root,
       snapshot: { version: 1, complete: true, devices: [camera, sensor] },
       registry: new Map([
-        ['synthetic-camera', { describe: () => camera, camera: () => ({ enabled: false }) } as unknown as Device],
+        [
+          'synthetic-camera',
+          {
+            describe: () => camera,
+            camera: () => ({ enabled: false }),
+            battery: () => ({ level: 55 }),
+          } as unknown as Device,
+        ],
         ['synthetic-sensor', { describe: () => sensor } as unknown as Device],
       ]),
       availability: true,
@@ -977,7 +1020,7 @@ describe('runtime observations taken from the live registry', () => {
     const reading = await new RuntimeChannelClient(runtimeChannelEndpointForHost(root)).read();
 
     expect(reading?.devices).toEqual([
-      { serial: 'synthetic-camera', availability: 'unavailable', enabled: false },
+      { serial: 'synthetic-camera', availability: 'unavailable', enabled: false, battery: 55 },
       { serial: 'synthetic-sensor' },
     ]);
     await runtime.stop();

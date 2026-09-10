@@ -69,6 +69,7 @@
   "dashboardStaleBadge": "Stale",
   "dashboardStaleSummary": "The saved device snapshot is no longer current. Restart Homebridge to refresh its status.",
   "dashboardStaleTitle": "Device status is stale",
+  "deviceBattery": "Battery {level}%",
   "deviceStatusHidden": "Hidden from HomeKit",
   "deviceStatusSwitchedOff": "Switched off",
   "deviceStatusUnreachable": "Unreachable",

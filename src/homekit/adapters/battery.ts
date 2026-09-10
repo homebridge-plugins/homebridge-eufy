@@ -1,6 +1,7 @@
 import type { AnyDeviceEvent, BatteryActions } from '@mega-yfue/eufy-sdk';
 
 import { satisfiesMemberRequirements } from '../../device/member-evidence.js';
+import { BATTERY_LEVEL_READ, isBatteryLevel } from '../../device/member-trust.js';
 import type {
   AdapterAttachmentContext,
   AdapterDiagnostic,
@@ -11,12 +12,7 @@ import type {
 
 export const BATTERY_ADAPTER_KEY = 'battery.status';
 
-const BATTERY_LEVEL_REQUIREMENT = {
-  id: 'battery.level.read',
-  kind: 'read',
-  type: 'number',
-  writable: false,
-} as const;
+const BATTERY_LEVEL_REQUIREMENT = BATTERY_LEVEL_READ;
 const BATTERY_CHARGING_EVIDENCE = 'battery.charging.read';
 const BATTERY_ALERT_EVENT_EVIDENCE = 'battery.batteryAlert.event';
 const LOW_BATTERY_THRESHOLD = 20;
@@ -65,10 +61,6 @@ export const BATTERY_ADAPTER = {
   coverage: [BATTERY_LEVEL_REQUIREMENT.id, BATTERY_CHARGING_EVIDENCE, BATTERY_ALERT_EVENT_EVIDENCE],
   attach: attachBattery,
 } as const satisfies HomeKitAdapter;
-
-function validLevel(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
-}
 
 /** Attaches battery evidence only to an accessory container already admitted by a primary-purpose adapter. */
 function attachBattery(context: AdapterAttachmentContext): AttachedAdapter | undefined {
@@ -159,7 +151,7 @@ function attachBattery(context: AdapterAttachmentContext): AttachedAdapter | und
     } catch {
       return fail('level', 'sdk-fault');
     }
-    if (!validLevel(level)) {
+    if (!isBatteryLevel(level)) {
       return fail('level', level === undefined ? 'missing' : 'malformed');
     }
     state.observedLevel = level;
@@ -204,7 +196,7 @@ function attachBattery(context: AdapterAttachmentContext): AttachedAdapter | und
         if (event.value === undefined) {
           return { event: 'battery-level', observation: 'missing' };
         }
-        if (!validLevel(event.value)) {
+        if (!isBatteryLevel(event.value)) {
           return { event: 'battery-level', observation: 'malformed' };
         }
         updateLevel(event.value);

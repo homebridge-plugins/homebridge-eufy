@@ -1099,6 +1099,7 @@ describe('packed plugin', () => {
         'diagnosticsStartupBefore',
         'diagnosticsStartupSummary',
         'diagnosticsSummary',
+        'deviceBattery',
         'deviceStatusHidden',
         'deviceStatusSwitchedOff',
         'deviceStatusUnreachable',
@@ -1757,6 +1758,7 @@ describe('packed plugin', () => {
               diagnosticOnly: false,
               preferences: ['represented'],
               enabled: false,
+              battery: 29,
             },
             {
               serial: 'synthetic-vacuum',
@@ -1817,6 +1819,16 @@ describe('packed plugin', () => {
         dashboardUi.deviceGroups.innerHTML,
         'a device with a status shows it instead of its model, not beside it',
       ).not.toContain('Synthetic camera');
+      expect(
+        dashboardUi.deviceGroups.innerHTML,
+        'a reported level picks its icon by position in the shipped set and states the percentage in the label',
+      ).toContain(
+        '<span class="device-badge device-badge-battery" role="img" tabindex="0" aria-label="Battery 29%" data-tooltip="Battery 29%"><img src="assets/icons/battery_2.svg" alt="">',
+      );
+      expect(
+        dashboardUi.deviceGroups.innerHTML.match(/device-badge-battery/g),
+        'only a device that reports a level gets a badge, never one running on mains power',
+      ).toHaveLength(1);
       expect(dashboardUi.deviceGroups.innerHTML.match(/device-tile-flippable/g)).toHaveLength(5);
       expect(dashboardUi.deviceGroups.innerHTML.match(/device-mobile-close/g)).toHaveLength(5);
       expect(dashboardUi.deviceGroups.innerHTML.match(/diagnostic-panel/g)).toHaveLength(2);

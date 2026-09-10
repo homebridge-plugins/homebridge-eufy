@@ -20,7 +20,7 @@ import {
   type UnconfirmedWrite,
 } from '../diagnostics.js';
 import { indexDeviceEvidence } from '../device/member-evidence.js';
-import { cameraEnablement } from '../device/member-trust.js';
+import { batteryLevel, cameraEnablement } from '../device/member-trust.js';
 import { parseCompleteDeviceSnapshot, type CompleteDeviceSnapshot } from '../device/snapshot.js';
 import {
   RuntimeChannelServer,
@@ -657,6 +657,7 @@ export class RuntimeOwner {
       serial: manifest.sn,
       availability: this.currentAvailability(manifest.sn)?.availability,
       enabled: this.observedEnablement(view.registry.get(manifest.sn), manifest),
+      battery: this.observedBattery(view.registry.get(manifest.sn), manifest),
     }));
   }
 
@@ -670,6 +671,21 @@ export class RuntimeOwner {
     try {
       const camera = device?.camera?.();
       return camera ? cameraEnablement(camera, indexDeviceEvidence(manifest).members) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * A device's battery level where its own surface states one.
+   *
+   * The capability accessor is a call into the SDK's binding and can fault, and a device that runs on mains
+   * power has no accessor at all. Both are unobserved.
+   */
+  private observedBattery(device: Device | undefined, manifest: DeviceManifest): number | undefined {
+    try {
+      const battery = device?.battery?.();
+      return battery ? batteryLevel(battery, indexDeviceEvidence(manifest).members) : undefined;
     } catch {
       return undefined;
     }

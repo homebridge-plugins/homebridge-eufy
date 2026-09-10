@@ -44,6 +44,39 @@
   }
 
   /**
+   * The eight battery icons the shipped set draws, from empty to full.
+   *
+   * Ordered, because the level picks one by its position: eight steps of twelve and a half percent each.
+   */
+  const BATTERY_STEPS = [
+    'battery_0',
+    'battery_1',
+    'battery_2',
+    'battery_3',
+    'battery_4',
+    'battery_5',
+    'battery_6',
+    'battery_full',
+  ];
+
+  /**
+   * The battery badge a device gets, where it reports a level, and nothing where it does not.
+   *
+   * The icon carries the level and the exact percentage goes to the label: a tile is read at a glance, and a
+   * number on every tile would be read deliberately or not at all. A device on mains power reports no level, and
+   * neither does one nothing is observing, so both are left without a badge rather than shown an empty one.
+   */
+  function batteryBadge(device, messages) {
+    if (typeof device.battery !== 'number') {
+      return undefined;
+    }
+    const step = Math.floor(device.battery / (100 / BATTERY_STEPS.length));
+    const icon = BATTERY_STEPS[Math.min(BATTERY_STEPS.length - 1, Math.max(0, step))];
+    const label = (messages.deviceBattery ?? '').replace('{level}', String(Math.round(device.battery)));
+    return label ? { icon, label, variant: 'battery' } : undefined;
+  }
+
+  /**
    * The one thing worth saying about a device in place of its model, or nothing.
    *
    * Ordered by what displaces what: a device nothing can reach says nothing else useful about itself, a camera
@@ -95,6 +128,7 @@
             };
             const badges = [
               device.diagnosticOnly ? { icon: 'troubleshoot', label: messages.diagnosticOnly } : undefined,
+              batteryBadge(device, messages),
             ].filter(Boolean);
             const artwork = device.artwork
               ? `<img src="${escapeHtml(device.artwork)}" alt="" loading="lazy" data-device-artwork>`
@@ -106,7 +140,7 @@
             const tile = `
               <div class="device-art" aria-hidden="true"><img class="device-class-icon" src="assets/icons/inventory.svg" alt=""><span>${escapeHtml(device.deviceClass)}</span>${artwork}</div>
               <div class="device-copy"><h3>${escapeHtml(device.name)}</h3>${secondLine}</div>
-              <div class="device-badges">${badges.map(({ icon, label }) => `<span class="device-badge device-badge-${icon}" role="img" tabindex="0" aria-label="${escapeHtml(label)}" data-tooltip="${escapeHtml(label)}"><img src="assets/icons/${icon}.svg" alt=""></span>`).join('')}</div>`;
+              <div class="device-badges">${badges.map(({ icon, label, variant }) => `<span class="device-badge device-badge-${variant ?? icon}" role="img" tabindex="0" aria-label="${escapeHtml(label)}" data-tooltip="${escapeHtml(label)}"><img src="assets/icons/${icon}.svg" alt=""></span>`).join('')}</div>`;
             if (device.diagnosticOnly) {
               return `<article class="device-tile device-tile-flippable" data-category="${category}" data-rank="${rank}" data-serial="${escapeHtml(device.serial)}" data-device-class="${escapeHtml(device.deviceClass)}"><div class="device-card-inner"><div class="device-card-face device-card-front"><button class="device-summary device-flip-control" type="button" aria-expanded="false">${tile}</button></div><div class="device-card-face device-card-back"><button class="device-mobile-close" type="button" aria-label="${escapeHtml(messages.closeDetails)}">×</button><div class="diagnostic-panel"><img src="assets/icons/troubleshoot.svg" alt=""><strong>${escapeHtml(messages.diagnosticOnly)}</strong><p>${escapeHtml(messages.diagnosticDescription)}</p></div></div></div></article>`;
             }

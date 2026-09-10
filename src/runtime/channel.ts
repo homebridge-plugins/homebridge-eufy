@@ -7,6 +7,7 @@ import { StringDecoder } from 'node:string_decoder';
 
 import type { RuntimeState } from '../diagnostics.js';
 import { isSupportCaseId } from '../diagnostics.js';
+import { isBatteryLevel } from '../device/member-trust.js';
 import type { RuntimeStatus } from './tracker.js';
 
 /**
@@ -100,12 +101,14 @@ export interface RuntimeChannelStatus {
  * A field is absent where nothing is observed, and never false: a camera whose reading may not be relied on is
  * unknown rather than switched off, and publishing unknown as off would withdraw a working camera. The serial
  * is the key an observation is attached by, and every serial already reaches a consumer in the published
- * inventory.
+ * inventory. `battery` is a percentage, present only where the device reports one, which is the same evidence
+ * that proves it runs on a battery at all.
  */
 export interface RuntimeChannelDevice {
   serial: string;
   availability?: 'available' | 'unavailable';
   enabled?: boolean;
+  battery?: number;
 }
 
 /** What one connection is told before it may ask anything. */
@@ -259,6 +262,7 @@ export function answeredDevice(device: RuntimeChannelDevice): RuntimeChannelDevi
     serial: device.serial,
     ...(device.availability === undefined ? {} : { availability: device.availability }),
     ...(device.enabled === undefined ? {} : { enabled: device.enabled }),
+    ...(device.battery === undefined ? {} : { battery: device.battery }),
   };
 }
 
@@ -291,7 +295,8 @@ export function areRuntimeChannelDevices(value: unknown): value is RuntimeChanne
         (candidate.availability === undefined ||
           candidate.availability === 'available' ||
           candidate.availability === 'unavailable') &&
-        (candidate.enabled === undefined || typeof candidate.enabled === 'boolean')
+        (candidate.enabled === undefined || typeof candidate.enabled === 'boolean') &&
+        (candidate.battery === undefined || isBatteryLevel(candidate.battery))
       );
     })
   );

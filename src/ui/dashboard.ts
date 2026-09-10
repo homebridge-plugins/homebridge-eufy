@@ -40,6 +40,13 @@ export interface DashboardDevice {
    * behind, and one on a runtime that is not running, are both absent here.
    */
   enabled?: boolean;
+  /**
+   * The battery percentage this device reports, where it reports one.
+   *
+   * Absent means unobserved, which is not empty. A device on mains power reports no level at all, and neither
+   * does one on a runtime that is not running.
+   */
+  battery?: number;
 }
 
 export interface DashboardSnapshot {
