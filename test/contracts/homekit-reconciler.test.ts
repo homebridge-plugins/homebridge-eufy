@@ -26,6 +26,7 @@ import {
   type HomeKitRegistrySource,
   type HomeKitRegistryView,
 } from '../../src/homekit/reconciler.js';
+import { describeHomeKitRepresentation } from '../../src/homekit/representation.js';
 
 function contactManifest(serial: string, name = 'Synthetic contact tracer'): DeviceManifest {
   return {
@@ -1218,5 +1219,25 @@ describe('HomeKit registry reconciliation', () => {
 
     expect(accessory.getServiceById(Service.Doorbell, 'doorbell.press')).toBeUndefined();
     reconciler.stop();
+  });
+});
+
+/**
+ * What a device becomes in HomeKit, named from the same admission policy reconciliation uses.
+ *
+ * Asserted against manifests carrying real member evidence, because admission reads `details` rather than the
+ * capability list: a manifest whose capabilities are edited but whose evidence is not admits the same adapters it
+ * always did, which is what made an earlier attempt at this test pass for the wrong reason.
+ */
+describe('the representation a device will take', () => {
+  it('names the adapters that will represent it, and nothing supplemental', () => {
+    expect(describeHomeKitRepresentation(contactManifest('T8900SYNTHETIC')).services).toEqual(['contact.sensor']);
+  });
+
+  it('names nothing for a device no adapter admits', () => {
+    const admission = describeHomeKitRepresentation(identityOnlyManifest('T8900NOTHING'));
+
+    expect(admission.services).toEqual([]);
+    expect(admission.represented).toBe(false);
   });
 });
