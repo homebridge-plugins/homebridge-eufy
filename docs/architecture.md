@@ -260,6 +260,37 @@ rather than racing it.
 The retained registry view is not withdrawn while the runtime is down. A stopped runtime keeps its latest
 complete inventory for HomeKit topology, and standing down on request is a stopped runtime.
 
+### Noticing that the running build is not the installed one
+
+An upgrade lands on disk while the old build keeps running. The UI process is started fresh by Homebridge's own
+UI and loads the installed build; the runtime keeps the build it started on until something replaces it. So the
+two processes disagree about what the plugin can do, and every capability, control, and explanation the page
+shows is the older build's answer. Nothing on the page said so, and the reader had no way to tell a capability
+the plugin lacks from one the running process has not learned yet.
+
+The runtime states its build in the greeting, so a consumer learns it before asking anything and a runtime
+predating the field simply omits it. Absence is read as agreement rather than as skew: an upgrade that cannot
+be proven is not worth interrupting anyone over, and the alternative — warning whenever a version is unknown —
+would fire on every older runtime forever.
+
+This is reported beside a working dashboard rather than as a state of its own. A state would replace the device
+list, so noticing an upgrade would cost the reader everything they came for, and the dashboard is still correct
+about the devices — it is only answering from older code. The notice names the running version, because that is
+the one fact the reader cannot get anywhere else on the page.
+
+The offer to restart is the plugin's own, because Homebridge's UI cannot restart a single child bridge from
+inside a plugin's page and the alternative is asking the reader to leave. It is refused unless the process is a
+child bridge. Homebridge titles a child bridge `homebridge: <plugin name>` and leaves the main process plain
+`homebridge`; only a child bridge is respawned when it ends, so ending the main process would take every other
+plugin down with it. A title that is not recognised is treated as the main process, so an unfamiliar host loses
+the offer rather than the bridge, and the notice asks for the restart in words instead. Nobody is shown a button
+that cannot work.
+
+Ending is a signal rather than an exit, and the same signal Homebridge itself uses to cycle a child bridge, so
+the shutdown path taken is the one already exercised. It is deferred past the answer, so the process that asked
+learns it was accepted rather than seeing the connection drop. Acceptance is never a claim that the replacement
+came up: that is only knowable from the next greeting, which is what the page reads when it reloads.
+
 ## Module design
 
 Interfaces live beside the consumer that needs them. The exception is the domain-owned type-only media seam
