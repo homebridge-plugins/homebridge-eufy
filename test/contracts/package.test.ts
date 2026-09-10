@@ -974,7 +974,8 @@ describe('packed plugin', () => {
           'diagnosticsPrivacy',
           'diagnosticsFrequencyBack',
           'diagnosticsQuestionReproduceNow',
-          'diagnosticsStartCollection',
+          'diagnosticsContinue',
+          'diagnosticsStartRecording',
           'diagnosticsChangeAnswers',
           'diagnosticsStartAnother',
           'diagnosticsTitle',
@@ -1419,7 +1420,7 @@ describe('packed plugin', () => {
         diagnosticsGuidanceBeforeSection: { hidden: false },
         diagnosticsGuidanceBefore: { textContent: catalogs['i18n/en.json'].diagnosticsControlBefore },
         diagnosticsGuidanceAction: { textContent: catalogs['i18n/en.json'].diagnosticsControlAction },
-        diagnosticsReproduction: { textContent: catalogs['i18n/en.json'].diagnosticsStartCollection },
+        diagnosticsReproduction: { textContent: catalogs['i18n/en.json'].diagnosticsStartRecording },
       });
 
       const waitingDiagnosticsUi = await renderUi(

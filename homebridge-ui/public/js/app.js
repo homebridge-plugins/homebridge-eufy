@@ -306,7 +306,7 @@ function renderDiagnostics(state) {
         : messages.diagnosticsIntermittentStartWaiting
       : state.status === 'reproducing'
         ? messages.diagnosticsNowFinish
-        : messages.diagnosticsStartCollection;
+        : messages.diagnosticsStartRecording;
   diagnosticsIssue.hidden = !reviewing;
   diagnosticsIssue.href = state.issueUrl ?? '';
   diagnosticsResult.hidden = !reviewing;
