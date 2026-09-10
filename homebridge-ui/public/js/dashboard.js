@@ -95,7 +95,7 @@
           : rank === 1
             ? ['deviceStatusHidden', 'quiet']
             : device.enabled === true
-              ? ['deviceStatusOn', 'live']
+              ? ['deviceStatusOnline', 'live']
               : [];
     const label = key ? messages[key] : undefined;
     return label ? { label, tone } : undefined;

@@ -1104,7 +1104,7 @@ describe('packed plugin', () => {
         'diagnosticsSummary',
         'deviceBattery',
         'deviceStatusHidden',
-        'deviceStatusOn',
+        'deviceStatusOnline',
         'deviceStatusSwitchedOff',
         'deviceStatusUnreachable',
         'preferenceAudio',
@@ -1842,7 +1842,7 @@ describe('packed plugin', () => {
         dashboardUi.deviceGroups.innerHTML,
         'a camera that reports itself on says so, in the accent rather than an alert',
       ).toContain(
-        `device-status device-status-live"><span class="device-status-dot" aria-hidden="true"></span><span class="device-status-label">${catalogs['i18n/en.json'].deviceStatusOn}`,
+        `device-status device-status-live"><span class="device-status-dot" aria-hidden="true"></span><span class="device-status-label">${catalogs['i18n/en.json'].deviceStatusOnline}`,
       );
       expect(dashboardUi.deviceGroups.innerHTML, 'a camera with a status shows it instead of its model').not.toContain(
         'Synthetic working camera',

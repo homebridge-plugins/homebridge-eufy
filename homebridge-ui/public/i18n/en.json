@@ -74,7 +74,7 @@
   "dashboardStaleTitle": "Device status is stale",
   "deviceBattery": "Battery {level}%",
   "deviceStatusHidden": "Hidden from HomeKit",
-  "deviceStatusOn": "On",
+  "deviceStatusOnline": "Online",
   "deviceStatusSwitchedOff": "Switched off",
   "deviceStatusUnreachable": "Unreachable",
   "devicesEyebrow": "Devices",
