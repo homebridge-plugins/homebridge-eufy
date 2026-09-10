@@ -13,6 +13,7 @@ import {
   RUNTIME_CHANNEL_STAND_DOWN_TIMEOUT_MS,
   RUNTIME_DEVICES_PATH,
   RUNTIME_DIAGNOSTICS_PATH,
+  RUNTIME_RESTART_PATH,
   RUNTIME_STAND_DOWN_PATH,
   RUNTIME_STATUS_PATH,
   type RuntimeChannelDevice,
@@ -25,7 +26,7 @@ import {
 const STATUS_REQUEST = 1;
 const DEVICES_REQUEST = 2;
 const DIAGNOSTICS_REQUEST = 3;
-const STAND_DOWN_REQUEST = 4;
+const DEPARTURE_REQUEST = 4;
 
 /**
  * One answered read of the live runtime view.
@@ -38,6 +39,15 @@ export interface RuntimeChannelReading {
   ready: boolean;
   status: RuntimeChannelStatus;
   devices?: RuntimeChannelDevice[];
+  /**
+   * The plugin build the answering runtime loaded, when it says which.
+   *
+   * Absent from a runtime older than the greeting field, which is why a consumer treats absence as agreement
+   * rather than as skew: an upgrade that cannot be proven is not worth interrupting anyone over.
+   */
+  version?: string;
+  /** Whether that runtime would be replaced rather than merely stopped, when it says. */
+  restartable?: boolean;
 }
 
 /**
@@ -71,6 +81,16 @@ export interface RuntimeStandDownChannel {
   requestStandDown(): Promise<boolean>;
 }
 
+/**
+ * The runtime's willingness to end itself so the installed build replaces it, when a runtime is there to end.
+ *
+ * Declared beside its consumer. The answer reports only that the runtime accepted and began ending; whether the
+ * replacement came up is not knowable from the process asking, and is read from the next greeting instead.
+ */
+export interface RuntimeRestartChannel {
+  requestRestart(): Promise<boolean>;
+}
+
 interface RuntimeChannelClientOptions {
   connectTimeoutMs?: number;
   responseTimeoutMs?: number;
@@ -89,7 +109,9 @@ interface RuntimeChannelClientOptions {
  *
  * One connection per operation, its requests correlated by identity, closed once the operation settles.
  */
-export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagnosticsChannel, RuntimeStandDownChannel {
+export class RuntimeChannelClient
+  implements RuntimeStatusChannel, RuntimeDiagnosticsChannel, RuntimeStandDownChannel, RuntimeRestartChannel
+{
   private readonly connectTimeoutMs: number;
   private readonly responseTimeoutMs: number;
   private readonly standDownTimeoutMs: number;
@@ -127,7 +149,17 @@ export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagno
    * answer, which is that the session was not freed.
    */
   async requestStandDown(): Promise<boolean> {
-    return this.over(false, (connection) => this.stoodDown(connection));
+    return this.over(false, (connection) => this.accepted(connection, RUNTIME_STAND_DOWN_PATH));
+  }
+
+  /**
+   * Asks the runtime to end itself so Homebridge brings up the installed build, reporting whether it accepted.
+   *
+   * A runtime that does not serve the path, or refuses because ending it would not replace it, is a false rather
+   * than a failure, so a caller never has to tell an old runtime apart from an unwilling one.
+   */
+  async requestRestart(): Promise<boolean> {
+    return this.over(false, (connection) => this.accepted(connection, RUNTIME_RESTART_PATH));
   }
 
   /**
@@ -229,21 +261,21 @@ export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagno
   }
 
   /**
-   * Sends one stand-down request after the greeting and reports what became of it.
+   * Sends one departure request after the greeting and reports what became of it.
    *
-   * A runtime standing down closes its endpoint at the end of its own bounded shutdown, so the closing is the
-   * completion this waits for and an explicit refusal is the one answer that ends it early. Acceptance is not
-   * waited for, because a runtime that closes the connection may not have flushed it. A protocol this client does
-   * not speak is never sent the request, so a frame an older runtime reads as something else cannot take a
-   * session down that nothing asked for.
+   * A runtime that releases its session or ends for replacement closes its endpoint at the end of its own bounded
+   * shutdown, so the closing is the completion this waits for and an explicit refusal is the one answer that ends
+   * it early. Acceptance is not waited for, because a runtime that closes the connection may not have flushed it.
+   * A protocol this client does not speak is never sent the request, so a frame an older runtime reads as
+   * something else cannot take a session down that nothing asked for.
    */
-  private stoodDown(connection: Socket): Promise<boolean> {
+  private accepted(connection: Socket, path: string): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       const settle = setTimeout(() => resolve(false), this.standDownTimeoutMs);
       settle.unref();
-      const conclude = (stoodDown: boolean): void => {
+      const conclude = (accepted: boolean): void => {
         clearTimeout(settle);
-        resolve(stoodDown);
+        resolve(accepted);
       };
       const reader = new FrameReader();
       let requested = false;
@@ -269,13 +301,11 @@ export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagno
               return;
             }
             requested = true;
-            connection.write(
-              `${JSON.stringify({ v: RUNTIME_CHANNEL_PROTOCOL, id: STAND_DOWN_REQUEST, path: RUNTIME_STAND_DOWN_PATH })}\n`,
-            );
+            connection.write(`${JSON.stringify({ v: RUNTIME_CHANNEL_PROTOCOL, id: DEPARTURE_REQUEST, path })}\n`);
             continue;
           }
           const response = parsed as RuntimeChannelResponse;
-          if (response?.id === STAND_DOWN_REQUEST && !response.ok) {
+          if (response?.id === DEPARTURE_REQUEST && !response.ok) {
             conclude(false);
             return;
           }
@@ -322,6 +352,8 @@ export class RuntimeChannelClient implements RuntimeStatusChannel, RuntimeDiagno
           ready: greeting.ready,
           status: answeredStatusValue,
           ...(answeredDevices === undefined ? {} : { devices: answeredDevices }),
+          ...(greeting.version === undefined ? {} : { version: greeting.version }),
+          ...(greeting.restartable === undefined ? {} : { restartable: greeting.restartable }),
         });
       };
       connection.on('data', (chunk) => {

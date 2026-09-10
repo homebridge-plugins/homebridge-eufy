@@ -979,6 +979,8 @@ describe('packed plugin', () => {
           'stepDevices',
           'stepDiscover',
           'trustedDeviceLabel',
+          'updatePendingAction',
+          'updatePendingTitle',
         ].sort(),
       );
       expect(translatedLabelKeys).toEqual([
@@ -1114,6 +1116,11 @@ describe('packed plugin', () => {
         'snapshotModeCloudDescription',
         'snapshotModeLiveDescription',
         'snapshotModeRefreshDescription',
+        'updatePendingBusy',
+        'updatePendingFailed',
+        'updatePendingManual',
+        'updatePendingSummary',
+        'updatePendingVersionLabel',
       ].sort();
       expect(Object.keys(catalogs['i18n/en.json']).sort()).toEqual(expectedCatalogKeys);
       expect(Object.keys(catalogs['i18n/fr.json']).sort()).toEqual(expectedCatalogKeys);

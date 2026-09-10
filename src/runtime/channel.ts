@@ -63,6 +63,9 @@ export const RUNTIME_DIAGNOSTICS_PATH = '/diagnostics/authorization';
 /** The path a stand-down is requested on, so another process may own the account session. */
 export const RUNTIME_STAND_DOWN_PATH = '/runtime/stand-down';
 
+/** The path an end-and-respawn is requested on, so a superseded runtime is replaced by the installed build. */
+export const RUNTIME_RESTART_PATH = '/runtime/restart';
+
 /**
  * How long a client waits for a requested stand-down, measured from the request.
  *
@@ -111,12 +114,21 @@ export interface RuntimeChannelDevice {
   battery?: number;
 }
 
-/** What one connection is told before it may ask anything. */
+/**
+ * What one connection is told before it may ask anything.
+ *
+ * `version` is the plugin build the answering process loaded, which a consumer compares with its own to learn
+ * that this runtime is running superseded code. `restartable` states whether ending this process would replace it
+ * rather than take Homebridge down with it. Both sit here rather than in an answer so that a client refusing this
+ * protocol still learns them.
+ */
 export interface RuntimeChannelGreeting {
   protocol: number;
   ready: boolean;
   state: RuntimeState;
   generation?: string;
+  version?: string;
+  restartable?: boolean;
 }
 
 /** One client request. `v` is the protocol the client speaks; `id` correlates the answer on one connection. */
@@ -329,6 +341,9 @@ interface RuntimeChannelServerOptions {
   devices?: () => RuntimeChannelDevice[];
   authorization?: (notice: RuntimeChannelAuthorization) => boolean;
   standDown?: () => boolean;
+  version?: string;
+  restartable?: boolean;
+  restart?: () => boolean;
 }
 
 /**
@@ -350,6 +365,9 @@ export class RuntimeChannelServer {
   private readonly devices?: () => RuntimeChannelDevice[];
   private readonly authorization?: (notice: RuntimeChannelAuthorization) => boolean;
   private readonly standDown?: () => boolean;
+  private readonly version?: string;
+  private readonly restartable?: boolean;
+  private readonly restart?: () => boolean;
 
   constructor(
     private readonly endpoint: RuntimeChannelEndpoint,
@@ -362,6 +380,9 @@ export class RuntimeChannelServer {
     this.devices = options.devices;
     this.authorization = options.authorization;
     this.standDown = options.standDown;
+    this.version = options.version;
+    this.restartable = options.restartable;
+    this.restart = options.restart;
   }
 
   /** Binds the endpoint, reporting whether it bound. An unbound channel is an absent one. */
@@ -430,6 +451,9 @@ export class RuntimeChannelServer {
       if (request.path === RUNTIME_STAND_DOWN_PATH && this.standDown) {
         return { id: request.id, ok: this.standDown() };
       }
+      if (request.path === RUNTIME_RESTART_PATH && this.restart) {
+        return { id: request.id, ok: this.restart() };
+      }
     } catch {
       return { id: request.id, ok: false };
     }
@@ -457,6 +481,8 @@ export class RuntimeChannelServer {
       ready: ready(current.state),
       state: current.state,
       ...(current.generation === undefined ? {} : { generation: current.generation }),
+      ...(this.version === undefined ? {} : { version: this.version }),
+      ...(this.restartable === undefined ? {} : { restartable: this.restartable }),
     };
     connection.write(`${JSON.stringify(greeting)}\n`);
     const reader = new FrameReader(this.frameBytes);

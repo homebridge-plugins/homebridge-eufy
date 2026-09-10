@@ -18,7 +18,7 @@ import { parseConfig } from '../../src/configuration.js';
 import type { CompleteDeviceSnapshot } from '../../src/device/snapshot.js';
 import { createSdkLogger } from '../../src/diagnostics.js';
 import { createEufyPlatform, type PlatformLifecycleEvent } from '../../src/platform.js';
-import { RuntimeOwner } from '../../src/runtime/owner.js';
+import { isChildBridgeTitle, RuntimeOwner } from '../../src/runtime/owner.js';
 import { PersistedSdkClient, type SdkClient, type SdkStartResult } from '../../src/runtime/sdk-client.js';
 import { RuntimeTracker } from '../../src/runtime/tracker.js';
 
@@ -1417,5 +1417,23 @@ describe('a runtime standing down on request and taking the session back', () =>
 
     await vi.waitFor(() => expect(runtime.currentState()).toBe('ready'));
     await runtime.stop();
+  });
+});
+
+/**
+ * Ending a process is only ever offered where Homebridge would bring it back, which the process title states.
+ *
+ * The main process wears the plain title and is not respawned, so ending it would take every other plugin down
+ * with it. Anything unrecognised is treated as the main process, so a host that titles its processes differently
+ * loses the offer rather than the bridge.
+ */
+describe('child bridge recognition', () => {
+  it('recognises only a child bridge as replaceable', () => {
+    expect(isChildBridgeTitle('homebridge: @homebridge-plugins/homebridge-eufy-security')).toBe(true);
+    expect(isChildBridgeTitle('homebridge: some other plugin')).toBe(true);
+    expect(isChildBridgeTitle('homebridge')).toBe(false);
+    expect(isChildBridgeTitle('homebridge-config-ui-x')).toBe(false);
+    expect(isChildBridgeTitle('node')).toBe(false);
+    expect(isChildBridgeTitle('')).toBe(false);
   });
 });

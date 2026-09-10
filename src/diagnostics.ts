@@ -191,13 +191,16 @@ function loadedSdkEntry(): string | undefined {
 }
 
 /**
- * The plugin and SDK builds that produced an archive, read once at load.
+ * The plugin build this process loaded, read once at load from the manifest above this module.
  *
- * A support archive is read to decide whether a fault is already fixed, and without these two an archive
- * cannot answer that. Every failure degrades to `unknown` rather than a guess, because a wrong version sends
- * the reader further from the fault than an absent one does.
+ * A support archive is read to decide whether a fault is already fixed, and without this an archive cannot
+ * answer that. Failure degrades to `unknown` rather than a guess, because a wrong version sends the reader
+ * further from the fault than an absent one does.
+ *
+ * It states the build in memory rather than the one on disk, which is what lets two processes notice an upgrade
+ * between them: after one lands, the runtime keeps answering with the build it started on until it is replaced.
  */
-const PLUGIN_VERSION = loadedVersion(fileURLToPath(import.meta.url));
+export const PLUGIN_VERSION = loadedVersion(fileURLToPath(import.meta.url));
 const SDK_VERSION = loadedVersion(loadedSdkEntry());
 const gzip = promisify(gzipCallback);
 const gunzip = promisify(gunzipCallback);

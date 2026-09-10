@@ -194,7 +194,8 @@ h2 {
   padding: clamp(16px, 5vw, 32px);
 }
 
-.legacy-notice {
+.legacy-notice,
+.update-pending {
   margin-bottom: 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
@@ -469,7 +470,8 @@ button.diagnostics-quiet-action {
   font-weight: 600;
 }
 
-.legacy-notice {
+.legacy-notice,
+.update-pending {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -484,7 +486,8 @@ button.diagnostics-quiet-action {
   opacity: 0.72;
 }
 
-.legacy-notice p {
+.legacy-notice p,
+.update-pending p {
   margin-bottom: 4px;
 }
 

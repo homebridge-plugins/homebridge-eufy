@@ -75,6 +75,16 @@
       </div>
     </div>
     <p class="summary" data-dashboard-summary></p>
+
+    <aside class="update-pending" data-update-pending hidden aria-labelledby="update-pending-title">
+      <img class="notice-icon" src="assets/icons/warning.svg" alt="" />
+      <div>
+        <h2 id="update-pending-title" data-i18n="updatePendingTitle"></h2>
+        <p data-update-pending-summary></p>
+        <p class="legacy-settings" data-update-pending-version></p>
+      </div>
+      <button type="button" data-update-restart data-i18n="updatePendingAction"></button>
+    </aside>
     <div data-device-groups></div>
 
     <section class="dashboard-panel advanced-panel" data-advanced-settings hidden aria-labelledby="advanced-title">

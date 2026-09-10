@@ -7,7 +7,8 @@ import { MOTION_EVENT_REQUIREMENTS } from '../homekit/adapters/motion.js';
 import { DOORBELL_PRESS_EVENT } from '../homekit/adapters/doorbell.js';
 import type { RuntimeTrackerRecord } from '../runtime/tracker.js';
 import type { RuntimeChannelDevice } from '../runtime/channel.js';
-import type { RuntimeStatusChannel } from './runtime-channel-client.js';
+import { PLUGIN_VERSION } from '../diagnostics.js';
+import type { RuntimeChannelReading, RuntimeStatusChannel } from './runtime-channel-client.js';
 
 const DASHBOARD_FRESH_THRESHOLD_MS = 90_000;
 
@@ -70,6 +71,17 @@ export interface DashboardSnapshot {
    * because they are what the option passed back to it takes.
    */
   warmUpCandidates: string[];
+  /**
+   * The plugin build the runtime is running, stated only where it is not the build this process loaded.
+   *
+   * Present means every answer on this page came from superseded code: an upgrade landed on disk and the runtime
+   * still holds the build it started on. Absent covers the two cases that deserve silence — the builds agree, or
+   * the runtime is too old to say which it runs, and an upgrade that cannot be proven is not worth interrupting
+   * anyone over.
+   */
+  runningVersion?: string;
+  /** Whether ending that runtime would replace it, stated only alongside a `runningVersion`. */
+  restartable?: boolean;
 }
 
 export interface DashboardTracker {
@@ -211,6 +223,20 @@ function stateOf(evidence: Pick<RuntimeTrackerRecord, 'state' | 'status' | 'comp
  * generation, and on a first setup: the devices are known, and nothing about them is live until Homebridge
  * restarts. Whenever the published record names the account that is active, none of this applies.
  */
+/**
+ * What the running build is, where it is not the one this process loaded.
+ *
+ * The comparison is only ever between two builds that both said which they are, so a runtime predating the field
+ * reads as agreement. `restartable` is narrowed to a definite boolean here, because the interface offers an
+ * action rather than a maybe.
+ */
+function superseded(live: RuntimeChannelReading): { runningVersion?: string; restartable?: boolean } {
+  if (live.version === undefined || live.version === PLUGIN_VERSION) {
+    return {};
+  }
+  return { runningVersion: live.version, restartable: live.restartable === true };
+}
+
 export async function readDashboard(
   tracker: DashboardTracker,
   now: () => number = Date.now,
@@ -247,6 +273,7 @@ export async function readDashboard(
       updatedAt: live.status.updatedAt,
       devices: devices.map((device) => observed(device, observations)),
       warmUpCandidates,
+      ...superseded(live),
     };
   }
   if (!Number.isFinite(updatedAt) || age < -5_000 || age > DASHBOARD_FRESH_THRESHOLD_MS) {

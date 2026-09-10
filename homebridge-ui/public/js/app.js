@@ -23,6 +23,10 @@ const dashboardBadge = document.querySelector('[data-dashboard-badge]');
 const dashboardSummary = document.querySelector('[data-dashboard-summary]');
 const dashboardAuthenticate = document.querySelector('[data-dashboard-authenticate]');
 const deviceGroups = document.querySelector('[data-device-groups]');
+const updatePending = document.querySelector('[data-update-pending]');
+const updatePendingSummary = document.querySelector('[data-update-pending-summary]');
+const updatePendingVersion = document.querySelector('[data-update-pending-version]');
+const updateRestart = document.querySelector('[data-update-restart]');
 const pageTitle = document.querySelector('[data-page-title]');
 const legacyNotice = document.querySelector('[data-legacy-notice]');
 const legacySettings = document.querySelector('[data-legacy-settings]');
@@ -105,6 +109,10 @@ const dashboardElements = {
   summary: dashboardSummary,
   authenticate: dashboardAuthenticate,
   groups: deviceGroups,
+  updatePending,
+  updatePendingSummary,
+  updatePendingVersion,
+  updateRestart,
   setup: setupContent,
   pageTitle,
   masthead,
@@ -965,6 +973,30 @@ challengeForm.addEventListener('submit', async (event) => {
 window.addEventListener('pagehide', () => {
   void requestWithinDeadline('/auth/close', undefined, 12000).catch(() => undefined);
 });
+
+if (updateRestart) {
+  /**
+   * Asks the older build to end so Homebridge brings up the installed one, then reloads what this page knows.
+   *
+   * The button is disabled for the whole attempt, because a second press would land on a process that is already
+   * going away. A refusal restores it and leaves the notice standing, which is the honest outcome: the older
+   * build is still the one answering.
+   */
+  updateRestart.addEventListener('click', async () => {
+    updateRestart.disabled = true;
+    updateRestart.textContent = messages.updatePendingBusy;
+    try {
+      await requestWithinDeadline('/update/restart', {}, 20000);
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+      await showDashboard();
+    } catch {
+      updatePendingSummary.textContent = messages.updatePendingFailed;
+    } finally {
+      updateRestart.disabled = false;
+      updateRestart.textContent = messages.updatePendingAction;
+    }
+  });
+}
 
 homebridge.addEventListener('ready', async () => {
   homebridge.disableSaveButton();

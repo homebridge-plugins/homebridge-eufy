@@ -14,6 +14,7 @@ import { AccountSessionPersistence } from '../account/persistence.js';
 import type { EufyConfig } from '../configuration.js';
 import {
   armDiagnosticsAuthorization,
+  PLUGIN_VERSION,
   reportRuntimeNotice,
   type PlatformLogger,
   type RuntimeState,
@@ -118,6 +119,17 @@ export type RuntimeUnconfirmedWriteListener = (write: UnconfirmedWrite) => void;
 export type RuntimeStateListener = (state: RuntimeState) => void;
 
 /** Owns the long-lived SDK session, canonical registry, and runtime state transitions. */
+/**
+ * Whether a process with this title is a Homebridge child bridge, and so may end itself to be replaced.
+ *
+ * Homebridge titles a child bridge `homebridge: <plugin name>` and leaves the main process plain `homebridge`.
+ * Only a child bridge is respawned when it ends; ending the main process would stop every other plugin with it.
+ * A title this does not recognise answers false, so an unfamiliar host loses the offer rather than the bridge.
+ */
+export function isChildBridgeTitle(title: string): boolean {
+  return title.startsWith('homebridge: ');
+}
+
 export class RuntimeOwner {
   private client?: SdkClient;
   private startPromise?: Promise<void>;
@@ -613,12 +625,30 @@ export class RuntimeOwner {
           devices: () => this.channelDevices(),
           authorization: (notice) => armDiagnosticsAuthorization(this.log, storageRoot, notice.supportCaseId),
           standDown: () => this.standDown(),
+          version: PLUGIN_VERSION,
+          restartable: isChildBridgeTitle(process.title),
+          restart: () => this.endForReplacement(),
         },
       );
     }
     if (this.channel && !(await this.channel.open())) {
       reportRuntimeNotice(this.log, 'channel-serve-failed');
     }
+  }
+
+  /**
+   * Ends this process so Homebridge replaces it with the installed build, reporting whether that was begun.
+   *
+   * Refused unless this process is a child bridge, because the main process is not respawned and every other
+   * plugin would go down with it. The signal is deferred so the request that asked for it is answered first,
+   * and it is the same signal Homebridge itself uses to cycle a child bridge, rather than an abrupt exit.
+   */
+  private endForReplacement(): boolean {
+    if (!isChildBridgeTitle(process.title)) {
+      return false;
+    }
+    setTimeout(() => process.kill(process.pid, 'SIGTERM'), 250).unref();
+    return true;
   }
 
   /**

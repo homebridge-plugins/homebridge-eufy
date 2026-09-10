@@ -161,6 +161,29 @@
       .join('');
   }
 
+  /**
+   * Shows the notice that this page is answering from a superseded build, and only where one is proven.
+   *
+   * The version is named because it is the one fact a reader cannot get anywhere else on the page. The action is
+   * offered only where ending the older build would replace it; elsewhere the copy asks for the restart instead,
+   * so nobody is given a button that cannot work.
+   */
+  function renderUpdatePending(result, messages, elements) {
+    if (!elements.updatePending) {
+      return;
+    }
+    const pending = result.runningVersion !== undefined;
+    elements.updatePending.hidden = !pending;
+    if (!pending) {
+      return;
+    }
+    elements.updatePendingSummary.textContent = result.restartable
+      ? messages.updatePendingSummary
+      : messages.updatePendingManual;
+    elements.updatePendingVersion.textContent = `${messages.updatePendingVersionLabel} ${result.runningVersion}`;
+    elements.updateRestart.hidden = !result.restartable;
+  }
+
   function render(result, config, messages, elements) {
     const suffix = result.state
       .split('-')
@@ -172,6 +195,7 @@
     elements.dashboard.dataset.state = result.state;
     elements.dashboard.hidden = false;
     elements.masthead.hidden = true;
+    renderUpdatePending(result, messages, elements);
     renderDevices(result.devices, config, messages, elements.groups);
     elements.setup.hidden = true;
     elements.authenticate.hidden = false;
@@ -293,5 +317,5 @@
     }
   }
 
-  global.HomebridgeEufyDashboard = { applyDeviceImages, bindPreferences, render };
+  global.HomebridgeEufyDashboard = { applyDeviceImages, bindPreferences, render, renderUpdatePending };
 })(window);

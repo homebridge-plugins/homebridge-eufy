@@ -2,6 +2,7 @@ import type { DeviceManifest } from '@mega-yfue/eufy-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RuntimeTrackerRecord } from '../../src/runtime/tracker.js';
+import { PLUGIN_VERSION } from '../../src/diagnostics.js';
 import { readDashboard } from '../../src/ui/dashboard.js';
 
 function manifest(codec: DeviceManifest['codec'], capability = 'contact'): DeviceManifest {
@@ -241,5 +242,58 @@ describe('an account whose devices are known before a runtime has run them', () 
     await expect(
       readDashboard({ read: async () => null }, NOW, {}, undefined, accounts('replacement-generation', null)),
     ).resolves.toMatchObject({ state: 'missing' });
+  });
+});
+
+/**
+ * A page answered by a superseded build says so, because every capability it reports came from the older code.
+ *
+ * Skew is reported beside a working dashboard rather than as a state of its own, so noticing an upgrade never
+ * costs the reader the device list. Agreement and an unstated version are both silence: an upgrade that cannot be
+ * proven is not worth interrupting anyone over.
+ */
+describe('a superseded runtime', () => {
+  const now = () => Date.parse('2026-08-13T12:00:30.000Z');
+  const record = (): RuntimeTrackerRecord => ({
+    state: 'ready',
+    status: 'connected',
+    generation: 'synthetic-generation',
+    complete: true,
+    updatedAt: new Date(now()).toISOString(),
+    snapshot: { generation: 'synthetic-generation', devices: [] },
+  });
+
+  it('names the running build only where it differs from the installed one', async () => {
+    const reading = (version?: string, restartable?: boolean) => ({
+      read: async () => ({
+        ready: true,
+        status: {
+          state: 'ready' as const,
+          status: 'connected' as const,
+          generation: 'synthetic-generation',
+          complete: true,
+          updatedAt: new Date(now()).toISOString(),
+        },
+        ...(version === undefined ? {} : { version }),
+        ...(restartable === undefined ? {} : { restartable }),
+      }),
+    });
+
+    await expect(readDashboard({ read: async () => record() }, now, {}, reading('0.0.1', true))).resolves.toMatchObject(
+      { runningVersion: '0.0.1', restartable: true },
+    );
+
+    const unreplaceable = await readDashboard({ read: async () => record() }, now, {}, reading('0.0.1'));
+
+    expect(unreplaceable).toMatchObject({ runningVersion: '0.0.1', restartable: false });
+
+    const agreeing = await readDashboard({ read: async () => record() }, now, {}, reading(PLUGIN_VERSION));
+
+    expect(agreeing.runningVersion).toBeUndefined();
+    expect(agreeing.restartable).toBeUndefined();
+
+    const silent = await readDashboard({ read: async () => record() }, now, {}, reading());
+
+    expect(silent.runningVersion).toBeUndefined();
   });
 });

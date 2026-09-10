@@ -214,13 +214,67 @@ describe('runtime channel round trip', () => {
     await rm(root, { force: true, recursive: true });
   });
 
-  async function serve(read: () => RuntimeChannelStatus): Promise<RuntimeChannelClient> {
+  async function serve(
+    read: () => RuntimeChannelStatus,
+    options: Parameters<typeof RuntimeChannelServer.prototype.constructor>[2] = {},
+  ): Promise<RuntimeChannelClient> {
     const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
-    const server = new RuntimeChannelServer(endpoint, read);
+    const server = new RuntimeChannelServer(endpoint, read, options);
     servers.push(server);
     await server.open();
     return new RuntimeChannelClient(endpoint);
   }
+
+  /**
+   * The build a runtime is running, and whether it can be replaced, reach the reader through the greeting.
+   *
+   * They travel in the greeting rather than an answer so a consumer learns them before asking anything, and a
+   * runtime predating the fields omits them, which is why a reading without a version means agreement rather
+   * than skew.
+   */
+  it('states the build it is running and whether ending it would replace it', async () => {
+    const stated = await serve(() => status(), { version: '9.9.9', restartable: true });
+
+    await expect(stated.read()).resolves.toEqual({
+      ready: true,
+      status: status(),
+      version: '9.9.9',
+      restartable: true,
+    });
+
+    const silent = await serve(() => status());
+
+    await expect(silent.read()).resolves.toEqual({ ready: true, status: status() });
+  });
+
+  /**
+   * A restart is accepted only where the runtime was given a way to end itself, and refused otherwise.
+   *
+   * A runtime that cannot be replaced answers false rather than closing, so the asking process can tell an
+   * unwilling runtime from an absent one and leave the offer off the page.
+   */
+  it('accepts a restart only where ending it would replace it', async () => {
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    // A runtime accepting a restart is on its way out, so the test ends the endpoint the way departing would.
+    const departing: RuntimeChannelServer = new RuntimeChannelServer(endpoint, () => status(), {
+      restart: () => {
+        setTimeout(() => departing.close(), 10);
+        return true;
+      },
+    });
+    servers.push(departing);
+    await departing.open();
+
+    await expect(new RuntimeChannelClient(endpoint).requestRestart()).resolves.toBe(true);
+
+    const unwilling = await serve(() => status(), { restart: () => false });
+
+    await expect(unwilling.requestRestart()).resolves.toBe(false);
+
+    const older = await serve(() => status());
+
+    await expect(older.requestRestart()).resolves.toBe(false);
+  });
 
   /**
    * The channel answers the live runtime state, which is the one thing the persisted tracker can be a
