@@ -579,6 +579,7 @@ button.diagnostics-quiet-action {
 
 .dashboard[data-state='degraded'] .status,
 .dashboard[data-state='incomplete'] .status,
+.dashboard[data-state='restart-required'] .status,
 .dashboard[data-state='stale'] .status {
   background: color-mix(in srgb, var(--alert) 16%, var(--panel));
   color: color-mix(in srgb, var(--alert) 75%, var(--ink));

@@ -163,3 +163,83 @@ describe('snapshot-driven dashboard', () => {
     expect(snapshot.warmUpCandidates).toEqual([]);
   });
 });
+
+describe('an account whose devices are known before a runtime has run them', () => {
+  const NOW = () => Date.parse('2026-08-13T12:00:30.000Z');
+
+  function accounts(generation: string, snapshot: RuntimeTrackerRecord['snapshot'] | null = record().snapshot) {
+    return { active: async () => ({ generation, snapshot: { load: () => snapshot ?? null } }) };
+  }
+
+  /**
+   * An interactive authentication discovers the account's devices and commits them with the generation before it
+   * reports back, so the inventory exists while no runtime has started on it. It is shown, and shown as needing a
+   * restart, because nothing about those devices is live until Homebridge picks the account up.
+   */
+  it('shows the inventory committed for an account the published record does not name', async () => {
+    const dashboard = await readDashboard(
+      { read: async () => record({ generation: 'previous-generation' }) },
+      NOW,
+      {},
+      undefined,
+      accounts('replacement-generation'),
+    );
+
+    expect(dashboard.state).toBe('restart-required');
+    expect(dashboard.devices.map(({ name }) => name)).toEqual([
+      'Synthetic sensor',
+      'Synthetic light',
+      'Synthetic vacuum',
+    ]);
+    expect(dashboard.warmUpCandidates, 'the offer is read off the inventory beside it').toEqual([]);
+  });
+
+  /**
+   * A first setup has no published record at all, and the same inventory answers for it.
+   */
+  it('shows it when there is no published record to compare against', async () => {
+    await expect(
+      readDashboard({ read: async () => null }, NOW, {}, undefined, accounts('first-generation')),
+    ).resolves.toMatchObject({ state: 'restart-required' });
+  });
+
+  /**
+   * The whole of today's behaviour is conditional on the record naming another account. A runtime running the
+   * account that is active is the ordinary case, and it decides the state exactly as it did before.
+   */
+  it('changes nothing while the published record names the active account', async () => {
+    const published = record({ generation: 'current-generation' });
+
+    await expect(
+      readDashboard({ read: async () => published }, NOW, {}, undefined, accounts('current-generation')),
+    ).resolves.toMatchObject({ state: 'ready' });
+    await expect(
+      readDashboard(
+        { read: async () => published },
+        () => Date.parse('2026-08-13T13:00:00.000Z'),
+        {},
+        undefined,
+        accounts('current-generation'),
+      ),
+    ).resolves.toMatchObject({ state: 'stale' });
+  });
+
+  /**
+   * A generation with no committed inventory states nothing about devices, so the published record decides as it
+   * always did rather than an empty list replacing it.
+   */
+  it('falls back to the published record when the account committed no inventory', async () => {
+    await expect(
+      readDashboard(
+        { read: async () => record({ generation: 'previous-generation' }) },
+        NOW,
+        {},
+        undefined,
+        accounts('replacement-generation', null),
+      ),
+    ).resolves.toMatchObject({ state: 'ready' });
+    await expect(
+      readDashboard({ read: async () => null }, NOW, {}, undefined, accounts('replacement-generation', null)),
+    ).resolves.toMatchObject({ state: 'missing' });
+  });
+});

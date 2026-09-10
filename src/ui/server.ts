@@ -253,7 +253,13 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
     this.onRequest('/auth/two-factor', (payload) => this.continueTwoFactor(payload));
     this.onRequest('/auth/close', () => this.closeAuthentication());
     this.onRequest('/dashboard', (payload) =>
-      readDashboard(this.runtimeTracker, Date.now, parseRepresentationPreferences(payload), this.runtimeChannel),
+      readDashboard(
+        this.runtimeTracker,
+        Date.now,
+        parseRepresentationPreferences(payload),
+        this.runtimeChannel,
+        this.persistence,
+      ),
     );
     this.onRequest('/device/image', (payload) =>
       readDeviceImage(this.images, this.runtimeChannel, parseDeviceImageRequest(payload)),

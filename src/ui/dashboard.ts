@@ -1,5 +1,7 @@
 import type { DeviceManifest } from '@mega-yfue/eufy-sdk';
 
+import type { CompleteDeviceSnapshot } from '../device/snapshot.js';
+
 import { describeHomeKitRepresentation } from '../homekit/representation.js';
 import { MOTION_EVENT_REQUIREMENTS } from '../homekit/adapters/motion.js';
 import { DOORBELL_PRESS_EVENT } from '../homekit/adapters/doorbell.js';
@@ -10,7 +12,14 @@ import type { RuntimeStatusChannel } from './runtime-channel-client.js';
 const DASHBOARD_FRESH_THRESHOLD_MS = 90_000;
 
 export type DashboardState =
-  'ready' | 'degraded' | 'authentication-required' | 'owner-conflict' | 'missing' | 'stale' | 'incomplete';
+  | 'ready'
+  | 'degraded'
+  | 'authentication-required'
+  | 'owner-conflict'
+  | 'missing'
+  | 'stale'
+  | 'incomplete'
+  | 'restart-required';
 
 export type DashboardCategory = 'security' | 'life' | 'clean';
 
@@ -65,6 +74,16 @@ export interface DashboardSnapshot {
 
 export interface DashboardTracker {
   read(): Promise<RuntimeTrackerRecord | null>;
+}
+
+/**
+ * The account the plugin is configured to run, and the inventory discovered for it.
+ *
+ * Declared beside its consumer. An interactive authentication discovers the account's devices and commits them
+ * with the generation before it reports back, so this inventory exists for an account no runtime has started yet.
+ */
+export interface DashboardAccounts {
+  active(): Promise<{ generation: string; snapshot: { load(): CompleteDeviceSnapshot | null } } | null>;
 }
 
 function categoryOf(codec: DeviceManifest['codec']): DashboardCategory {
@@ -144,6 +163,25 @@ function observed(device: DashboardDevice, observations: ReadonlyMap<string, Run
   return { ...device, ...fields };
 }
 
+/**
+ * Every media-triggering event the discovered devices report, which is what the warm-up setting may choose from.
+ *
+ * Read off the manifests of whichever inventory is being shown, so the offer matches the devices beside it.
+ */
+function warmUpCandidatesOf(snapshot: CompleteDeviceSnapshot | undefined): string[] {
+  const mediaTriggering = new Set<string>([
+    ...MOTION_EVENT_REQUIREMENTS.map(({ eventName }) => eventName),
+    DOORBELL_PRESS_EVENT,
+  ]);
+  return [
+    ...new Set(
+      (snapshot?.devices ?? [])
+        .flatMap((manifest) => manifest.details.flatMap(({ events }) => events))
+        .filter((event) => mediaTriggering.has(event)),
+    ),
+  ].sort();
+}
+
 /** Classifies runtime evidence, whether it was published to a file or stated by the running process. */
 function stateOf(evidence: Pick<RuntimeTrackerRecord, 'state' | 'status' | 'complete'>): DashboardState {
   if (evidence.state === 'authentication-required') {
@@ -167,32 +205,40 @@ function stateOf(evidence: Pick<RuntimeTrackerRecord, 'state' | 'status' | 'comp
  * The devices only ever come from a published inventory, which is the allowlisted read model and the one
  * thing a stale or degraded runtime retains. The runtime's state is the live one whenever a runtime is there
  * to state it, and the file's own state and freshness alone when none is.
+ *
+ * An inventory committed for an account no runtime has started is shown as `restart-required`. That is the state
+ * after an interactive authentication, which discovers the account's devices and commits them with the
+ * generation, and on a first setup: the devices are known, and nothing about them is live until Homebridge
+ * restarts. Whenever the published record names the account that is active, none of this applies.
  */
 export async function readDashboard(
   tracker: DashboardTracker,
   now: () => number = Date.now,
   representationPreferences: Readonly<Record<string, boolean>> = {},
   channel?: RuntimeStatusChannel,
+  accounts?: DashboardAccounts,
 ): Promise<DashboardSnapshot> {
   const record = await tracker.read();
+  const project = (snapshot: CompleteDeviceSnapshot | undefined): DashboardDevice[] =>
+    snapshot?.devices.map((manifest) => projectDevice(manifest, representationPreferences[manifest.sn])) ?? [];
+  const active = await accounts?.active();
+  if (active && record?.generation !== active.generation) {
+    const discovered = active.snapshot.load() ?? undefined;
+    if (discovered) {
+      return {
+        state: 'restart-required',
+        devices: project(discovered),
+        warmUpCandidates: warmUpCandidatesOf(discovered),
+      };
+    }
+  }
   if (!record) {
     return { state: 'missing', devices: [], warmUpCandidates: [] };
   }
   const updatedAt = Date.parse(record.updatedAt);
   const age = now() - updatedAt;
-  const devices =
-    record.snapshot?.devices.map((manifest) => projectDevice(manifest, representationPreferences[manifest.sn])) ?? [];
-  const mediaTriggering = new Set<string>([
-    ...MOTION_EVENT_REQUIREMENTS.map(({ eventName }) => eventName),
-    DOORBELL_PRESS_EVENT,
-  ]);
-  const warmUpCandidates = [
-    ...new Set(
-      (record.snapshot?.devices ?? [])
-        .flatMap((manifest) => manifest.details.flatMap(({ events }) => events))
-        .filter((event) => mediaTriggering.has(event)),
-    ),
-  ].sort();
+  const devices = project(record.snapshot);
+  const warmUpCandidates = warmUpCandidatesOf(record.snapshot);
   const live = await channel?.read();
   if (live) {
     const observations = new Map((live.devices ?? []).map((observation) => [observation.serial, observation]));

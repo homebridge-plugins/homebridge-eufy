@@ -1036,6 +1036,9 @@ describe('packed plugin', () => {
         'dashboardReadyBadge',
         'dashboardReadySummary',
         'dashboardReadyTitle',
+        'dashboardRestartRequiredBadge',
+        'dashboardRestartRequiredSummary',
+        'dashboardRestartRequiredTitle',
         'dashboardStaleBadge',
         'dashboardStaleSummary',
         'dashboardStaleTitle',
@@ -1682,7 +1685,13 @@ describe('packed plugin', () => {
           'useEmbeddedPKCS1Support',
         ],
       };
-      expect(migratedUi.requests).toEqual([{ path: '/auth/start', body: { configuration: expectedMigratedConfig } }]);
+      expect(
+        migratedUi.requests,
+        'a sign-in that succeeded ends on the devices it discovered, so it reads them rather than stopping on a notice',
+      ).toEqual([
+        { path: '/auth/start', body: { configuration: expectedMigratedConfig } },
+        { path: '/dashboard', body: { representationPreferences: {} } },
+      ]);
       expect(migratedUi.updatedConfig).toEqual([expectedMigratedConfig]);
       expect(migratedUi.legacyNotice.hidden).toBe(false);
       await migratedUi.legacyAcknowledge.dispatch('click');
@@ -1871,7 +1880,10 @@ describe('packed plugin', () => {
         challengeImage: { hidden: true },
       });
       await englishUi.browserWindow.dispatch('pagehide');
-      expect(englishUi.requests[2]).toEqual({ path: '/auth/close', body: undefined });
+      expect(englishUi.requests.at(-1), 'leaving the page closes the authentication, whatever ran before it').toEqual({
+        path: '/auth/close',
+        body: undefined,
+      });
       await expect(renderUi(script, [], {}, 'fr', translationKeys)).resolves.toMatchObject({
         firstSetup: { hidden: false },
         shell: { lang: 'en' },

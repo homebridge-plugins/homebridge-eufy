@@ -847,6 +847,29 @@ async function saveAuthenticatedConfig() {
   }
 }
 
+// Draws the device list from the plugin's own record of it, and shows it in place of the setup flow.
+async function showDashboard() {
+  const representationPreferences = Object.fromEntries(
+    Object.entries(configuredBlock()?.entityPreferences ?? {})
+      .filter(([, preference]) => typeof preference.represented === 'boolean')
+      .map(([serial, preference]) => [serial, preference.represented]),
+  );
+  try {
+    const snapshot = await requestWithinDeadline('/dashboard', { representationPreferences }, 12000);
+    // What the warm-up setting may offer comes from the devices themselves, so it is learnt here.
+    warmUpCandidates = Array.isArray(snapshot.warmUpCandidates) ? snapshot.warmUpCandidates : [];
+    dashboardView.render(snapshot, configuredBlock() ?? {}, messages, dashboardElements);
+    // The image pass runs beside the rendered dashboard, so its failure is dropped here rather than escaping.
+    void dashboardView
+      .applyDeviceImages(dashboardElements, (serial) => requestWithinDeadline('/device/image', { serial }, 12000))
+      .catch(() => undefined);
+  } catch {
+    dashboardView.render({ state: 'missing', devices: [] }, configuredBlock() ?? {}, messages, dashboardElements);
+    recordActiveUiEventBestEffort('request-failed');
+  }
+  recordActiveUiEventBestEffort('dashboard-opened');
+}
+
 async function handleResult(result) {
   if (result.status === 'captcha') {
     challenge = 'captcha';
@@ -873,6 +896,8 @@ async function handleResult(result) {
     authForm.hidden = true;
     authStatus.textContent = messages.authSuccess ?? '';
     await saveAuthenticatedConfig();
+    // The devices this sign-in discovered are already recorded, so the flow ends on them rather than on a notice.
+    await showDashboard();
   } else if (result.status === 'blocked' || result.status === 'plugin-running') {
     authForm.hidden = false;
     authStatus.textContent = messages.authBlocked ?? '';
@@ -979,24 +1004,6 @@ homebridge.addEventListener('ready', async () => {
   countryInput.value = configured?.country ?? 'US';
   trustedDeviceInput.value = configured?.trustedDeviceName ?? 'Homebridge Eufy';
   if (configured) {
-    const representationPreferences = Object.fromEntries(
-      Object.entries(configuredBlock()?.entityPreferences ?? {})
-        .filter(([, preference]) => typeof preference.represented === 'boolean')
-        .map(([serial, preference]) => [serial, preference.represented]),
-    );
-    try {
-      const snapshot = await requestWithinDeadline('/dashboard', { representationPreferences }, 12000);
-      // What the warm-up setting may offer comes from the devices themselves, so it is learnt here.
-      warmUpCandidates = Array.isArray(snapshot.warmUpCandidates) ? snapshot.warmUpCandidates : [];
-      dashboardView.render(snapshot, configuredBlock() ?? {}, messages, dashboardElements);
-      // The image pass runs beside the rendered dashboard, so its failure is dropped here rather than escaping.
-      void dashboardView
-        .applyDeviceImages(dashboardElements, (serial) => requestWithinDeadline('/device/image', { serial }, 12000))
-        .catch(() => undefined);
-    } catch {
-      dashboardView.render({ state: 'missing', devices: [] }, configuredBlock() ?? {}, messages, dashboardElements);
-      recordActiveUiEventBestEffort('request-failed');
-    }
-    recordActiveUiEventBestEffort('dashboard-opened');
+    await showDashboard();
   }
 });
