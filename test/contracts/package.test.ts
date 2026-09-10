@@ -1822,18 +1822,22 @@ describe('packed plugin', () => {
       );
       expect(dashboardUi.deviceGroups.innerHTML).toContain(catalogs['i18n/en.json'].diagnosticOnly);
       expect(dashboardUi.deviceGroups.innerHTML).toContain(
-        `device-status device-status-alert"><span class="device-status-dot" aria-hidden="true"></span><span class="device-status-label">${catalogs['i18n/en.json'].deviceStatusUnreachable}`,
+        `device-status device-status-fault"><span class="device-status-dot" aria-hidden="true"></span><span class="device-status-label">${catalogs['i18n/en.json'].deviceStatusUnreachable}`,
       );
       expect(dashboardUi.deviceGroups.innerHTML).toContain(catalogs['i18n/en.json'].deviceStatusSwitchedOff);
       expect(dashboardUi.deviceGroups.innerHTML).toContain(catalogs['i18n/en.json'].deviceStatusHidden);
       expect(
-        dashboardUi.deviceGroups.innerHTML.match(/class="device-status device-status-(?:alert|quiet|live)"/g),
+        dashboardUi.deviceGroups.innerHTML.match(/class="device-status device-status-(?:alert|quiet|live|fault)"/g),
         'every camera states its switch, and any device states being unreachable or withheld',
       ).toHaveLength(4);
       expect(
+        dashboardUi.deviceGroups.innerHTML.match(/device-status-fault/g),
+        'a device nothing can reach is the one fault among these, so it is the only red',
+      ).toHaveLength(1);
+      expect(
         dashboardUi.deviceGroups.innerHTML.match(/device-status-alert/g),
-        'only a fault takes the alert colour: unreachable, and a camera switched off',
-      ).toHaveLength(2);
+        'a camera switched off is a state the user chose, not a fault, so it is amber',
+      ).toHaveLength(1);
       expect(
         dashboardUi.deviceGroups.innerHTML,
         'a camera that reports itself on says so, in the accent rather than an alert',

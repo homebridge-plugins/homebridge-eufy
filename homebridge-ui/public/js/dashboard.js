@@ -89,7 +89,7 @@
   function deviceStatus(device, rank, messages) {
     const [key, tone] =
       device.availability === 'unavailable'
-        ? ['deviceStatusUnreachable', 'alert']
+        ? ['deviceStatusUnreachable', 'fault']
         : device.enabled === false
           ? ['deviceStatusSwitchedOff', 'alert']
           : rank === 1

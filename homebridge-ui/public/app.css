@@ -27,6 +27,7 @@
 
   --alert: #d99a21;
   --fault: #b42318;
+  --ok: #1a7f4b;
 
   /*
    * The two edge intensities. `--line` divides and encloses; `--line-strong` is for a control the user must
@@ -902,7 +903,6 @@ button.diagnostics-quiet-action {
   width: 8px;
   height: 8px;
   border-radius: var(--radius-pill);
-  background: currentcolor;
 }
 
 /* The flex container cannot ellipsis its own text, so the label carries the truncation the model line has. */
@@ -912,36 +912,38 @@ button.diagnostics-quiet-action {
   white-space: nowrap;
 }
 
-/* The dot carries the alert colour itself; 13px of it as text would not clear contrast on either tile ground. */
-.device-status-alert .device-status-dot {
-  background: var(--alert);
+/* One semantic per tone, named once, so the three rules below carry every one of them. */
+.device-copy p.device-status-live {
+  --status-ink: var(--ok);
 }
 
-.device-status-live .device-status-dot {
-  background: var(--accent);
+.device-copy p.device-status-alert {
+  --status-ink: var(--alert);
+}
+
+.device-copy p.device-status-fault {
+  --status-ink: var(--fault);
 }
 
 /*
- * A coloured status label mixes toward the ink of whichever ground it sits on.
+ * A coloured status label mixes toward the ink of whichever ground it sits on; its dot keeps the flat colour.
  *
- * Neither the alert nor the accent clears contrast at 13px against both the pale panel and a scene's gradient, so
- * the word is mixed and the dot beside it keeps the flat colour. A quiet status states no fault and takes the
- * second line's own muted ink, which needs no rule.
+ * No semantic clears contrast at 13px against both the pale panel and a scene's gradient, and the dot is a
+ * graphical mark rather than readable content, so only the word is mixed. A quiet status states nothing coloured
+ * and takes the second line's own muted ink, which needs no rule.
  */
-.device-copy p.device-status-alert {
-  color: color-mix(in srgb, var(--alert) 75%, var(--tile-ink));
+.device-copy p:is(.device-status-live, .device-status-alert, .device-status-fault) {
+  color: color-mix(in srgb, var(--status-ink) 75%, var(--tile-ink));
 }
 
-.device-tile[data-artwork-scene] .device-copy p.device-status-alert {
-  color: color-mix(in srgb, var(--alert) 75%, var(--tile-scene-ink));
+.device-tile[data-artwork-scene]
+  .device-copy
+  p:is(.device-status-live, .device-status-alert, .device-status-fault) {
+  color: color-mix(in srgb, var(--status-ink) 75%, var(--tile-scene-ink));
 }
 
-.device-copy p.device-status-live {
-  color: color-mix(in srgb, var(--accent) 70%, var(--tile-ink));
-}
-
-.device-tile[data-artwork-scene] .device-copy p.device-status-live {
-  color: color-mix(in srgb, var(--accent) 70%, var(--tile-scene-ink));
+.device-status-dot {
+  background: var(--status-ink, currentcolor);
 }
 
 .device-badges {
@@ -1813,6 +1815,7 @@ input:focus-visible {
   --ink-disabled: color-mix(in srgb, var(--muted) 55%, var(--panel));
   --alert: #d9a53f;
   --fault: #fda29b;
+  --ok: #6cd39a;
   --line: rgb(255 255 255 / 10%);
   --line-strong: rgb(255 255 255 / 18%);
   --shadow-overlay: 0 0 0 1px rgb(255 255 255 / 9%);
