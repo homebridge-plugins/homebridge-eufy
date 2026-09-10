@@ -57,6 +57,7 @@
   --tile-stripe: rgb(23 32 44 / 7%);
   --tile-badge-bg: rgb(255 255 255 / 78%);
   --tile-badge-border: rgb(23 32 44 / 28%);
+  --tile-badge-halo: rgb(4 8 14 / 85%);
   --tile-image-filter: brightness(0.92) saturate(0.85) contrast(1.05);
   --tile-scene-filter: brightness(0.88) saturate(0.95);
   --tile-scene-gradient: rgb(23 32 44 / 82%);
@@ -952,9 +953,46 @@ button.diagnostics-quiet-action {
   filter: var(--tile-icon-filter);
 }
 
-/* The battery reads as a gauge lying on its side, so the icon turns until its terminal points left. */
+/*
+ * The gauge carries no plate, so its own halo separates it from whatever is behind it instead.
+ *
+ * The second documented exception to one shadow: this states the glyph's edge against unknown artwork rather
+ * than floating a layer over content, which is why it is not `--shadow-overlay`. The halo does not flip with the
+ * theme because the glyph does not either.
+ */
+.device-badges .device-badge-battery {
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+  filter: drop-shadow(0 1px 2px var(--tile-badge-halo));
+}
+
+/*
+ * The gauge lies on its side with its terminal to the left, and takes the next step up the scale.
+ *
+ * With no plate around it the glyph is the whole indicator, so it carries at 18px where a plated badge reads at
+ * 16px. It keeps the tile's own icon colour here, which is the ink of the pale panel a product cutout sits on.
+ */
 .device-badges .device-badge-battery img {
+  width: 18px;
+  height: 18px;
   transform: rotate(-90deg);
+}
+
+/*
+ * Over a scene the glyph goes light whatever the theme, and gains a ring, because its ground is a photograph of
+ * unknown luminance.
+ *
+ * The tile's two grounds are opposites — that frame, and the pale panel — so one glyph colour loses on one of
+ * them. This is the same split `--tile-scene-ink` exists for, applied to the one icon that sits on both. On the
+ * panel a plain shadow is enough and a ring would only dirty a flat surface.
+ */
+.device-tile[data-artwork-scene] .device-badges .device-badge-battery img {
+  filter: invert(1);
+}
+
+.device-tile[data-artwork-scene] .device-badges .device-badge-battery {
+  filter: drop-shadow(0 0 1px var(--tile-badge-halo)) drop-shadow(0 1px 2px var(--tile-badge-halo));
 }
 
 .device-badges .device-badge-troubleshoot {
@@ -1767,6 +1805,7 @@ input:focus-visible {
   --tile-stripe: rgb(255 255 255 / 7%);
   --tile-badge-bg: rgb(8 14 24 / 72%);
   --tile-badge-border: rgb(255 255 255 / 36%);
+  --tile-badge-halo: rgb(4 8 14 / 85%);
   --tile-image-filter: brightness(0.58) saturate(0.85) contrast(1.05);
   --tile-scene-filter: brightness(0.62) saturate(0.95);
   --tile-scene-gradient: rgb(4 8 14 / 88%);
