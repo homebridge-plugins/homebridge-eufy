@@ -14,6 +14,7 @@ import type {
 } from 'homebridge';
 
 import { satisfiesMemberRequirements } from '../../device/member-evidence.js';
+import { cameraEnablementReader, observesCameraEnablement, untrusted } from '../../device/member-trust.js';
 import {
   deviceOperationIssuer,
   enablementAnnouncement,
@@ -21,7 +22,6 @@ import {
   observationReader,
   type DeviceOperationIssuer,
   type DeviceOperationState,
-  untrusted,
 } from '../device-control.js';
 import type {
   AdaptedRecording,
@@ -127,13 +127,6 @@ const RECORDING_SAMPLE_RATES = (
   32: hap.AudioRecordingSamplerate.KHZ_32,
   48: hap.AudioRecordingSamplerate.KHZ_48,
 });
-
-/**
- * The exact enablement observation a live session is admitted against. The row itself belongs to the
- * camera controls bundle; this bundle only consumes it, and only when the manifest reports it as a
- * boolean read, because no other member shape carries that meaning.
- */
-const CAMERA_ENABLED_READ = { id: 'camera.enabled.read', kind: 'read', type: 'bool' } as const;
 
 /**
  * The indicator LED this bundle presents on the same service, and the operation that moves it. HomeKit
@@ -310,8 +303,8 @@ function attachCameraStreaming(context: AdapterAttachmentContext): AttachedAdapt
   const prebufferLengthMs = recordingConfigured ? retainedPrebufferMs(context.evidence) : 0;
   const liveSourceOptions = prebufferLengthMs > 0 ? { preBufferSeconds: prebufferLengthMs / 1_000 } : undefined;
   const openLiveSource = camera.live.bind(camera);
-  const observed = observesEnablement(context, camera);
-  const enablement = enablementObservation(camera, observed);
+  const observed = observesCameraEnablement(camera, context.evidence);
+  const enablement = cameraEnablementReader(camera, context.evidence);
   const detachRejectors = new Set<(error: unknown) => void>();
   let detached = false;
   const readBoolean = observationReader(context, 'boolean');
@@ -675,42 +668,6 @@ function recordingReporter(context: AdapterAttachmentContext): (outcome: Recordi
 function talkbackReporter(context: AdapterAttachmentContext): (outcome: TalkbackOutcome) => void {
   const condition = cameraCondition(context, CAMERA_TALKBACK_FAILED_CONDITION, 'talkback');
   return (outcome) => condition(outcome.outcome === 'talking' ? undefined : outcome.reason);
-}
-
-/**
- * Whether this camera has an enablement observation worth acting on at all.
- *
- * The SDK exposes enablement as an evidence-gated boolean read and privacy mode as a write with no
- * readback, so enablement is the only observation live admission and HomeKit presentation can consult. The
- * requirement deliberately does not demand a writable member, because a camera that reports its state
- * without accepting a change is still observed. A camera whose manifest omits the row or reports it as
- * something other than a boolean read streams exactly as it would without the gate and has no state
- * published for it, because refusing on an absent observation would withdraw live view from a working
- * camera.
- *
- * A member the SDK names in `unreflectedMembers` is declined for the same reason, and declining means the
- * same thing everywhere: neither the gate nor the presentation acts. There the value is readable but does
- * not track the write it accepts, and a reading that can silently disagree with the device must not refuse
- * live view or publish a camera as switched off. No capability module in the pinned SDK declares the flag
- * that produces such a statement, so this declines nothing today and would decline a family the moment the
- * SDK stopped standing behind its reading.
- */
-function observesEnablement(context: AdapterAttachmentContext, camera: CameraActions): boolean {
-  return satisfiesMemberRequirements(context.evidence, [CAMERA_ENABLED_READ]) && !untrusted(camera, 'enabled');
-}
-
-/** Reads that observation where there is one, answering nothing for a reading that is absent or faults. */
-function enablementObservation(camera: CameraActions, observed: boolean): () => boolean | undefined {
-  if (!observed) {
-    return () => undefined;
-  }
-  return () => {
-    try {
-      return typeof camera.enabled === 'boolean' ? camera.enabled : undefined;
-    } catch {
-      return undefined;
-    }
-  };
 }
 
 /** Everything one attachment supplies to the camera operating mode service it presents and operates on. */

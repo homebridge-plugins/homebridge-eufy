@@ -1,13 +1,27 @@
 import { join } from 'node:path';
 
-import type { AnyDeviceEvent, AvailabilityObservation, Device, FcmStore, SessionStore } from '@mega-yfue/eufy-sdk';
+import type {
+  AnyDeviceEvent,
+  AvailabilityObservation,
+  Device,
+  DeviceManifest,
+  FcmStore,
+  SessionStore,
+} from '@mega-yfue/eufy-sdk';
 
 import { AccountOwnership, type AccountOwnerEvidence, type AccountReleaseResult } from '../account/ownership.js';
 import { AccountSessionPersistence } from '../account/persistence.js';
 import type { EufyConfig } from '../configuration.js';
 import { reportRuntimeNotice, type PlatformLogger, type RuntimeState, type UnconfirmedWrite } from '../diagnostics.js';
+import { indexDeviceEvidence } from '../device/member-evidence.js';
+import { cameraEnablement } from '../device/member-trust.js';
 import { parseCompleteDeviceSnapshot, type CompleteDeviceSnapshot } from '../device/snapshot.js';
-import { RuntimeChannelServer, runtimeChannelEndpointForHost, type RuntimeChannelStatus } from './channel.js';
+import {
+  RuntimeChannelServer,
+  runtimeChannelEndpointForHost,
+  type RuntimeChannelDevice,
+  type RuntimeChannelStatus,
+} from './channel.js';
 import type { SdkClient, SdkClientFactory, SdkStartResult } from './sdk-client.js';
 import { RuntimeTracker, runtimeStatusFor, type RuntimeTrackerRecord, type RuntimeTrackerUpdate } from './tracker.js';
 
@@ -453,8 +467,10 @@ export class RuntimeOwner {
    */
   private async openChannel(): Promise<void> {
     if (this.storageRoot) {
-      this.channel ??= new RuntimeChannelServer(runtimeChannelEndpointForHost(this.storageRoot), () =>
-        this.channelStatus(),
+      this.channel ??= new RuntimeChannelServer(
+        runtimeChannelEndpointForHost(this.storageRoot),
+        () => this.channelStatus(),
+        { devices: () => this.channelDevices() },
       );
     }
     if (this.channel && !(await this.channel.open())) {
@@ -479,6 +495,41 @@ export class RuntimeOwner {
       complete: published?.complete ?? false,
       updatedAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * What the live channel observes about each device its published inventory names.
+   *
+   * Taken from the registry this runtime already holds and the evidence the same published manifest carries,
+   * so no second capability model is built from SDK internals. Nothing is observed once the SDK client is
+   * gone, because a surface belonging to a stopped client states nothing about a device now. A field left
+   * `undefined` is dropped on the way to the wire: unobserved is not unreachable, and it is not switched off.
+   */
+  private channelDevices(): RuntimeChannelDevice[] {
+    const view = this.registryView;
+    if (!view || !this.client) {
+      return [];
+    }
+    return view.snapshot.devices.map((manifest) => ({
+      serial: manifest.sn,
+      availability: this.currentAvailability(manifest.sn)?.availability,
+      enabled: this.observedEnablement(view.registry.get(manifest.sn), manifest),
+    }));
+  }
+
+  /**
+   * A camera's enablement where its own surface states one.
+   *
+   * The capability accessor is a call into the SDK's binding and can fault, and a device that is not a camera
+   * has no accessor at all. Both are unobserved.
+   */
+  private observedEnablement(device: Device | undefined, manifest: DeviceManifest): boolean | undefined {
+    try {
+      const camera = device?.camera?.();
+      return camera ? cameraEnablement(camera, indexDeviceEvidence(manifest).members) : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private publishTerminalState(

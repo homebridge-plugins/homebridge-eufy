@@ -1,24 +1,38 @@
 import { createConnection, type Socket } from 'node:net';
 
 import {
+  answeredDevice,
   answeredStatus,
+  areRuntimeChannelDevices,
   FrameReader,
   isRuntimeChannelStatus,
   ownedSocket,
   RUNTIME_CHANNEL_CONNECT_TIMEOUT_MS,
   RUNTIME_CHANNEL_PROTOCOL,
   RUNTIME_CHANNEL_RESPONSE_TIMEOUT_MS,
+  RUNTIME_DEVICES_PATH,
   RUNTIME_STATUS_PATH,
+  type RuntimeChannelDevice,
   type RuntimeChannelEndpoint,
   type RuntimeChannelGreeting,
   type RuntimeChannelResponse,
   type RuntimeChannelStatus,
 } from '../runtime/channel.js';
 
-/** One answered read: whether the runtime has finished starting, and the status it reported. */
+const STATUS_REQUEST = 1;
+const DEVICES_REQUEST = 2;
+
+/**
+ * One answered read of the live runtime view.
+ *
+ * `devices` is absent where the runtime serves no observations, which is a runtime older than the path that
+ * answers them. That is not the same as a runtime observing nothing about every device, which is a present but
+ * empty list.
+ */
 export interface RuntimeChannelReading {
   ready: boolean;
   status: RuntimeChannelStatus;
+  devices?: RuntimeChannelDevice[];
 }
 
 /**
@@ -41,10 +55,12 @@ interface RuntimeChannelClientOptions {
  *
  * Every failure resolves to absence rather than rejecting: an unreachable address, a refused connection, a
  * protocol this client does not speak, a bound endpoint that never answers within the response bound, a
- * frame larger than the bound, a malformed or unrecognised answer, and a shared address that is not an
- * owner-only socket belonging to this user are one outcome, which is that there is no runtime to ask.
+ * frame larger than the bound, a malformed or unrecognised status, and a shared address that is not an
+ * owner-only socket belonging to this user are one outcome, which is that there is no runtime to ask. A
+ * refused request is not one of them: a path this runtime does not serve leaves its own answer out and the
+ * rest of the reading stands.
  *
- * One connection per read, closed once the answer arrives.
+ * One connection per read, carrying both requests correlated by identity, closed once both are answered.
  */
 export class RuntimeChannelClient implements RuntimeStatusChannel {
   private readonly connectTimeoutMs: number;
@@ -94,7 +110,7 @@ export class RuntimeChannelClient implements RuntimeStatusChannel {
 
   private exchange(connection: Socket): Promise<RuntimeChannelReading> {
     return new Promise<RuntimeChannelReading>((resolve, reject) => {
-      const settle = setTimeout(() => reject(new Error('runtime channel response timed out')), this.responseTimeoutMs);
+      const settle = setTimeout(() => concludeOrFail('runtime channel response timed out'), this.responseTimeoutMs);
       settle.unref();
       const reader = new FrameReader();
       let greeting: RuntimeChannelGreeting | undefined;
@@ -102,8 +118,36 @@ export class RuntimeChannelClient implements RuntimeStatusChannel {
         clearTimeout(settle);
         reject(new Error(message));
       };
-      connection.once('error', () => fail('runtime channel faulted'));
-      connection.once('close', () => fail('runtime channel closed before answering'));
+      /**
+       * Concludes with the status alone where the observations never settled.
+       *
+       * The status is one answer and the observations are another, so a runtime that answers the first and
+       * then says nothing must not cost both. Only a read with no status at all is a failure.
+       */
+      const concludeOrFail = (message: string): void => {
+        if (greeting && answeredStatusValue) {
+          devicesSettled = true;
+          settleIfComplete();
+          return;
+        }
+        fail(message);
+      };
+      connection.once('error', () => concludeOrFail('runtime channel faulted'));
+      connection.once('close', () => concludeOrFail('runtime channel closed before answering'));
+      let answeredStatusValue: RuntimeChannelStatus | undefined;
+      let answeredDevices: RuntimeChannelDevice[] | undefined;
+      let devicesSettled = false;
+      const settleIfComplete = (): void => {
+        if (!greeting || !answeredStatusValue || !devicesSettled) {
+          return;
+        }
+        clearTimeout(settle);
+        resolve({
+          ready: greeting.ready,
+          status: answeredStatusValue,
+          ...(answeredDevices === undefined ? {} : { devices: answeredDevices }),
+        });
+      };
       connection.on('data', (chunk) => {
         const frames = reader.accept(chunk);
         if (!frames) {
@@ -111,51 +155,46 @@ export class RuntimeChannelClient implements RuntimeStatusChannel {
           return;
         }
         for (const frame of frames) {
-          const answered = this.consume(connection, frame, greeting);
-          if (answered === undefined) {
-            fail('runtime channel sent an answer this client cannot use');
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(frame);
+          } catch {
+            fail('runtime channel sent an unreadable frame');
             return;
           }
-          if ('reading' in answered) {
-            clearTimeout(settle);
-            resolve(answered.reading);
-            return;
+          if (!greeting) {
+            const opened = parsed as RuntimeChannelGreeting;
+            if (opened?.protocol !== RUNTIME_CHANNEL_PROTOCOL || typeof opened.ready !== 'boolean') {
+              fail('runtime channel speaks another protocol');
+              return;
+            }
+            greeting = opened;
+            connection.write(
+              `${JSON.stringify({ v: RUNTIME_CHANNEL_PROTOCOL, id: STATUS_REQUEST, path: RUNTIME_STATUS_PATH })}\n` +
+                `${JSON.stringify({ v: RUNTIME_CHANNEL_PROTOCOL, id: DEVICES_REQUEST, path: RUNTIME_DEVICES_PATH })}\n`,
+            );
+            continue;
           }
-          greeting = answered.greeting;
+          const response = parsed as RuntimeChannelResponse;
+          if (response?.id === STATUS_REQUEST) {
+            if (!response.ok || !isRuntimeChannelStatus(response.data)) {
+              fail('runtime channel answered no status this client can use');
+              return;
+            }
+            answeredStatusValue = answeredStatus(response.data);
+          } else if (response?.id === DEVICES_REQUEST) {
+            devicesSettled = true;
+            if (response.ok) {
+              if (!areRuntimeChannelDevices(response.data)) {
+                fail('runtime channel answered no observations this client can use');
+                return;
+              }
+              answeredDevices = response.data.map(answeredDevice);
+            }
+          }
+          settleIfComplete();
         }
       });
     });
-  }
-
-  /**
-   * Interprets one frame as the greeting a connection opens with, or as the answer that follows it.
-   *
-   * Undefined states that the exchange cannot continue: an unreadable frame, a protocol this client does not
-   * speak, a refusal, or an answer whose shape is not the one this protocol version carries.
-   */
-  private consume(
-    connection: Socket,
-    frame: string,
-    greeting: RuntimeChannelGreeting | undefined,
-  ): { greeting: RuntimeChannelGreeting } | { reading: RuntimeChannelReading } | undefined {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(frame);
-    } catch {
-      return undefined;
-    }
-    if (!greeting) {
-      const opened = parsed as RuntimeChannelGreeting;
-      if (opened?.protocol !== RUNTIME_CHANNEL_PROTOCOL || typeof opened.ready !== 'boolean') {
-        return undefined;
-      }
-      connection.write(`${JSON.stringify({ v: RUNTIME_CHANNEL_PROTOCOL, id: 1, path: RUNTIME_STATUS_PATH })}\n`);
-      return { greeting: opened };
-    }
-    const response = parsed as RuntimeChannelResponse;
-    if (!response?.ok || !isRuntimeChannelStatus(response.data)) {
-      return undefined;
-    }
-    return { reading: { ready: greeting.ready, status: answeredStatus(response.data) } };
   }
 }

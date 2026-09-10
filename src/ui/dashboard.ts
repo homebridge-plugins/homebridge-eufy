@@ -4,6 +4,7 @@ import { describeHomeKitRepresentation } from '../homekit/representation.js';
 import { MOTION_EVENT_REQUIREMENTS } from '../homekit/adapters/motion.js';
 import { DOORBELL_PRESS_EVENT } from '../homekit/adapters/doorbell.js';
 import type { RuntimeTrackerRecord } from '../runtime/tracker.js';
+import type { RuntimeChannelDevice } from '../runtime/channel.js';
 import type { RuntimeStatusChannel } from './runtime-channel-client.js';
 
 const DASHBOARD_FRESH_THRESHOLD_MS = 90_000;
@@ -25,6 +26,20 @@ export interface DashboardDevice {
   diagnosticOnly: boolean;
   artwork?: string;
   preferences: Array<'represented' | 'audio' | 'snapshotMode'>;
+  /**
+   * Whether the runtime reports this device reachable, where a runtime is there to report it.
+   *
+   * Absent means unobserved, which is not unreachable. Nothing is inferred from the published inventory, which
+   * states what a device is and never how it is doing.
+   */
+  availability?: 'available' | 'unavailable';
+  /**
+   * Whether a camera reports itself switched on, where that reading may be relied on.
+   *
+   * Absent means unobserved, which is not switched off. A camera whose reading the SDK declines to stand
+   * behind, and one on a runtime that is not running, are both absent here.
+   */
+  enabled?: boolean;
 }
 
 export interface DashboardSnapshot {
@@ -106,6 +121,22 @@ function projectDevice(manifest: DeviceManifest, representationEnabled: boolean 
   };
 }
 
+/**
+ * Adds what the runtime observes to what its published inventory states.
+ *
+ * Keyed by the serial the inventory already carries, which is the one field of an observation this does not
+ * copy because the tile already states it. An unobserved field never arrives, so a device no observation
+ * mentions and a runtime that serves none both leave a tile with no observed field rather than a false one.
+ */
+function observed(device: DashboardDevice, observations: ReadonlyMap<string, RuntimeChannelDevice>): DashboardDevice {
+  const observation = observations.get(device.serial);
+  if (!observation) {
+    return device;
+  }
+  const { serial, ...fields } = observation;
+  return { ...device, ...fields };
+}
+
 /** Classifies runtime evidence, whether it was published to a file or stated by the running process. */
 function stateOf(evidence: Pick<RuntimeTrackerRecord, 'state' | 'status' | 'complete'>): DashboardState {
   if (evidence.state === 'authentication-required') {
@@ -157,7 +188,13 @@ export async function readDashboard(
   ].sort();
   const live = await channel?.read();
   if (live) {
-    return { state: stateOf(live.status), updatedAt: live.status.updatedAt, devices, warmUpCandidates };
+    const observations = new Map((live.devices ?? []).map((observation) => [observation.serial, observation]));
+    return {
+      state: stateOf(live.status),
+      updatedAt: live.status.updatedAt,
+      devices: devices.map((device) => observed(device, observations)),
+      warmUpCandidates,
+    };
   }
   if (!Number.isFinite(updatedAt) || age < -5_000 || age > DASHBOARD_FRESH_THRESHOLD_MS) {
     return { state: 'stale', updatedAt: record.updatedAt, devices, warmUpCandidates };

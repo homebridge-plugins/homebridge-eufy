@@ -44,8 +44,16 @@ export const RUNTIME_CHANNEL_IDLE_TIMEOUT_MS = 30_000;
  */
 export const RUNTIME_CHANNEL_FRAME_BYTES = 1024 * 1024;
 
-/** The only request path this protocol version serves. */
+/** The path that answers the live runtime status. */
 export const RUNTIME_STATUS_PATH = '/runtime/status';
+
+/**
+ * The path that answers the live per-device observations.
+ *
+ * A path is refused rather than fatal, so one added inside a protocol version is discovered by asking. A
+ * client that asks a runtime which does not serve it reads the rest of its answer and nothing here.
+ */
+export const RUNTIME_DEVICES_PATH = '/runtime/devices';
 
 /**
  * The live runtime status: the persisted record's scalar fields, stated by the process that holds them.
@@ -59,6 +67,20 @@ export interface RuntimeChannelStatus {
   generation?: string;
   complete: boolean;
   updatedAt: string;
+}
+
+/**
+ * What the runtime observes about one device that its published inventory cannot state.
+ *
+ * A field is absent where nothing is observed, and never false: a camera whose reading may not be relied on is
+ * unknown rather than switched off, and publishing unknown as off would withdraw a working camera. The serial
+ * is the key an observation is attached by, and every serial already reaches a consumer in the published
+ * inventory.
+ */
+export interface RuntimeChannelDevice {
+  serial: string;
+  availability?: 'available' | 'unavailable';
+  enabled?: boolean;
 }
 
 /** What one connection is told before it may ask anything. */
@@ -80,7 +102,7 @@ export interface RuntimeChannelRequest {
 export interface RuntimeChannelResponse {
   id: number;
   ok: boolean;
-  data?: RuntimeChannelStatus;
+  data?: RuntimeChannelStatus | RuntimeChannelDevice[];
 }
 
 /** The address the runtime channel is served and consumed on, and what its location implies. */
@@ -201,6 +223,40 @@ export function answeredStatus(status: RuntimeChannelStatus): RuntimeChannelStat
 }
 
 /**
+ * Projects one device's observations onto the closed set of fields this protocol carries.
+ *
+ * The only writer of an observation's fields onto the wire. An unobserved field is left out rather than
+ * written false, so a provider that states `undefined` and one that states nothing are one answer.
+ */
+export function answeredDevice(device: RuntimeChannelDevice): RuntimeChannelDevice {
+  return {
+    serial: device.serial,
+    ...(device.availability === undefined ? {} : { availability: device.availability }),
+    ...(device.enabled === undefined ? {} : { enabled: device.enabled }),
+  };
+}
+
+/** Whether a value is the device observations this protocol version carries, each with its declared shape. */
+export function areRuntimeChannelDevices(value: unknown): value is RuntimeChannelDevice[] {
+  return (
+    Array.isArray(value) &&
+    value.every((entry) => {
+      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+        return false;
+      }
+      const candidate = entry as Record<string, unknown>;
+      return (
+        typeof candidate.serial === 'string' &&
+        (candidate.availability === undefined ||
+          candidate.availability === 'available' ||
+          candidate.availability === 'unavailable') &&
+        (candidate.enabled === undefined || typeof candidate.enabled === 'boolean')
+      );
+    })
+  );
+}
+
+/**
  * Whether a value is a status this protocol version carries, with every field the shape it declares.
  *
  * Applied by a consumer to what a peer sent. A shared address is one another local user can create an entry
@@ -224,6 +280,7 @@ interface RuntimeChannelServerOptions {
   protocol?: number;
   idleTimeoutMs?: number;
   frameBytes?: number;
+  devices?: () => RuntimeChannelDevice[];
 }
 
 /**
@@ -242,6 +299,7 @@ export class RuntimeChannelServer {
   private readonly protocol: number;
   private readonly idleTimeoutMs: number;
   private readonly frameBytes: number;
+  private readonly devices?: () => RuntimeChannelDevice[];
 
   constructor(
     private readonly endpoint: RuntimeChannelEndpoint,
@@ -251,6 +309,7 @@ export class RuntimeChannelServer {
     this.protocol = options.protocol ?? RUNTIME_CHANNEL_PROTOCOL;
     this.idleTimeoutMs = options.idleTimeoutMs ?? RUNTIME_CHANNEL_IDLE_TIMEOUT_MS;
     this.frameBytes = options.frameBytes ?? RUNTIME_CHANNEL_FRAME_BYTES;
+    this.devices = options.devices;
   }
 
   /** Binds the endpoint, reporting whether it bound. An unbound channel is an absent one. */
@@ -294,6 +353,28 @@ export class RuntimeChannelServer {
     }
     this.connections.clear();
     server?.close();
+  }
+
+  /**
+   * Answers one request, refusing rather than propagating a provider that faults.
+   *
+   * A provider reaches into the runtime's own registry and manifest evidence, either of which may throw. This
+   * runs inside a socket's data listener, where a thrown error is an uncaught exception in the process that
+   * owns the Eufy session, so no read of this channel may be able to end it. A refusal is a state every
+   * consumer already handles.
+   */
+  private answered(request: RuntimeChannelRequest): RuntimeChannelResponse {
+    try {
+      if (request.path === RUNTIME_STATUS_PATH) {
+        return { id: request.id, ok: true, data: answeredStatus(this.status()) };
+      }
+      if (request.path === RUNTIME_DEVICES_PATH && this.devices) {
+        return { id: request.id, ok: true, data: this.devices().map(answeredDevice) };
+      }
+    } catch {
+      return { id: request.id, ok: false };
+    }
+    return { id: request.id, ok: false };
   }
 
   private async clearStaleAddress(): Promise<void> {
@@ -344,10 +425,6 @@ export class RuntimeChannelServer {
       connection.destroy();
       return;
     }
-    const response: RuntimeChannelResponse =
-      request.path === RUNTIME_STATUS_PATH
-        ? { id: request.id, ok: true, data: answeredStatus(this.status()) }
-        : { id: request.id, ok: false };
-    connection.write(`${JSON.stringify(response)}\n`);
+    connection.write(`${JSON.stringify(this.answered(request))}\n`);
   }
 }

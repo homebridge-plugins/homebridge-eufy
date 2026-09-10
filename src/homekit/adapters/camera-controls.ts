@@ -1,5 +1,6 @@
 import type { AudioActions, CameraActions, LightActions } from '@mega-yfue/eufy-sdk';
 
+import { untrusted } from '../../device/member-trust.js';
 import type { AdapterAttachmentContext, AdapterEventTrace, AttachedAdapter, HomeKitAdapter } from '../adapter.js';
 import {
   deviceOperationIssuer,
@@ -8,7 +9,6 @@ import {
   observationReader,
   OPERATION_FAILED_CONDITION,
   type DeviceOperationState,
-  untrusted,
 } from '../device-control.js';
 
 export const CAMERA_CONTROLS_ADAPTER_KEY = 'camera.controls';
@@ -19,7 +19,12 @@ export const CAMERA_STATUS_LED_SERVICE_KEY = 'camera.status-led';
 export const CAMERA_MICROPHONE_SERVICE_KEY = 'camera.microphone';
 export const CAMERA_SPEAKER_SERVICE_KEY = 'camera.speaker';
 
-const CAMERA_ENABLED_READ = {
+/**
+ * The coverage row for a camera's enablement, which this bundle owns and requires writable because it
+ * presents a switch. The reading alone is admitted by `CAMERA_ENABLED_READ` in `device/member-trust.ts`,
+ * which every consumer of the observation shares.
+ */
+const CAMERA_ENABLED_WRITABLE_READ = {
   id: 'camera.enabled.read',
   kind: 'read',
   type: 'bool',
@@ -77,7 +82,7 @@ const AUDIO_VOLUME_WRITE = {
 } as const;
 
 const CAMERA_CONTROL_ROWS = [
-  CAMERA_ENABLED_READ,
+  CAMERA_ENABLED_WRITABLE_READ,
   LIGHT_POWER_READ,
   LIGHT_POWER_WRITE,
   LIGHT_BRIGHTNESS_READ,
@@ -113,7 +118,7 @@ export interface CameraControlsSdkDevice {
 export const CAMERA_CONTROLS_ADAPTER = {
   key: CAMERA_CONTROLS_ADAPTER_KEY,
   role: 'primary-purpose',
-  requires: [CAMERA_ENABLED_READ],
+  requires: [CAMERA_ENABLED_WRITABLE_READ],
   coverage: CAMERA_CONTROL_ROWS.map(({ id }) => id),
   attach: attachCameraControls,
 } as const satisfies HomeKitAdapter;

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 
-import type { DeviceManifest } from '@mega-yfue/eufy-sdk';
+import type { AvailabilityObservation, Device, DeviceManifest } from '@mega-yfue/eufy-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseConfig } from '../../src/configuration.js';
@@ -14,20 +14,23 @@ import { AccountOwnership } from '../../src/account/ownership.js';
 import {
   FrameReader,
   runtimeChannelEndpoint,
+  runtimeChannelEndpointForHost,
   RuntimeChannelServer,
   RUNTIME_CHANNEL_CONNECT_TIMEOUT_MS,
   RUNTIME_CHANNEL_FRAME_BYTES,
   RUNTIME_CHANNEL_IDLE_TIMEOUT_MS,
   RUNTIME_CHANNEL_PROTOCOL,
   RUNTIME_CHANNEL_RESPONSE_TIMEOUT_MS,
+  type RuntimeChannelDevice,
   type RuntimeChannelEndpoint,
   type RuntimeChannelStatus,
 } from '../../src/runtime/channel.js';
 import { RuntimeOwner, type RuntimeChannelHost } from '../../src/runtime/owner.js';
+import type { CompleteDeviceSnapshot } from '../../src/device/snapshot.js';
 import type { RuntimeTrackerRecord } from '../../src/runtime/tracker.js';
 import type { SdkClient } from '../../src/runtime/sdk-client.js';
 import { readDashboard } from '../../src/ui/dashboard.js';
-import { RuntimeChannelClient } from '../../src/ui/runtime-channel-client.js';
+import { RuntimeChannelClient, type RuntimeStatusChannel } from '../../src/ui/runtime-channel-client.js';
 
 function trackerRecord(update: Partial<RuntimeTrackerRecord> = {}): RuntimeTrackerRecord {
   return {
@@ -449,20 +452,42 @@ function runtimeConfig() {
   });
 }
 
-function ownerHarness(channel: RuntimeChannelHost, calls: string[], log = { error: vi.fn(), warn: vi.fn() }) {
+interface HarnessRegistry {
+  snapshot: CompleteDeviceSnapshot;
+  registry: ReadonlyMap<string, Device>;
+  availability?: boolean;
+  availabilityFor?: (serial: string) => AvailabilityObservation | undefined;
+  storageRoot?: string;
+  stopsSlowly?: boolean;
+}
+
+function ownerHarness(
+  channel: RuntimeChannelHost | undefined,
+  calls: string[],
+  log: { error: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> } = { error: vi.fn(), warn: vi.fn() },
+  view?: HarnessRegistry,
+) {
   const config = runtimeConfig();
   const client: SdkClient = {
     start: vi.fn(async () => {
       calls.push('client:start');
-      return { state: 'ready' as const, registry: new Map(), snapshot: { version: 1, complete: true, devices: [] } };
+      return {
+        state: 'ready' as const,
+        registry: view?.registry ?? new Map(),
+        snapshot: view?.snapshot ?? { version: 1, complete: true, devices: [] },
+      };
     }),
     stop: vi.fn(async () => {
       calls.push('client:stop');
+      if (view?.stopsSlowly) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 400));
+      }
     }),
+    ...(view?.availability ? { deviceAvailability: (serial: string) => view.availabilityFor?.(serial) } : {}),
   };
   return new RuntimeOwner(log, config, () => client, {
-    storageRoot: '/synthetic-runtime',
-    channel,
+    storageRoot: view?.storageRoot ?? '/synthetic-runtime',
+    ...(channel ? { channel } : {}),
     ownership: {
       acquire: vi.fn(async () => {
         calls.push('acquire');
@@ -768,5 +793,339 @@ describe('runtime channel guarantees that must hold rather than be described', (
 
     expect(reader.accept(Buffer.from('"aaaa"\n"bbbb"\n"cccc"\n', 'utf8'))).toEqual(['"aaaa"', '"bbbb"', '"cccc"']);
     expect(reader.accept(Buffer.from('x'.repeat(17), 'utf8'))).toBeUndefined();
+  });
+});
+
+describe('runtime channel device observations', () => {
+  let root: string;
+  let servers: RuntimeChannelServer[];
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'homebridge-eufy-channel-devices-'));
+    servers = [];
+  });
+
+  afterEach(async () => {
+    for (const server of servers) {
+      server.close();
+    }
+    await rm(root, { force: true, recursive: true });
+  });
+
+  async function serveDevices(devices: () => RuntimeChannelDevice[]): Promise<RuntimeChannelClient> {
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    const server = new RuntimeChannelServer(endpoint, () => status(), { devices });
+    servers.push(server);
+    await server.open();
+    return new RuntimeChannelClient(endpoint);
+  }
+
+  /**
+   * The observations the runtime holds and the file does not: whether a device is reachable, and whether a
+   * camera reports itself switched on. Both arrive on the same connection as the status, correlated by
+   * request identity rather than by order.
+   */
+  it('answers reachability and camera enablement alongside the status', async () => {
+    const client = await serveDevices(() => [
+      { serial: 'synthetic-camera', availability: 'available', enabled: true },
+      { serial: 'synthetic-doorbell', availability: 'unavailable', enabled: false },
+    ]);
+
+    await expect(client.read()).resolves.toEqual({
+      ready: true,
+      status: status(),
+      devices: [
+        { serial: 'synthetic-camera', availability: 'available', enabled: true },
+        { serial: 'synthetic-doorbell', availability: 'unavailable', enabled: false },
+      ],
+    });
+  });
+
+  /**
+   * An unobserved field is absent, never false. A camera the SDK declines to stand behind and a device whose
+   * reachability nothing has reported are both unknown, and reporting either as `false` would publish a
+   * working camera as switched off.
+   */
+  it('omits an unobserved field rather than answering false', async () => {
+    const client = await serveDevices(() => [{ serial: 'synthetic-sensor' }]);
+
+    const reading = await client.read();
+
+    expect(reading?.devices).toEqual([{ serial: 'synthetic-sensor' }]);
+    expect(Object.keys(reading!.devices![0]!)).toEqual(['serial']);
+  });
+
+  /**
+   * A newer client asking an older runtime for observations it does not serve is the upgrade-without-restart
+   * case at the grain of one path. The refusal leaves the reading without observations and the status intact,
+   * so a path added inside one protocol version needs no version of its own.
+   */
+  it('reads the status from a runtime that serves no observations', async () => {
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    const server = new RuntimeChannelServer(endpoint, () => status());
+    servers.push(server);
+    await server.open();
+
+    await expect(new RuntimeChannelClient(endpoint).read()).resolves.toEqual({
+      ready: true,
+      status: status(),
+    });
+  });
+
+  /**
+   * The observations are projected onto their own closed field set, so nothing a provider carries beside them
+   * reaches the wire. A serial is the key an observation is attached by and already reaches the UI in the
+   * persisted snapshot; an address, an account identifier and anything credential-shaped do not.
+   */
+  it('answers a closed device field set and nothing beside it', async () => {
+    const client = await serveDevices(() => [
+      Object.assign(
+        { serial: 'synthetic-camera', availability: 'available' as const, enabled: true },
+        { address: '10.0.0.9', userId: 'synthetic-user', authToken: SUBMITTED_PASSWORD },
+      ),
+    ]);
+
+    const reading = await client.read();
+
+    expect(Object.keys(reading!.devices![0]!).sort()).toEqual(['availability', 'enabled', 'serial']);
+    expect(JSON.stringify(reading)).not.toMatch(/password|credential|captcha|answer|authToken|cookie|secret/i);
+  });
+});
+
+describe('runtime observations taken from the live registry', () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'homebridge-eufy-channel-registry-'));
+  });
+
+  afterEach(async () => {
+    await rm(root, { force: true, recursive: true });
+  });
+
+  function surfaceManifest(serial: string, codec: DeviceManifest['codec'], accessor: string): DeviceManifest {
+    return {
+      sn: serial,
+      name: `Synthetic ${codec}`,
+      model: codec === 'camera' ? 'T8410' : 'T8910',
+      modelName: `Synthetic ${codec}`,
+      codec,
+      source: 'security',
+      bound: true,
+      capabilities: [accessor] as DeviceManifest['capabilities'],
+      details: [
+        {
+          capability: accessor as DeviceManifest['details'][number]['capability'],
+          accessor,
+          reads: [
+            {
+              accessor: accessor === 'camera' ? 'enabled' : 'open',
+              property: 'synthetic',
+              type: 'bool',
+              writable: accessor === 'camera',
+            },
+          ],
+          actions: [],
+          undescribedActions: [],
+          events: [],
+        },
+      ],
+    };
+  }
+
+  /**
+   * The whole chain, through the endpoint a real runtime binds: the observations are taken from the registry
+   * the runtime already holds and the evidence its own published manifest carries, answered through the one
+   * owner of the enablement trust gate, and read back by the client the UI uses. No second capability model is
+   * built, and the UI opens no SDK client to learn any of it.
+   *
+   * The camera reports itself switched off and its reachability is unavailable, so both are answered. The
+   * contact sensor beside it has no enablement to report and nothing has observed its reachability, so it is
+   * answered with its serial alone: unobserved is neither unreachable nor switched off.
+   */
+  it('answers what it observes and no more, over the endpoint a runtime binds', async () => {
+    const calls: string[] = [];
+    const camera = surfaceManifest('synthetic-camera', 'camera', 'camera');
+    const sensor = surfaceManifest('synthetic-sensor', 'sensor', 'contact');
+    const observed: AvailabilityObservation = {
+      entity: { kind: 'device', sn: 'synthetic-camera' },
+      availability: 'unavailable',
+      source: { transport: 'smqtt', signal: 'state-info' },
+      scope: 'device',
+      receivedAt: 1,
+    };
+
+    const runtime = ownerHarness(undefined, calls, undefined, {
+      storageRoot: root,
+      snapshot: { version: 1, complete: true, devices: [camera, sensor] },
+      registry: new Map([
+        ['synthetic-camera', { describe: () => camera, camera: () => ({ enabled: false }) } as unknown as Device],
+        ['synthetic-sensor', { describe: () => sensor } as unknown as Device],
+      ]),
+      availability: true,
+      availabilityFor: (serial) => (serial === 'synthetic-camera' ? observed : undefined),
+    });
+    await runtime.start();
+
+    const reading = await new RuntimeChannelClient(runtimeChannelEndpointForHost(root)).read();
+
+    expect(reading?.devices).toEqual([
+      { serial: 'synthetic-camera', availability: 'unavailable', enabled: false },
+      { serial: 'synthetic-sensor' },
+    ]);
+    await runtime.stop();
+  });
+});
+
+describe('dashboard devices with and without observations', () => {
+  const NOW = () => Date.parse('2026-08-13T12:00:30.000Z');
+
+  function reading(devices?: RuntimeChannelDevice[]): RuntimeStatusChannel {
+    return { read: async () => ({ ready: true, status: status(), ...(devices ? { devices } : {}) }) };
+  }
+
+  /**
+   * An observation reaches the tile it belongs to, keyed by the serial the published inventory already carries.
+   */
+  it('attaches an observation to the device it belongs to', async () => {
+    const dashboard = await readDashboard(
+      { read: async () => trackerRecord() },
+      NOW,
+      {},
+      reading([{ serial: 'synthetic-sensor', availability: 'unavailable', enabled: false }]),
+    );
+
+    expect(dashboard.devices[0]).toMatchObject({
+      serial: 'synthetic-sensor',
+      availability: 'unavailable',
+      enabled: false,
+    });
+  });
+
+  /**
+   * A device no observation mentions, and every device when the runtime serves no observations at all, carry
+   * no observed field rather than a false one. A tile must not read as unreachable or switched off because
+   * nothing was asked.
+   */
+  it('leaves an unobserved device without observed fields', async () => {
+    const unmentioned = await readDashboard({ read: async () => trackerRecord() }, NOW, {}, reading([]));
+    const unserved = await readDashboard({ read: async () => trackerRecord() }, NOW, {}, reading());
+    const unchanneled = await readDashboard({ read: async () => trackerRecord() }, NOW);
+
+    for (const dashboard of [unmentioned, unserved, unchanneled]) {
+      expect(dashboard.devices[0]).not.toHaveProperty('availability');
+      expect(dashboard.devices[0]).not.toHaveProperty('enabled');
+    }
+    expect(unserved.devices).toEqual(unchanneled.devices);
+  });
+});
+
+describe('runtime channel refuses rather than propagates', () => {
+  let root: string;
+  let servers: RuntimeChannelServer[];
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'homebridge-eufy-channel-faults-'));
+    servers = [];
+  });
+
+  afterEach(async () => {
+    for (const server of servers) {
+      server.close();
+    }
+    await rm(root, { force: true, recursive: true });
+  });
+
+  /**
+   * A provider reaches into the runtime's own registry and manifest evidence, either of which may throw, and
+   * it runs inside a socket's data listener. No read of this channel may end the process that owns the Eufy
+   * session, so a fault is a refusal and the rest of the answer stands.
+   */
+  it('answers a refusal when a provider faults, and does not propagate it', async () => {
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    const server = new RuntimeChannelServer(endpoint, () => status(), {
+      devices: () => {
+        throw new Error('registry faulted');
+      },
+    });
+    servers.push(server);
+    await server.open();
+    const uncaught = vi.fn();
+    process.once('uncaughtException', uncaught);
+
+    await expect(new RuntimeChannelClient(endpoint).read()).resolves.toEqual({ ready: true, status: status() });
+
+    process.off('uncaughtException', uncaught);
+    expect(uncaught).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A runtime that answers its status and then says nothing costs one answer, not both. The status and the
+   * observations are separate answers, so only a read that produced no status at all is an absence.
+   */
+  it('concludes with the status alone when the observations never settle', async () => {
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    const silent = createServer((connection) => {
+      connection.write(`${JSON.stringify({ protocol: RUNTIME_CHANNEL_PROTOCOL, ready: true, state: 'ready' })}\n`);
+      connection.once('data', () => {
+        connection.write(`${JSON.stringify({ id: 1, ok: true, data: status() })}\n`);
+      });
+    });
+    await new Promise<void>((resolve) => silent.listen(endpoint.path, resolve));
+
+    try {
+      await expect(new RuntimeChannelClient(endpoint, { responseTimeoutMs: 60 }).read()).resolves.toEqual({
+        ready: true,
+        status: status(),
+      });
+    } finally {
+      silent.close();
+    }
+  });
+
+  /**
+   * A surface belonging to a stopped SDK client states nothing about a device now, so a read taken while the
+   * runtime is shutting down but its endpoint is still bound observes nothing rather than a retained value.
+   */
+  it('observes nothing once the SDK client is gone', async () => {
+    const calls: string[] = [];
+    const manifest: DeviceManifest = {
+      sn: 'synthetic-camera',
+      name: 'Synthetic Camera',
+      model: 'T8410',
+      modelName: 'Synthetic Camera',
+      codec: 'camera',
+      source: 'security',
+      bound: true,
+      capabilities: ['camera'] as DeviceManifest['capabilities'],
+      details: [
+        {
+          capability: 'camera' as DeviceManifest['details'][number]['capability'],
+          accessor: 'camera',
+          reads: [{ accessor: 'enabled', property: 'synthetic', type: 'bool', writable: true }],
+          actions: [],
+          undescribedActions: [],
+          events: [],
+        },
+      ],
+    };
+    const runtime = ownerHarness(undefined, calls, undefined, {
+      storageRoot: root,
+      snapshot: { version: 1, complete: true, devices: [manifest] },
+      registry: new Map([
+        ['synthetic-camera', { describe: () => manifest, camera: () => ({ enabled: true }) } as unknown as Device],
+      ]),
+      stopsSlowly: true,
+    });
+    await runtime.start();
+    const client = new RuntimeChannelClient(runtimeChannelEndpointForHost(root));
+
+    await expect(client.read()).resolves.toMatchObject({
+      devices: [{ serial: 'synthetic-camera', enabled: true }],
+    });
+
+    const stopping = runtime.stop();
+    await vi.waitFor(async () => await expect(client.read()).resolves.toMatchObject({ devices: [] }));
+    await stopping;
   });
 });

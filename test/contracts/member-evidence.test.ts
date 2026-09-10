@@ -7,6 +7,7 @@ import {
   satisfiesMemberRequirements,
   satisfiesProductRequirement,
 } from '../../src/device/member-evidence.js';
+import { cameraEnablement, observesCameraEnablement } from '../../src/device/member-trust.js';
 
 function manifest(details: CapabilityDescriptor[]): DeviceManifest {
   return {
@@ -111,5 +112,89 @@ describe('device member evidence', () => {
     delete candidate.model;
     candidate.modelName = 'T8531';
     expect(satisfiesProductRequirement(indexDeviceEvidence(candidate).product, { model: 'T8531' })).toBe(false);
+  });
+});
+
+/**
+ * A camera surface answering the SDK's out-of-band trust statement for its enablement member.
+ *
+ * `unreflectedMembers` reads a symbol-keyed statement only the SDK's own binding attaches, and no camera
+ * family reports one today, so a proxy answering every symbol read is the only way to exercise a member the
+ * SDK declines to stand behind.
+ */
+function unreflectedCamera(camera: object): object {
+  return new Proxy(camera, {
+    get(inner, property, receiver) {
+      return typeof property === 'symbol' ? Object.freeze(['enabled']) : Reflect.get(inner, property, receiver);
+    },
+  });
+}
+
+function cameraDetail(): CapabilityDescriptor {
+  return {
+    capability: 'camera' as CapabilityDescriptor['capability'],
+    accessor: 'camera',
+    reads: [{ accessor: 'enabled', property: 'synthetic', type: 'bool', writable: true }],
+    actions: [],
+    undescribedActions: [],
+    events: [],
+  };
+}
+
+describe('camera enablement trust', () => {
+  const observing = indexDeviceEvidence(manifest([cameraDetail()])).members;
+  const blind = indexDeviceEvidence(manifest([])).members;
+
+  /**
+   * One owner answers whether the SDK stands behind a camera's enablement reading, for every consumer that
+   * asks. The evidence half and the trust half are both required, so a device that reports the member and a
+   * device the SDK declines to stand behind are distinguished.
+   */
+  it('observes enablement only where the device reports it and the SDK stands behind it', () => {
+    expect(observesCameraEnablement({ enabled: true } as never, observing)).toBe(true);
+    expect(observesCameraEnablement({ enabled: true } as never, blind)).toBe(false);
+    expect(observesCameraEnablement(unreflectedCamera({ enabled: true }) as never, observing)).toBe(false);
+  });
+
+  /**
+   * The reading is gated by the same question, so a caller cannot read a value it was not entitled to, and a
+   * reading that is absent, of the wrong type, or that faults is unobserved rather than disabled.
+   */
+  it('answers nothing rather than disabled for a reading it may not rely on', () => {
+    expect(cameraEnablement({ enabled: false } as never, observing)).toBe(false);
+    expect(cameraEnablement({ enabled: true } as never, observing)).toBe(true);
+    expect(cameraEnablement({ enabled: true } as never, blind)).toBeUndefined();
+    expect(cameraEnablement(unreflectedCamera({ enabled: false }) as never, observing)).toBeUndefined();
+    expect(cameraEnablement({ enabled: 'yes' } as never, observing)).toBeUndefined();
+    expect(
+      cameraEnablement(
+        {
+          get enabled(): boolean {
+            throw new Error('surface faults');
+          },
+        } as never,
+        observing,
+      ),
+    ).toBeUndefined();
+  });
+
+  /**
+   * A surface whose trust statement itself faults has stated nothing that may be relied on.
+   */
+  it('declines a surface whose trust statement faults', () => {
+    const faulting = new Proxy(
+      { enabled: true },
+      {
+        get(inner, property, receiver) {
+          if (typeof property === 'symbol') {
+            throw new Error('statement faults');
+          }
+          return Reflect.get(inner, property, receiver);
+        },
+      },
+    );
+
+    expect(observesCameraEnablement(faulting as never, observing)).toBe(false);
+    expect(cameraEnablement(faulting as never, observing)).toBeUndefined();
   });
 });
