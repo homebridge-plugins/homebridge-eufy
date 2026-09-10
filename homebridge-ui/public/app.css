@@ -581,12 +581,27 @@ button.diagnostics-quiet-action {
   transform: translateY(0);
 }
 
-.dashboard[data-state='degraded'] .status,
-.dashboard[data-state='incomplete'] .status,
-.dashboard[data-state='restart-required'] .status,
-.dashboard[data-state='stale'] .status {
+/*
+ * The way into a diagnostic run, standing where a status pill used to. A pill saying "Connected" was decoration on
+ * the healthy path and a dead end on every other; this appears only where a run would explain something.
+ */
+.dashboard-diagnose {
+  flex: 0 0 auto;
+  /* Buttons are full width by default here, and this one sits inline beside the title. */
+  width: auto;
+  border: 1px solid var(--alert);
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--alert) 16%, var(--panel));
-  color: color-mix(in srgb, var(--alert) 75%, var(--ink));
+  color: var(--ink);
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dashboard-diagnose:hover {
+  background: color-mix(in srgb, var(--alert) 26%, var(--panel));
 }
 
 .device-group + .device-group {

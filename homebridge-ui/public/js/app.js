@@ -74,6 +74,7 @@ const diagnosticsExport = document.querySelector('[data-diagnostics-export]');
 const diagnosticsResultHeading = document.querySelector('[data-diagnostics-result-heading]');
 const diagnosticsStartAnother = document.querySelector('[data-diagnostics-start-another]');
 const advancedPanel = document.querySelector('[data-advanced-settings]');
+const dashboardDiagnose = document.querySelector('[data-dashboard-diagnose]');
 const devicePanel = document.querySelector('[data-device-settings]');
 const deviceClose = document.querySelector('[data-device-close]');
 const deviceSettingsTitle = document.querySelector('[data-device-settings-title]');
@@ -110,7 +111,7 @@ let diagnosticsWizardState = diagnosticsWizard.start();
 const dashboardElements = {
   dashboard,
   title: dashboardTitle,
-  badge: dashboardBadge,
+  diagnose: dashboardDiagnose,
   summary: dashboardSummary,
   authenticate: dashboardAuthenticate,
   groups: deviceGroups,
@@ -612,6 +613,9 @@ function closeDashboardPanel() {
 }
 
 mastheadDiagnostics.addEventListener('click', () => menuDiagnostics.click());
+
+// The dashboard's own offer of a run goes the same way the menu does, so there is one path into the wizard.
+dashboardDiagnose.addEventListener('click', () => menuDiagnostics.click());
 
 menuDiagnostics.addEventListener('click', async () => {
   openDashboardPanel(diagnosticsPanel, menuDiagnostics);

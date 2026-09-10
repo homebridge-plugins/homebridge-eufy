@@ -203,15 +203,22 @@
     elements.updateRestart.hidden = !result.restartable;
   }
 
+  /*
+   * The states a diagnostic run can shed light on. Sign-in, another process holding the session, and a pending
+   * restart each have their own remedy stated on the page, so sending those to the wizard would be a detour.
+   */
+  const DIAGNOSABLE = new Set(['degraded', 'incomplete', 'missing', 'stale']);
+
   function render(result, config, messages, elements) {
     const suffix = result.state
       .split('-')
       .map((part) => part[0].toUpperCase() + part.slice(1))
       .join('');
     elements.title.textContent = messages[`dashboard${suffix}Title`] ?? messages.dashboardIncompleteTitle;
-    elements.badge.textContent = messages[`dashboard${suffix}Badge`] ?? messages.dashboardIncompleteBadge;
     elements.summary.textContent = messages[`dashboard${suffix}Summary`] ?? messages.dashboardIncompleteSummary;
     elements.dashboard.dataset.state = result.state;
+    // Offered rather than announced: a run is worth suggesting only where the state is one a run explains.
+    if (elements.diagnose) elements.diagnose.hidden = !DIAGNOSABLE.has(result.state);
     elements.dashboard.hidden = false;
     elements.masthead.hidden = true;
     renderUpdatePending(result, messages, elements);

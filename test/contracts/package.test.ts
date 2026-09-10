@@ -91,7 +91,7 @@ async function renderUi(
   const dashboard = { hidden: true, dataset: {} as Record<string, string> };
   const dashboardState = { hidden: false };
   const dashboardTitle = { textContent: '' };
-  const dashboardBadge = { textContent: '' };
+  const dashboardDiagnose = interactiveElement({ hidden: true });
   const dashboardSummary = { hidden: false, textContent: '' };
   const dashboardAuthenticate = interactiveElement({ hidden: true });
   /**
@@ -296,7 +296,7 @@ async function renderUi(
           '[data-dashboard]': dashboard,
           '[data-dashboard-state]': dashboardState,
           '[data-dashboard-title]': dashboardTitle,
-          '[data-dashboard-badge]': dashboardBadge,
+          '[data-dashboard-diagnose]': dashboardDiagnose,
           '[data-dashboard-summary]': dashboardSummary,
           '[data-dashboard-authenticate]': dashboardAuthenticate,
           '[data-device-groups]': deviceGroups,
@@ -531,7 +531,7 @@ async function renderUi(
     password,
     dashboard,
     dashboardState,
-    dashboardBadge,
+    dashboardDiagnose,
     dashboardSummary,
     dashboardAuthenticate,
     dashboardTitle,
@@ -992,6 +992,7 @@ describe('packed plugin', () => {
           'stepAuthenticate',
           'stepDevices',
           'stepDiscover',
+          'dashboardDiagnose',
           'trustedDeviceLabel',
           'updatePendingAction',
           'updatePendingTitle',
@@ -1033,29 +1034,21 @@ describe('packed plugin', () => {
         'categoryClean',
         'categoryLife',
         'categorySecurity',
-        'dashboardAuthenticationRequiredBadge',
         'dashboardAuthenticationRequiredSummary',
         'dashboardAuthenticationRequiredTitle',
-        'dashboardDegradedBadge',
         'dashboardDegradedSummary',
         'dashboardDegradedTitle',
-        'dashboardIncompleteBadge',
         'dashboardIncompleteSummary',
         'dashboardIncompleteTitle',
-        'dashboardMissingBadge',
         'dashboardMissingSummary',
         'dashboardMissingTitle',
-        'dashboardOwnerConflictBadge',
         'dashboardOwnerConflictSummary',
         'dashboardOwnerConflictTitle',
         'dashboardPageTitle',
-        'dashboardReadyBadge',
         'dashboardReadySummary',
         'dashboardReadyTitle',
-        'dashboardRestartRequiredBadge',
         'dashboardRestartRequiredSummary',
         'dashboardRestartRequiredTitle',
-        'dashboardStaleBadge',
         'dashboardStaleSummary',
         'dashboardStaleTitle',
         'diagnosticDescription',
@@ -1838,7 +1831,7 @@ describe('packed plugin', () => {
       );
       expect(dashboardUi).toMatchObject({
         dashboard: { hidden: false, dataset: { state: 'degraded' } },
-        dashboardBadge: { textContent: catalogs['i18n/en.json'].dashboardDegradedBadge },
+        dashboardDiagnose: { hidden: false },
         setupContent: { hidden: true },
       });
       expect(dashboardUi.deviceGroups.innerHTML).toContain('Front contact');
