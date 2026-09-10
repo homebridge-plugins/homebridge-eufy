@@ -4,11 +4,13 @@ import {
   parseAuthenticationAnswer,
   parseAuthenticationStart,
   parseDiagnosticsAuthorization,
+  parseDeviceImageRequest,
   parseDiagnosticsUiEvent,
 } from '../../src/ui/server.js';
 
 const SUBMITTED_PASSWORD = 'synthetic-password-must-never-be-echoed';
 const SUBMITTED_ANSWER = 'synthetic-challenge-answer-must-never-be-echoed';
+const SUBMITTED_SERIAL = `T8410${'x'.repeat(200)}must-never-be-echoed`;
 
 function startPayload(overrides: Record<string, unknown> = {}) {
   return {
@@ -142,6 +144,35 @@ describe('custom UI diagnostics input', () => {
       { event: 'dashboard-opened', detail: 'must not cross the boundary' },
     ]) {
       expect(() => parseDiagnosticsUiEvent(value)).toThrow('Invalid diagnostics UI event');
+    }
+  });
+});
+
+describe('custom UI device image input', () => {
+  /**
+   * The serial names which retained image is asked for, and it arrives from the browser, so it is validated at
+   * the boundary like every other submitted field. Rejection is generic and never repeats what was sent.
+   */
+  it('accepts one plausible serial and rejects anything else without echoing it', () => {
+    expect(parseDeviceImageRequest({ serial: 'T8410P00223SYNTH' })).toBe('T8410P00223SYNTH');
+
+    for (const value of [
+      undefined,
+      [],
+      {},
+      { serial: '' },
+      { serial: 42 },
+      { serial: ' T8410 ' },
+      { serial: '../../../etc/passwd' },
+      { serial: 'T8410P00223SYNTH', extra: true },
+      { serial: SUBMITTED_SERIAL },
+    ]) {
+      expect(() => parseDeviceImageRequest(value)).toThrow('Invalid device image request');
+      try {
+        parseDeviceImageRequest(value);
+      } catch (error) {
+        expect((error as Error).message).not.toContain(SUBMITTED_SERIAL);
+      }
     }
   });
 });

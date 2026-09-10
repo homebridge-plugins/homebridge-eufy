@@ -989,6 +989,9 @@ homebridge.addEventListener('ready', async () => {
       // What the warm-up setting may offer comes from the devices themselves, so it is learnt here.
       warmUpCandidates = Array.isArray(snapshot.warmUpCandidates) ? snapshot.warmUpCandidates : [];
       dashboardView.render(snapshot, configuredBlock() ?? {}, messages, dashboardElements);
+      void dashboardView.applyDeviceImages(dashboardElements, (serial) =>
+        requestWithinDeadline('/device/image', { serial }, 12000),
+      );
     } catch {
       dashboardView.render({ state: 'missing', devices: [] }, configuredBlock() ?? {}, messages, dashboardElements);
       recordActiveUiEventBestEffort('request-failed');

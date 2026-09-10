@@ -23,6 +23,7 @@ import {
   type DiagnosticsUiEvent,
 } from '../diagnostics.js';
 import { PersistedLastSuccessfulImages } from '../media/last-successful-image.js';
+import { readDeviceImage } from './device-image.js';
 import { runtimeChannelEndpointForHost } from '../runtime/channel.js';
 import { RuntimeTracker } from '../runtime/tracker.js';
 import { resolveStorageRoot } from '../storage.js';
@@ -157,6 +158,25 @@ export function parseDiagnosticsAuthorization(value: unknown): {
   return { profile: payload.profile, reproductionMode };
 }
 
+/**
+ * Validates a browser-submitted request for one device's retained image.
+ *
+ * The serial names which image is asked for and arrives from the browser, so it is bounded and constrained to
+ * the shape a serial has before it reaches storage. Rejection carries one generic message that never repeats
+ * what was submitted.
+ */
+export function parseDeviceImageRequest(value: unknown): string {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new RequestError('Invalid device image request', { status: 400 });
+  }
+  const payload = value as Record<string, unknown>;
+  const serial = requiredString(payload.serial, 128);
+  if (Object.keys(payload).join(',') !== 'serial' || !serial?.match(/^[A-Za-z0-9]{1,128}$/)) {
+    throw new RequestError('Invalid device image request', { status: 400 });
+  }
+  return serial;
+}
+
 function parseArchiveReview(value: unknown): string {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new RequestError('Invalid support archive request', { status: 400 });
@@ -201,6 +221,7 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
   private readonly persistence: AccountSessionPersistence;
   private readonly runtimeTracker: RuntimeTracker;
   private readonly runtimeChannel: RuntimeStatusChannel;
+  private readonly images: PersistedLastSuccessfulImages;
   private readonly diagnostics: GuidedDiagnostics;
   private startPending = false;
   private flowGeneration = 0;
@@ -214,8 +235,9 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
     }
     const root = resolveStorageRoot(this.homebridgeStoragePath);
     this.ownership = new AccountOwnership(join(root, 'ownership'));
+    this.images = new PersistedLastSuccessfulImages(root);
     this.persistence = new AccountSessionPersistence(join(root, 'accounts'), undefined, undefined, () =>
-      new PersistedLastSuccessfulImages(root).discardAll(),
+      this.images.discardAll(),
     );
     this.runtimeTracker = new RuntimeTracker(join(root, 'tracker.json'));
     this.runtimeChannel = new RuntimeChannelClient(runtimeChannelEndpointForHost(root));
@@ -227,6 +249,9 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
     this.onRequest('/auth/close', () => this.closeAuthentication());
     this.onRequest('/dashboard', (payload) =>
       readDashboard(this.runtimeTracker, Date.now, parseRepresentationPreferences(payload), this.runtimeChannel),
+    );
+    this.onRequest('/device/image', (payload) =>
+      readDeviceImage(this.images, this.runtimeChannel, parseDeviceImageRequest(payload)),
     );
     this.onRequest('/diagnostics/status', () => this.diagnostics.status());
     this.onRequest('/diagnostics/authorize', (payload) => {

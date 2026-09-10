@@ -83,13 +83,13 @@
               <div class="device-copy"><h3>${escapeHtml(device.name)}</h3><p>${escapeHtml(device.modelName)}</p></div>
               <div class="device-badges">${badges.map(({ icon, label }) => `<span class="device-badge device-badge-${icon}" role="img" tabindex="0" aria-label="${escapeHtml(label)}" data-tooltip="${escapeHtml(label)}"><img src="assets/icons/${icon}.svg" alt=""></span>`).join('')}</div>`;
             if (device.diagnosticOnly) {
-              return `<article class="device-tile device-tile-flippable" data-category="${category}" data-rank="${rank}"><div class="device-card-inner"><div class="device-card-face device-card-front"><button class="device-summary device-flip-control" type="button" aria-expanded="false">${tile}</button></div><div class="device-card-face device-card-back"><button class="device-mobile-close" type="button" aria-label="${escapeHtml(messages.closeDetails)}">×</button><div class="diagnostic-panel"><img src="assets/icons/troubleshoot.svg" alt=""><strong>${escapeHtml(messages.diagnosticOnly)}</strong><p>${escapeHtml(messages.diagnosticDescription)}</p></div></div></div></article>`;
+              return `<article class="device-tile device-tile-flippable" data-category="${category}" data-rank="${rank}" data-serial="${escapeHtml(device.serial)}" data-device-class="${escapeHtml(device.deviceClass)}"><div class="device-card-inner"><div class="device-card-face device-card-front"><button class="device-summary device-flip-control" type="button" aria-expanded="false">${tile}</button></div><div class="device-card-face device-card-back"><button class="device-mobile-close" type="button" aria-label="${escapeHtml(messages.closeDetails)}">×</button><div class="diagnostic-panel"><img src="assets/icons/troubleshoot.svg" alt=""><strong>${escapeHtml(messages.diagnosticOnly)}</strong><p>${escapeHtml(messages.diagnosticDescription)}</p></div></div></div></article>`;
             }
             const controls = device.preferences
               .map((key) => preferenceControl(device, key, preference, messages))
               .join('');
             const disabledClass = rank === 1 ? ' device-tile-disabled' : '';
-            return `<article class="device-tile device-tile-flippable${disabledClass}" data-category="${category}" data-rank="${rank}"><div class="device-card-inner"><div class="device-card-face device-card-front"><button class="device-summary device-flip-control" type="button" aria-expanded="false">${tile}</button></div><div class="device-card-face device-card-back device-card-settings"><button class="device-mobile-close" type="button" aria-label="${escapeHtml(messages.closeDetails)}">×</button><div class="preference-panel"><div class="preference-grid">${controls}</div></div></div></div></article>`;
+            return `<article class="device-tile device-tile-flippable${disabledClass}" data-category="${category}" data-rank="${rank}" data-serial="${escapeHtml(device.serial)}" data-device-class="${escapeHtml(device.deviceClass)}"><div class="device-card-inner"><div class="device-card-face device-card-front"><button class="device-summary device-flip-control" type="button" aria-expanded="false">${tile}</button></div><div class="device-card-face device-card-back device-card-settings"><button class="device-mobile-close" type="button" aria-label="${escapeHtml(messages.closeDetails)}">×</button><div class="preference-panel"><div class="preference-grid">${controls}</div></div></div></div></article>`;
           })
           .join('');
         const categoryKey = `category${category[0].toUpperCase()}${category.slice(1)}`;
@@ -183,5 +183,52 @@
     });
   }
 
-  global.HomebridgeEufyDashboard = { bindPreferences, render };
+  /**
+   * Puts each camera's own last image on its tile, keeping the packaged product photograph where there is none.
+   *
+   * One request per tile and one at a time: an image is up to ten megabytes and the answers are base64, so
+   * asking for every camera at once would hold the whole grid's worth in the page before any of it is shown.
+   * The product photograph is only replaced once the browser has decoded the answer, so a truncated or
+   * undecodable image leaves the tile exactly as it was rather than empty.
+   */
+  async function applyDeviceImages(elements, requestImage) {
+    for (const tile of elements.groups.querySelectorAll('.device-tile[data-device-class="camera"][data-serial]')) {
+      const art = tile.querySelector('.device-art');
+      if (!art) continue;
+      let answer;
+      try {
+        answer = await requestImage(tile.dataset.serial);
+      } catch {
+        continue;
+      }
+      if (!answer?.image) continue;
+      let image = art.querySelector('img[data-device-artwork]');
+      if (!image) {
+        image = document.createElement('img');
+        image.alt = '';
+        image.setAttribute('data-device-artwork', '');
+        art.appendChild(image);
+      }
+      const packaged = image.getAttribute('src');
+      image.addEventListener(
+        'load',
+        () => {
+          tile.setAttribute('data-artwork-scene', '');
+        },
+        { once: true },
+      );
+      image.addEventListener(
+        'error',
+        () => {
+          tile.removeAttribute('data-artwork-scene');
+          image.hidden = !packaged;
+          if (packaged) image.src = packaged;
+        },
+        { once: true },
+      );
+      image.src = `data:image/jpeg;base64,${answer.image}`;
+    }
+  }
+
+  global.HomebridgeEufyDashboard = { applyDeviceImages, bindPreferences, render };
 })(window);

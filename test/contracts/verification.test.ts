@@ -35,6 +35,7 @@ describe('verification gate', () => {
       'runtime channel': /^runtime-channel\.test\.ts$/,
       media: /^(?:live|recording)-media\.test\.ts$/,
       dashboard: /^dashboard\.test\.ts$/,
+      'device image': /^device-image\.test\.ts$/,
       diagnostics: /^(?:guided-diagnostics|diagnostic-conditions)\.test\.ts$/,
       'package contents': /^package\.test\.ts$/,
     };

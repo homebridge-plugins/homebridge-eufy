@@ -58,6 +58,19 @@
   --tile-badge-bg: rgb(255 255 255 / 78%);
   --tile-badge-border: rgb(23 32 44 / 28%);
   --tile-image-filter: brightness(0.92) saturate(0.85) contrast(1.05);
+  --tile-scene-filter: brightness(0.88) saturate(0.95);
+  --tile-scene-gradient: rgb(23 32 44 / 82%);
+
+  /*
+   * The copy over a scene, which does not vary by theme.
+   *
+   * A product cutout sits on the tile's own surface and takes the theme's ink. A scene is a photograph under a
+   * dark gradient in both themes, so the name over it is light in both: taking the theme's ink there would put
+   * dark text on a dark photograph every time the interface is in light mode.
+   */
+  --tile-scene-ink: #f4f7fb;
+  --tile-scene-muted: #d6deea;
+  --tile-scene-stripe: rgb(255 255 255 / 12%);
   --tile-disabled-filter: brightness(0.82) grayscale(0.65) contrast(1.05);
   --tile-icon-filter: none;
   --tile-tooltip-bg: #ffffff;
@@ -656,6 +669,42 @@ button.diagnostics-quiet-action {
   }
 }
 
+.device-tile[data-artwork-scene] .device-art img[data-device-artwork] {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: var(--tile-scene-filter);
+}
+
+/* A scene fills the tile, so the name needs the gradient to start higher and finish darker than over a cutout. */
+.device-tile[data-artwork-scene] .device-summary::after {
+  background: linear-gradient(to bottom, transparent 20%, var(--tile-scene-gradient) 100%);
+}
+
+.device-tile[data-artwork-scene] .device-copy {
+  color: var(--tile-scene-ink);
+}
+
+.device-tile[data-artwork-scene] .device-copy p {
+  color: var(--tile-scene-muted);
+}
+
+/* A scene the user has withdrawn from HomeKit keeps the withdrawn treatment: the scene filter is narrower. */
+.device-tile-disabled[data-artwork-scene] .device-art img[data-device-artwork] {
+  filter: var(--tile-disabled-filter);
+}
+
+.device-tile[data-artwork-scene] .device-summary::before {
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent 0,
+    transparent 12px,
+    var(--tile-scene-stripe) 12px,
+    var(--tile-scene-stripe) 20px
+  );
+}
+
 .device-tile-flipped .device-card-inner {
   transform: rotateY(180deg);
 }
@@ -752,8 +801,16 @@ button.diagnostics-quiet-action {
 }
 
 /*
- * The placeholder shown until the device photograph loads, centred with its icon rather than sat on the tile's
- * floor, where it printed on top of the device name for every device with no artwork on file.
+ * The two grounds a tile can have, and why they are not one.
+ *
+ * A packaged product photograph is a cutout on a flat ground: it is contained, inset, and desaturated so the
+ * grid reads as a catalogue of devices. A camera's own last image is a scene, and a scene has no cutout to
+ * inset — contained, it would sit in a box inside a box, and desaturated it would lose the very detail that
+ * makes the camera recognisable. It covers the tile instead, and the gradient the name already sits on is what
+ * keeps that name legible over it.
+ *
+ * The placeholder is centred with its icon rather than sat on the tile's floor, where it printed on top of the
+ * device name for every device with no artwork on file.
  */
 .device-art {
   position: absolute;
@@ -1666,6 +1723,8 @@ input:focus-visible {
   --tile-badge-bg: rgb(8 14 24 / 72%);
   --tile-badge-border: rgb(255 255 255 / 36%);
   --tile-image-filter: brightness(0.58) saturate(0.85) contrast(1.05);
+  --tile-scene-filter: brightness(0.62) saturate(0.95);
+  --tile-scene-gradient: rgb(4 8 14 / 88%);
   --tile-disabled-filter: brightness(0.48) grayscale(0.65) contrast(1.05);
   --tile-icon-filter: invert(1);
   --tile-tooltip-bg: #080e18;
