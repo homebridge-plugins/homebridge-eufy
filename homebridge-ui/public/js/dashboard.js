@@ -43,6 +43,27 @@
     tile?.classList.toggle('device-tile-changed', Boolean(tile.querySelector('.preference-control-changed')));
   }
 
+  /**
+   * The one thing worth saying about a device in place of its model, or nothing.
+   *
+   * Ordered by what displaces what: a device nothing can reach says nothing else useful about itself, a camera
+   * reports itself switched off only while it is reachable, and a device withheld from HomeKit is the user's own
+   * decision rather than a fault. A device with none of them keeps its model, which is what identifies it when
+   * there is nothing else to report, and so does one whose catalog carries no wording for the status it has.
+   */
+  function deviceStatus(device, rank, messages) {
+    const [key, alert] =
+      device.availability === 'unavailable'
+        ? ['deviceStatusUnreachable', true]
+        : device.enabled === false
+          ? ['deviceStatusSwitchedOff', true]
+          : rank === 1
+            ? ['deviceStatusHidden', false]
+            : [];
+    const label = key ? messages[key] : undefined;
+    return label ? { label, alert } : undefined;
+  }
+
   function renderDevices(devices, config, messages, deviceGroups) {
     const preferences = config.entityPreferences ?? {};
     deviceGroups.innerHTML = ['security', 'life', 'clean']
@@ -78,9 +99,13 @@
             const artwork = device.artwork
               ? `<img src="${escapeHtml(device.artwork)}" alt="" loading="lazy" data-device-artwork>`
               : '';
+            const status = deviceStatus(device, rank, messages);
+            const secondLine = status
+              ? `<p class="device-status${status.alert ? ' device-status-alert' : ''}"><span class="device-status-dot" aria-hidden="true"></span><span class="device-status-label">${escapeHtml(status.label)}</span></p>`
+              : `<p>${escapeHtml(device.modelName)}</p>`;
             const tile = `
               <div class="device-art" aria-hidden="true"><img class="device-class-icon" src="assets/icons/inventory.svg" alt=""><span>${escapeHtml(device.deviceClass)}</span>${artwork}</div>
-              <div class="device-copy"><h3>${escapeHtml(device.name)}</h3><p>${escapeHtml(device.modelName)}</p></div>
+              <div class="device-copy"><h3>${escapeHtml(device.name)}</h3>${secondLine}</div>
               <div class="device-badges">${badges.map(({ icon, label }) => `<span class="device-badge device-badge-${icon}" role="img" tabindex="0" aria-label="${escapeHtml(label)}" data-tooltip="${escapeHtml(label)}"><img src="assets/icons/${icon}.svg" alt=""></span>`).join('')}</div>`;
             if (device.diagnosticOnly) {
               return `<article class="device-tile device-tile-flippable" data-category="${category}" data-rank="${rank}" data-serial="${escapeHtml(device.serial)}" data-device-class="${escapeHtml(device.deviceClass)}"><div class="device-card-inner"><div class="device-card-face device-card-front"><button class="device-summary device-flip-control" type="button" aria-expanded="false">${tile}</button></div><div class="device-card-face device-card-back"><button class="device-mobile-close" type="button" aria-label="${escapeHtml(messages.closeDetails)}">×</button><div class="diagnostic-panel"><img src="assets/icons/troubleshoot.svg" alt=""><strong>${escapeHtml(messages.diagnosticOnly)}</strong><p>${escapeHtml(messages.diagnosticDescription)}</p></div></div></div></article>`;

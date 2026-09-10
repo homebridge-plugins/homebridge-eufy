@@ -677,9 +677,13 @@ button.diagnostics-quiet-action {
   filter: var(--tile-scene-filter);
 }
 
-/* A scene fills the tile, so the name needs the gradient to start higher and finish darker than over a cutout. */
+/*
+ * A scene fills the tile, so the name needs the gradient to start higher and finish darker than over a cutout,
+ * and to reach full strength above the copy rather than at the tile's floor: a two-stop ramp ending at 100% is
+ * still interpolating where the name and the status sit, which leaves them on whatever the photograph is doing.
+ */
 .device-tile[data-artwork-scene] .device-summary::after {
-  background: linear-gradient(to bottom, transparent 20%, var(--tile-scene-gradient) 100%);
+  background: linear-gradient(to bottom, transparent 15%, var(--tile-scene-gradient) 78%);
 }
 
 .device-tile[data-artwork-scene] .device-copy {
@@ -882,6 +886,42 @@ button.diagnostics-quiet-action {
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A status displaces the model on the tile's second line, so it keeps that line's metrics and adds its dot. */
+.device-copy p.device-status {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.device-status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: currentcolor;
+}
+
+/* The flex container cannot ellipsis its own text, so the label carries the truncation the model line has. */
+.device-status-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The dot carries the alert colour itself; 13px of it as text would not clear contrast on either tile ground. */
+.device-status-alert .device-status-dot {
+  background: var(--alert);
+}
+
+/* The label mixes toward the ink of whichever ground it sits on, which is what an alert-coloured word does here. */
+.device-copy p.device-status-alert {
+  color: color-mix(in srgb, var(--alert) 75%, var(--tile-ink));
+}
+
+.device-tile[data-artwork-scene] .device-copy p.device-status-alert {
+  color: color-mix(in srgb, var(--alert) 75%, var(--tile-scene-ink));
 }
 
 .device-badges {

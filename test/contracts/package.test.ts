@@ -1099,6 +1099,9 @@ describe('packed plugin', () => {
         'diagnosticsStartupBefore',
         'diagnosticsStartupSummary',
         'diagnosticsSummary',
+        'deviceStatusHidden',
+        'deviceStatusSwitchedOff',
+        'deviceStatusUnreachable',
         'preferenceAudio',
         'preferenceRepresented',
         'preferenceSaveFailed',
@@ -1740,6 +1743,7 @@ describe('packed plugin', () => {
               controllable: false,
               diagnosticOnly: false,
               preferences: ['represented'],
+              availability: 'unavailable',
             },
             {
               serial: 'synthetic-camera',
@@ -1752,6 +1756,7 @@ describe('packed plugin', () => {
               controllable: false,
               diagnosticOnly: false,
               preferences: ['represented'],
+              enabled: false,
             },
             {
               serial: 'synthetic-vacuum',
@@ -1791,6 +1796,27 @@ describe('packed plugin', () => {
         dashboardUi.deviceGroups.innerHTML.indexOf('Floor cleaner'),
       );
       expect(dashboardUi.deviceGroups.innerHTML).toContain(catalogs['i18n/en.json'].diagnosticOnly);
+      expect(dashboardUi.deviceGroups.innerHTML).toContain(
+        `device-status device-status-alert"><span class="device-status-dot" aria-hidden="true"></span><span class="device-status-label">${catalogs['i18n/en.json'].deviceStatusUnreachable}`,
+      );
+      expect(dashboardUi.deviceGroups.innerHTML).toContain(catalogs['i18n/en.json'].deviceStatusSwitchedOff);
+      expect(dashboardUi.deviceGroups.innerHTML).toContain(catalogs['i18n/en.json'].deviceStatusHidden);
+      expect(
+        dashboardUi.deviceGroups.innerHTML.match(/class="device-status(?: device-status-alert)?"/g),
+        'a status displaces the model only where there is one: unreachable, switched off, and withheld',
+      ).toHaveLength(3);
+      expect(
+        dashboardUi.deviceGroups.innerHTML.match(/device-status-alert/g),
+        'a device the user withheld is their own decision and takes no alert colour',
+      ).toHaveLength(2);
+      expect(
+        dashboardUi.deviceGroups.innerHTML,
+        'a device with nothing to report keeps the model that identifies it',
+      ).toContain('Synthetic diagnostic sensor');
+      expect(
+        dashboardUi.deviceGroups.innerHTML,
+        'a device with a status shows it instead of its model, not beside it',
+      ).not.toContain('Synthetic camera');
       expect(dashboardUi.deviceGroups.innerHTML.match(/device-tile-flippable/g)).toHaveLength(5);
       expect(dashboardUi.deviceGroups.innerHTML.match(/device-mobile-close/g)).toHaveLength(5);
       expect(dashboardUi.deviceGroups.innerHTML.match(/diagnostic-panel/g)).toHaveLength(2);
