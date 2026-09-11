@@ -262,14 +262,12 @@ function renderDiagnosticsGuidance(profile) {
   diagnosticsGuidanceAction.textContent = messages[guidance.action] ?? '';
 }
 
-/** The icon each device class is drawn with, falling back to the one the devices view uses for all of them. */
-const DEVICE_CLASS_ICONS = { camera: 'videocam', sensor: 'sensors', vacuum: 'cleaning_services' };
-
 /**
  * The devices the reporter may name, one tile each.
  *
- * A tile carries the device's own name and an icon for its class, not its snapshot: the step asks which
- * hardware is involved, and a picture of what a camera can currently see answers a different question.
+ * A tile carries the device's own name above its retained image where it has one, and the icon the devices
+ * view uses for a device where it does not. The image is capped at half the tile: it is there to be recognised
+ * at a glance, and a picture that fills the tile leaves the name it belongs to competing with it.
  *
  * The list is asked for when it is empty rather than relying on the devices view having been opened first, and
  * a request that goes unanswered leaves the step able to say every device, which is a complete answer.
@@ -289,12 +287,18 @@ async function renderDiagnosticsDeviceList() {
     tile.type = 'button';
     tile.dataset.serial = device.serial;
     tile.setAttribute('aria-pressed', 'false');
-    const icon = document.createElement('img');
-    icon.src = `assets/icons/${DEVICE_CLASS_ICONS[device.deviceClass] ?? 'inventory'}.svg`;
-    icon.alt = '';
+    const art = document.createElement('img');
+    art.alt = '';
+    if (device.artwork) {
+      art.className = 'device-photo';
+      art.loading = 'lazy';
+      art.src = device.artwork;
+    } else {
+      art.src = 'assets/icons/inventory.svg';
+    }
     const name = document.createElement('span');
     name.textContent = device.name;
-    tile.append(icon, name);
+    tile.append(art, name);
     tile.addEventListener('click', () => {
       tile.setAttribute('aria-pressed', tile.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
       diagnosticsDevicesChosen.disabled = chosenDiagnosticsDevices().length === 0;

@@ -547,7 +547,7 @@ button.diagnostics-quiet-action {
 
 .diagnostics-device-list button {
   display: flex;
-  min-height: 80px;
+  min-height: 104px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -567,6 +567,20 @@ button.diagnostics-quiet-action {
   width: 24px;
   height: 24px;
   flex: none;
+}
+
+/*
+ * The retained image, at half the tile and no more. It is there to be recognised at a glance; filling the tile
+ * would leave the name it belongs to competing with it, and a dark frame from a night capture would read as an
+ * empty tile.
+ */
+.diagnostics-device-list img.device-photo {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: 50%;
+  border-radius: calc(var(--radius-control) - 2px);
+  object-fit: cover;
 }
 
 .diagnostics-device-list button:hover {
