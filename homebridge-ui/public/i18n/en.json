@@ -37,6 +37,7 @@
   "authenticate": "Authenticate",
   "available": "Available",
   "brand": "Homebridge Eufy",
+  "cameraOwnArming": "This camera also appears as its own security system. It works without a HomeBase, so it keeps its own arming state rather than following one — which is why each standalone camera shows a separate security system in the Home app.",
   "captchaLabel": "Captcha answer",
   "categoryClean": "Clean",
   "categoryLife": "Life",

@@ -317,7 +317,15 @@
     const controls = device.preferences
       .map((key) => preferenceControl(device, key, preference, messages))
       .join('');
-    elements.deviceSettingsControls.innerHTML = `${representationLine(device, messages)}${controls}`;
+    /*
+     * A camera that stands alone is its own station, so it carries an arming state and appears as a security system
+     * of its own. Stated here because a household of standalone cameras shows several, which reads as a fault.
+     */
+    const ownArming =
+      device.deviceClass === 'camera' && (device.representation ?? []).includes('arming.security-system')
+        ? `<p class="preference-note">${escapeHtml(messages.cameraOwnArming)}</p>`
+        : '';
+    elements.deviceSettingsControls.innerHTML = `${representationLine(device, messages)}${ownArming}${controls}`;
   }
 
   /**

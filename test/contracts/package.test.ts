@@ -1032,6 +1032,7 @@ describe('packed plugin', () => {
         'advancedWarmUpEvent_petDetection',
         'captchaLabel',
         'twoFactorLabel',
+        'cameraOwnArming',
         'categoryClean',
         'categoryLife',
         'categorySecurity',
