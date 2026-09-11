@@ -8,13 +8,23 @@ V5 distinguishes three claims:
 
 ## Current implementation status
 
-| Area                                           | Status                                             |
-| ---------------------------------------------- | -------------------------------------------------- |
-| Account and device discovery                   | Runtime available                                  |
-| Contact sensor adapter                         | Published from complete runtime registry snapshots |
-| Cameras, streaming, snapshots, talkback, HKSV  | Implemented in the V5 closed beta                  |
-| Motion and doorbell events                     | Deferred/in progress                               |
-| Security modes, locks, lights, sirens, battery | Deferred/in progress                               |
+| Area                                          | Status                                            |
+| --------------------------------------------- | ------------------------------------------------- |
+| Account and device discovery                  | Runtime available                                 |
+| Accessory identity and firmware information   | Adapter registered                                |
+| Cameras, streaming, snapshots, talkback, HKSV | Adapter registered                                |
+| Camera controls                               | Adapter registered                                |
+| Motion                                        | Adapter registered                                |
+| Doorbell press                                | Adapter registered                                |
+| Contact sensors                               | Adapter registered, published from registry snapshots |
+| Locks                                         | Adapter registered                                |
+| Security modes                                | Adapter registered                                |
+| Sirens                                        | Adapter registered                                |
+| Smart lights                                  | Adapter registered                                |
+| Battery level and charging state              | Adapter registered                                |
+
+A registered adapter attaches only where the device reported the evidence it requires, so this table
+states what the plugin can represent and not what any one account will show.
 
 Primitive type similarity never admits a mapping. Unsupported members remain diagnostic-only or blocked
 until verified SDK evidence and a semantic HomeKit contract both exist.

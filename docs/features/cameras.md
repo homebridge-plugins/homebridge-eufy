@@ -1,8 +1,8 @@
 # Cameras, streaming, and HKSV
 
-::: warning Closed-beta behavior
-Camera representation, live streaming, snapshots, talkback, and HomeKit Secure Video are available to
-the V5 closed beta. Legacy V4 settings do not apply to V5.
+::: warning V5 behavior
+Camera representation, live streaming, snapshots, talkback, and HomeKit Secure Video are V5 behavior.
+Legacy V4 settings do not apply.
 :::
 
 The V5 media contract keeps SDK source truth separate from HomeKit adaptation:

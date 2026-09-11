@@ -1,8 +1,7 @@
 # V4 prerelease versions
 
 ::: danger Legacy V4 only
-The former `beta`, `rc`, and `hksv` channels and unscoped package commands do not describe the V5
-closed beta.
+The former `beta`, `rc`, and `hksv` channels and unscoped package commands do not describe V5.
 :::
 
 V4 distributed experimental builds through several npm tags and exposed an experimental-mode setting

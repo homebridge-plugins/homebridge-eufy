@@ -24,7 +24,7 @@ export default defineConfig({
         {
           text: "Getting started",
           items: [
-            { text: "V5 closed-beta status", link: "/guide/v5-status" },
+            { text: "V5 status", link: "/guide/v5-status" },
             { text: "Requirements", link: "/guide/requirements" },
             { text: "Installation", link: "/guide/installation" },
             { text: "Dedicated account", link: "/guide/dedicated-account" },
