@@ -1578,11 +1578,16 @@ describe('packed plugin', () => {
           href: 'data:application/gzip;base64,c3ludGhldGlj',
         }),
       ]);
-      // The report is offered once the archive is in the reporter's hands, since the form requires it.
       expect(completedDiagnosticsUi.diagnosticsIssue).toMatchObject({
         hidden: false,
         href: 'https://example.invalid/issue',
       });
+      await completedDiagnosticsUi.diagnosticsClose.dispatch('click');
+      await completedDiagnosticsUi.menuDiagnostics.dispatch('click');
+      expect(
+        completedDiagnosticsUi.diagnosticsIssue,
+        'leaving the panel and returning does not withdraw an offer the reporter already earned',
+      ).toMatchObject({ hidden: false });
       await completedDiagnosticsUi.diagnosticsStartAnother.dispatch('click');
       expect(completedDiagnosticsUi).toMatchObject({
         diagnosticsResult: { hidden: true },

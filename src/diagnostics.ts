@@ -354,9 +354,8 @@ const SUPPORT_ARCHIVE_EXCLUDED_CLASSES = [
 /**
  * The bug form's `area` option each diagnostics profile belongs to.
  *
- * A dropdown prefill is honoured only when it equals a declared option exactly, so these strings are the
- * form's and not a paraphrase of it. Two profiles share `HomeKit Integration`: a device that is recognized
- * without being represented and one whose representation reads the wrong state are the same area to triage.
+ * A dropdown prefill is honoured only on an exact match with a declared option, so these strings are the
+ * form's own. Two profiles share `HomeKit Integration`, which is one area to triage.
  */
 const BUG_REPORT_AREAS: Readonly<Record<DiagnosticsProfile, string>> = {
   'startup-authentication': 'Login / Authentication',
@@ -374,8 +373,8 @@ const BUG_REPORT_FORM = 'https://github.com/homebridge-plugins/homebridge-eufy/i
 /**
  * A prepared bug report for a finished support session.
  *
- * Addresses the committed issue form by filename: `?body=` is discarded when blank issues are disabled and
- * the repository offers forms only, so naming the template is what makes any prefill survive the click.
+ * Addresses the committed issue form by filename, and fills the field ids that form declares. A prefill is
+ * honoured only against a named template, and only the operational class travels in a query string.
  */
 function bugReportUrl(session: PersistedDiagnosticsSession, missingEvidence: readonly string[]): string {
   const url = new URL(BUG_REPORT_FORM);
@@ -386,8 +385,9 @@ function bugReportUrl(session: PersistedDiagnosticsSession, missingEvidence: rea
       `- **Plugin Version**: ${PLUGIN_VERSION}`,
       `- **eufy SDK**: ${SDK_VERSION}`,
       `- **Node.js Version**: ${process.version}`,
+      `- **Homebridge Version**: `,
       `- **OS**: ${process.platform} ${process.arch}`,
-      `- **Support Case ID**: ${session.supportCaseId}`,
+      `- **Support Case ID**: `,
       `- **Diagnostics profile**: ${session.profile} (${session.reproductionMode})`,
       `- **Missing evidence**: ${missingEvidence.length ? missingEvidence.join(', ') : 'none'}`,
     ].join('\n'),
@@ -395,7 +395,7 @@ function bugReportUrl(session: PersistedDiagnosticsSession, missingEvidence: rea
   url.searchParams.set('area', BUG_REPORT_AREAS[session.profile]);
   url.searchParams.set(
     'diagnostics',
-    `Attach homebridge-eufy-${session.supportCaseId}.eufysupport.gz, downloaded from the diagnostics page.`,
+    'Attach the homebridge-eufy-<case-id>.eufysupport.gz file the diagnostics page downloaded.',
   );
   return url.toString();
 }

@@ -100,6 +100,8 @@ let challenge = '';
 let legacyNames = [];
 let legacyAcknowledged = false;
 let diagnosticsState = { status: 'inactive', missingEvidence: [] };
+/** Whether the reporter already downloaded this session's archive, which is what the report offer follows. */
+let diagnosticsArchiveDownloaded = false;
 let diagnosticsReviewId = '';
 let diagnosticsStartingAnother = false;
 let panelReturn;
@@ -280,6 +282,7 @@ function renderDiagnosticsWizard() {
 }
 
 function renderDiagnostics(state) {
+  if (state.supportCaseId !== diagnosticsState.supportCaseId) diagnosticsArchiveDownloaded = false;
   diagnosticsState = state;
   const screen = diagnosticsWizard.screen(state, diagnosticsStartingAnother);
   const choosing = screen === 'choose';
@@ -307,7 +310,7 @@ function renderDiagnostics(state) {
       : state.status === 'reproducing'
         ? messages.diagnosticsNowFinish
         : messages.diagnosticsStartRecording;
-  diagnosticsIssue.hidden = true;
+  diagnosticsIssue.hidden = !(reviewing && diagnosticsArchiveDownloaded);
   diagnosticsIssue.href = state.issueUrl ?? '';
   diagnosticsResult.hidden = !reviewing;
   diagnosticsReview.hidden = !reviewing;
@@ -426,6 +429,7 @@ diagnosticsExport.addEventListener('click', async () => {
     document.body.removeChild(download);
     diagnosticsReviewId = '';
     diagnosticsReviewConfirm.checked = false;
+    diagnosticsArchiveDownloaded = true;
     diagnosticsIssue.hidden = !diagnosticsIssue.href;
   } catch {
     diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
