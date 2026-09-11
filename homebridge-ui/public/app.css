@@ -25,6 +25,8 @@
   --muted: var(--bs-secondary-color, #667085);
   --ink-disabled: color-mix(in srgb, var(--muted) 55%, var(--panel));
 
+  --on-ok: #f2fbf5;
+
   --alert: #d99a21;
   --fault: #b42318;
   --ok: #1a7f4b;
@@ -391,11 +393,30 @@ button.diagnostics-quiet-action {
   font-weight: 600;
 }
 
-/* Step two before its archive exists: an anchor with no href is not a link, and reads as one. */
-.diagnostics-result a:not([href]) {
-  color: var(--ink-disabled);
-  font-weight: 400;
-  cursor: default;
+/*
+ * The report step navigates to GitHub, so it stays an anchor, and it sits in a sequence beside the download,
+ * so it carries that sequence's shape. Its own colour is what tells the two steps apart at a glance.
+ */
+.diagnostics-result a[data-diagnostics-issue] {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8px;
+  border-radius: var(--radius-control);
+  background: var(--ok);
+  color: var(--on-ok);
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+/* Without an archive there is nothing to attach, so the step is present and not yet a link. */
+.diagnostics-result a[data-diagnostics-issue]:not([href]) {
+  background: color-mix(in srgb, var(--ok) 28%, var(--panel));
+  color: color-mix(in srgb, var(--on-ok) 60%, var(--panel));
+  cursor: not-allowed;
 }
 
 .diagnostics-result button {

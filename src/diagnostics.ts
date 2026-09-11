@@ -347,7 +347,7 @@ const SUPPORT_ARCHIVE_EXCLUDED_CLASSES = [
   'tokens-cookies-and-authorization',
   'session-and-push-stores',
   'private-and-symmetric-keys',
-  'unconstrained-sdk-objects',
+  'unconstrained-internal-objects',
   'camera-images-talkback-and-raw-media',
 ] as const;
 

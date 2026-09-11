@@ -64,7 +64,7 @@ const EXCLUDED_CLASSES = new Set([
   'tokens-cookies-and-authorization',
   'session-and-push-stores',
   'private-and-symmetric-keys',
-  'unconstrained-sdk-objects',
+  'unconstrained-internal-objects',
   'camera-images-talkback-and-raw-media',
 ]);
 

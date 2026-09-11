@@ -1595,4 +1595,41 @@ describe('guided diagnostics issue handoff', () => {
 
     expect(url.toString().length).toBeLessThan(2_000);
   });
+
+  /**
+   * Every class the plugin never collects is stated in a reader's words. The manifest is the source of the
+   * list, and both catalogues are checked against it, so a class declared without a translation fails here
+   * rather than reaching a reader as an identifier.
+   */
+  it('has a reader-facing phrase for every class it never collects, in both languages', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-issue-'));
+    const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-11T08:00:00.000Z'));
+    const repository = fileURLToPath(new URL('../..', import.meta.url));
+    const script = readFileSync(join(repository, 'homebridge-ui', 'public', 'js', 'app.js'), 'utf8');
+    const catalogues = ['en', 'fr'].map((locale) => ({
+      locale,
+      messages: JSON.parse(
+        readFileSync(join(repository, 'homebridge-ui', 'public', 'i18n', `${locale}.json`), 'utf8'),
+      ) as Record<string, string>,
+    }));
+
+    try {
+      await diagnostics.authorize('live-media', 'now');
+      await diagnostics.startReproduction();
+      await diagnostics.endReproduction();
+      const { manifest } = await diagnostics.reviewSupportArchive();
+
+      expect(manifest.excludedClasses.length).toBeGreaterThan(0);
+      for (const excluded of manifest.excludedClasses) {
+        const key = new RegExp(`'${excluded}':\\s*'([A-Za-z]+)'`).exec(script)?.[1];
+
+        expect(key, `${excluded} has no reader-facing phrase`).toBeDefined();
+        for (const { locale, messages } of catalogues) {
+          expect(messages[key ?? ''], `${excluded} in ${locale}`).toBeTruthy();
+        }
+      }
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
 });

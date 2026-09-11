@@ -352,6 +352,21 @@ function renderDiagnostics(state) {
   ).replace('{evidence}', state.missingEvidence?.join(', ') ?? '');
 }
 
+/**
+ * The catalogue entry that says, in a reader's words, what a never-collected class is.
+ *
+ * A class with no entry falls back to its own identifier, which is visible rather than absent, so a newly
+ * declared class shows up as something to translate instead of quietly disappearing from the list.
+ */
+const NEVER_COLLECTED_LABELS = {
+  'credentials-and-authentication': 'excludedCredentials',
+  'tokens-cookies-and-authorization': 'excludedTokens',
+  'session-and-push-stores': 'excludedSessions',
+  'private-and-symmetric-keys': 'excludedKeys',
+  'unconstrained-internal-objects': 'excludedInternalData',
+  'camera-images-talkback-and-raw-media': 'excludedMedia',
+};
+
 function renderArchiveManifest(manifest) {
   diagnosticsManifest.replaceChildren();
   const summary = document.createElement('p');
@@ -369,9 +384,16 @@ function renderArchiveManifest(manifest) {
     row.textContent = `${item.evidence} · ${item.privacyClass} · ${item.status}${missing}${size}${truncated}${fields ? ` · ${messages.diagnosticsArchiveFields ?? ''} ${fields}` : ''}`;
     evidence.append(row);
   }
+  const detail = document.createElement('details');
+  const detailLabel = document.createElement('summary');
+  detailLabel.textContent = messages.diagnosticsArchiveDetail ?? '';
+  detail.append(detailLabel, summary, evidence);
   const exclusions = document.createElement('p');
-  exclusions.textContent = `${messages.diagnosticsArchiveExcluded ?? ''} ${(manifest.excludedClasses ?? []).join(', ')}`;
-  diagnosticsManifest.append(summary, evidence, exclusions);
+  const neverCollected = (manifest.excludedClasses ?? []).map(
+    (excluded) => messages[NEVER_COLLECTED_LABELS[excluded]] ?? excluded,
+  );
+  exclusions.textContent = `${messages.diagnosticsArchiveExcluded ?? ''} ${neverCollected.join(', ')}.`;
+  diagnosticsManifest.append(detail, exclusions);
   const uncovered = (manifest.evidence ?? []).filter((item) => item.coversReproduction === false);
   if (uncovered.length > 0) {
     const gap = document.createElement('p');

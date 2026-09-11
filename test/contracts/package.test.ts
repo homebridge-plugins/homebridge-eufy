@@ -489,7 +489,14 @@ async function renderUi(
                   fields: [{ field: 'event', privacyClass: 'diagnostic' }],
                 },
               ],
-              excludedClasses: ['credentials-and-authentication'],
+              excludedClasses: [
+                'credentials-and-authentication',
+                'tokens-cookies-and-authorization',
+                'session-and-push-stores',
+                'private-and-symmetric-keys',
+                'unconstrained-internal-objects',
+                'camera-images-talkback-and-raw-media',
+              ],
             },
           };
         }
@@ -1036,6 +1043,13 @@ describe('packed plugin', () => {
         'diagnosticsAuthorized',
         'diagnosticsAuthorize',
         'diagnosticsArchiveCoverageGap',
+        'diagnosticsArchiveDetail',
+        'excludedCredentials',
+        'excludedInternalData',
+        'excludedKeys',
+        'excludedMedia',
+        'excludedSessions',
+        'excludedTokens',
         'diagnosticsArchiveExcluded',
         'diagnosticsArchiveExpires',
         'diagnosticsArchiveFields',
@@ -1558,16 +1572,21 @@ describe('packed plugin', () => {
         diagnosticsIssue: { hidden: false, href: '' },
       });
       const manifestChildren = completedDiagnosticsUi.diagnosticsManifest.children as Array<{
-        children?: Array<{ textContent: string }>;
+        children?: Array<{ children?: Array<{ textContent: string }>; textContent: string }>;
         textContent: string;
       }>;
-      expect(manifestChildren[0].textContent).toContain('synthetic v2');
-      expect(manifestChildren[1].children?.[0].textContent).toContain('plugin-log · diagnostic · included');
-      expect(manifestChildren[1].children?.[0].textContent).toContain('event: diagnostic');
-      expect(manifestChildren[2].textContent).toContain('credentials-and-authentication');
-      // The reader is warned that the archive does not reach the fault, before they confirm the export.
-      expect(manifestChildren[3].textContent).toContain('plugin-log');
-      expect(manifestChildren[3].textContent).toContain('do not reach the start of the reproduction');
+      const [, archiveLine, evidenceList] = manifestChildren[0].children ?? [];
+      expect(archiveLine?.textContent).toContain('synthetic v2');
+      expect(evidenceList?.children?.[0].textContent).toContain('plugin-log · diagnostic · included');
+      expect(evidenceList?.children?.[0].textContent).toContain('event: diagnostic');
+      const neverCollected = manifestChildren[1].textContent;
+      expect(neverCollected, 'what is never collected stays in front of the reader').toContain(
+        'your eufy login and password',
+      );
+      expect(neverCollected).toContain('any camera image, video or audio');
+      expect(neverCollected, 'an identifier is not an explanation').not.toMatch(/[a-z]+-[a-z]+-[a-z]/);
+      expect(manifestChildren[2].textContent).toContain('plugin-log');
+      expect(manifestChildren[2].textContent).toContain('do not reach the start of the reproduction');
       completedDiagnosticsUi.diagnosticsReviewConfirm.checked = true;
       await completedDiagnosticsUi.diagnosticsReviewConfirm.dispatch('change');
       expect(completedDiagnosticsUi.diagnosticsExport.disabled).toBe(false);
