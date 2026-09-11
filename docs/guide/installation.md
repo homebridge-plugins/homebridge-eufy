@@ -9,15 +9,19 @@ package:
 npm install -g @homebridge-plugins/homebridge-eufy-security
 ```
 
-## V5 closed beta
+## V5 beta
 
-V5 is not an anonymously installable public beta. It currently depends on a private GitHub Packages SDK
-prerelease. Registration is not open; please do not request access.
+V5 is a prerelease. It depends on an `@mega-yfue/eufy-sdk` prerelease published on npmjs, so nothing
+beyond a public registry is needed to install it.
 
-Maintainers developing from source use:
+```bash
+npm install -g @homebridge-plugins/homebridge-eufy-security@beta
+```
+
+Developing from source:
 
 ```bash
 nvm use
-GITHUB_TOKEN="$(gh auth token)" npm install
+npm install
 npm run verify
 ```

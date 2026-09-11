@@ -40,7 +40,7 @@ const measured = (overrides: Record<string, unknown> = {}) => ({
     declared: '0.1.0-beta.53',
     version: '0.1.0-beta.53',
     integrity: `sha512-${'B'.repeat(86)}==`,
-    resolved: 'https://npm.pkg.github.com/download/@mega-yfue/eufy-sdk/0.1.0-beta.53/eabc26d',
+    resolved: 'https://registry.npmjs.org/@mega-yfue/eufy-sdk/-/eufy-sdk-0.1.0-beta.53.tgz',
   },
   runtime: { node: 'v24.5.0', npm: '11.6.2', homebridge: '2.4.0' },
   matrix: {

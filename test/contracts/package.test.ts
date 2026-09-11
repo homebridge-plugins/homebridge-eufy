@@ -762,11 +762,11 @@ describe('packed plugin', () => {
     };
     const sdk = packageLock.packages['node_modules/@mega-yfue/eufy-sdk'];
 
-    expect(packageJson.dependencies?.['@mega-yfue/eufy-sdk']).toBe('0.1.0-beta.63');
+    expect(packageJson.dependencies?.['@mega-yfue/eufy-sdk']).toBe('0.1.0-beta.1');
     expect(sdk).toEqual(
       expect.objectContaining({
-        version: '0.1.0-beta.63',
-        integrity: 'sha512-kZOzVj/mYJ+tXwx2Jaglsfae5DYYHAorsdKgAxU94IHYQdNIJhOpbJvnz8qv1OCIh07lDea/HgL5vpRyCw0kBQ==',
+        version: '0.1.0-beta.1',
+        integrity: 'sha512-v2190lha2l9APC8SHgw/eF1ctqgrCnFB0aCbTa6YKEPqx9Mep7JsHpdPSmaOByvN3rN9uRzNJrgfHTzuDaC/4w==',
       }),
     );
   });

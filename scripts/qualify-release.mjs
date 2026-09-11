@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SDK = '@mega-yfue/eufy-sdk';
 const PUBLISHABLE_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
-const TRUSTED_REGISTRIES = ['https://registry.npmjs.org/', 'https://npm.pkg.github.com/'];
+const TRUSTED_REGISTRIES = ['https://registry.npmjs.org/'];
 const BINARY = /\.(?:webp|jpg|jpeg|png|gz|xcf|svg|ico|woff2?)$/i;
 const SECRETS = [
   { name: 'private key', pattern: /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/ },

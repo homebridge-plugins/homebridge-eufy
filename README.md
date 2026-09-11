@@ -137,7 +137,7 @@ diagnostics but do not receive a generic HomeKit fallback. The domain vocabulary
 
 ```bash
 nvm use
-GITHUB_TOKEN="$(gh auth token)" npm install
+npm install
 npm run verify
 ```
 

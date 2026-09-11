@@ -41,14 +41,7 @@ jobs:
       - name: Upgrade npm for OIDC support
         run: npm install -g npm@latest
 
-      - name: Configure GitHub Packages
-        run: |
-          npmrc="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
-          printf '\n@mega-yfue:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n' >> "$npmrc"
-
       - name: Install dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
         run: npm ci --ignore-scripts
 
       # The gate reads a real version banner off the binary the plugin ships, and `ffmpeg-for-homebridge`
