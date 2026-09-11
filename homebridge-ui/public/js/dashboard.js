@@ -306,7 +306,7 @@
     elements.deviceSettingsTitle.textContent = device.name;
     elements.deviceSettingsEyebrow.textContent = device.modelName;
     if (device.diagnosticOnly) {
-      elements.deviceSettingsControls.innerHTML = `<div class="diagnostic-panel"><img src="assets/icons/troubleshoot.svg" alt=""><strong>${escapeHtml(messages.diagnosticOnly)}</strong><p>${escapeHtml(messages.diagnosticDescription)}</p></div>`;
+      elements.deviceSettingsControls.innerHTML = `<div class="diagnostic-panel"><img src="assets/icons/troubleshoot.svg" alt=""><strong>${escapeHtml(messages.diagnosticOnly)}</strong><p>${escapeHtml(messages.diagnosticDescription)}</p><p>${escapeHtml(messages.diagnosticNoAction)}</p></div>`;
       return;
     }
     const preference = {

@@ -72,6 +72,7 @@
   "deviceStatusUnreachable": "Unreachable",
   "devicesEyebrow": "Devices",
   "diagnosticDescription": "This device is recognized, but its primary capabilities do not have a verified HomeKit representation yet.",
+  "diagnosticNoAction": "Nothing is wrong with your setup and there is nothing here to fix. It will appear in HomeKit once its main function has a representation verified against real hardware, so reporting it only helps if you can assist with that.",
   "diagnosticOnly": "Diagnostic only",
   "diagnosticsActionLabel": "What to do",
   "diagnosticsArchiveCoverageGap": "{classes}: evidence older than {retainedFrom} was dropped at the archive limit, so those classes do not reach the start of the reproduction you marked. Reproduce the fault again over a shorter interval.",

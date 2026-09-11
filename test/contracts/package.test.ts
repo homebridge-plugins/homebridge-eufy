@@ -1053,6 +1053,7 @@ describe('packed plugin', () => {
         'dashboardStaleSummary',
         'dashboardStaleTitle',
         'diagnosticDescription',
+        'diagnosticNoAction',
         'diagnosticOnly',
         'diagnosticsAuthorized',
         'diagnosticsAuthorize',

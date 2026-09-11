@@ -72,6 +72,7 @@
   "deviceStatusUnreachable": "Injoignable",
   "devicesEyebrow": "Appareils",
   "diagnosticDescription": "Cet appareil est reconnu, mais ses fonctions principales ne disposent pas encore d’une représentation HomeKit vérifiée.",
+  "diagnosticNoAction": "Votre installation n’a aucun problème et il n’y a rien à corriger ici. L’appareil apparaîtra dans HomeKit dès que sa fonction principale aura une représentation vérifiée sur du matériel réel ; le signaler n’aide donc que si vous pouvez y contribuer.",
   "diagnosticOnly": "Diagnostic uniquement",
   "diagnosticsActionLabel": "À faire",
   "diagnosticsArchiveCoverageGap": "{classes} : les preuves antérieures à {retainedFrom} ont été écartées à la limite de l'archive, donc ces classes ne remontent pas au début de la reproduction que vous avez marquée. Reproduisez la panne sur un intervalle plus court.",
