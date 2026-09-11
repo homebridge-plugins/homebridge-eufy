@@ -66,7 +66,6 @@ const diagnosticsPhaseTitle = document.querySelector('[data-diagnostics-phase-ti
 const diagnosticsGuidanceBeforeSection = document.querySelector('[data-diagnostics-guidance-before-section]');
 const diagnosticsGuidanceBefore = document.querySelector('[data-diagnostics-guidance-before]');
 const diagnosticsGuidanceAction = document.querySelector('[data-diagnostics-guidance-action]');
-const diagnosticsReview = document.querySelector('[data-diagnostics-review]');
 const diagnosticsManifest = document.querySelector('[data-diagnostics-manifest]');
 const diagnosticsReviewConfirm = document.querySelector('[data-diagnostics-review-confirm]');
 const diagnosticsReviewConfirmLabel = document.querySelector('[data-diagnostics-review-confirm-label]');
@@ -102,6 +101,10 @@ let legacyAcknowledged = false;
 let diagnosticsState = { status: 'inactive', missingEvidence: [] };
 /** Whether the reporter already downloaded this session's archive, which is what the report offer follows. */
 let diagnosticsArchiveDownloaded = false;
+/** The session whose manifest is on screen, so it is fetched once rather than on every render. */
+let diagnosticsReviewedCaseId = '';
+/** Guards the one fetch, so a burst of renders does not assemble the manifest several times over. */
+let diagnosticsReviewPending = false;
 let diagnosticsReviewId = '';
 let diagnosticsStartingAnother = false;
 let panelReturn;
@@ -313,13 +316,17 @@ function renderDiagnostics(state) {
   diagnosticsIssue.hidden = true;
   diagnosticsIssue.href = diagnosticsArchiveDownloaded ? (state.issueUrl ?? '') : '';
   diagnosticsResult.hidden = !reviewing;
-  diagnosticsReview.hidden = !reviewing;
-  diagnosticsManifest.hidden = true;
-  diagnosticsReviewConfirmLabel.hidden = true;
-  diagnosticsReviewConfirm.checked = false;
-  diagnosticsExport.hidden = true;
-  diagnosticsExport.disabled = true;
-  diagnosticsReviewId = '';
+  const reviewed = reviewing && diagnosticsReviewedCaseId === (state.supportCaseId ?? '');
+  diagnosticsManifest.hidden = !reviewed;
+  diagnosticsReviewConfirmLabel.hidden = !reviewed;
+  diagnosticsExport.hidden = !reviewed;
+  diagnosticsIssue.hidden = !reviewed;
+  if (!reviewed) {
+    diagnosticsReviewConfirm.checked = false;
+    diagnosticsExport.disabled = true;
+    diagnosticsReviewId = '';
+    if (reviewing) void ensureArchiveReview(state.supportCaseId ?? '');
+  }
   if (state.profile) diagnosticsProfile.value = state.profile;
   if (screen === 'reproduce') {
     renderDiagnosticsGuidance(state.profile);
@@ -410,27 +417,32 @@ function renderArchiveManifest(manifest) {
   diagnosticsManifest.hidden = false;
 }
 
-diagnosticsReview.addEventListener('click', async () => {
-  diagnosticsReview.disabled = true;
+/**
+ * The manifest for the session on screen, fetched once.
+ *
+ * A completed reproduction that the reporter is looking at is a file they came for, so the manifest is
+ * read without being asked for. It is read once per session rather than per render, because assembling it
+ * reads every collected log. Exporting spends it, so the session is forgotten again and a second download
+ * asks for a fresh one.
+ */
+async function ensureArchiveReview(caseId) {
+  if (!caseId || diagnosticsReviewedCaseId === caseId || diagnosticsReviewPending) return;
+  diagnosticsReviewPending = true;
   try {
     const review = await requestWithinDeadline('/diagnostics/archive/review', undefined, 12000);
     diagnosticsReviewId = review.reviewId;
+    diagnosticsReviewedCaseId = caseId;
     renderArchiveManifest(review.manifest);
-    diagnosticsReview.hidden = true;
     diagnosticsReviewConfirmLabel.hidden = false;
     diagnosticsExport.hidden = false;
+    diagnosticsExport.disabled = !diagnosticsReviewConfirm.checked;
     diagnosticsIssue.hidden = false;
   } catch {
-    try {
-      renderDiagnostics(await requestWithinDeadline('/diagnostics/status', undefined, 12000));
-      diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
-    } catch {
-      diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
-    }
+    diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
   } finally {
-    diagnosticsReview.disabled = false;
+    diagnosticsReviewPending = false;
   }
-});
+}
 
 diagnosticsReviewConfirm.addEventListener('change', () => {
   diagnosticsExport.disabled = !diagnosticsReviewConfirm.checked || !diagnosticsReviewId;
@@ -452,6 +464,7 @@ diagnosticsExport.addEventListener('click', async () => {
     download.click();
     document.body.removeChild(download);
     diagnosticsReviewId = '';
+    diagnosticsReviewedCaseId = '';
     diagnosticsReviewConfirm.checked = false;
     diagnosticsArchiveDownloaded = true;
     diagnosticsIssue.href = diagnosticsState.issueUrl ?? '';

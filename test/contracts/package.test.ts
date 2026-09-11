@@ -164,7 +164,6 @@ async function renderUi(
   const diagnosticsGuidanceBeforeSection = { hidden: false };
   const diagnosticsGuidanceBefore = { textContent: '' };
   const diagnosticsGuidanceAction = { textContent: '' };
-  const diagnosticsReview = interactiveElement({ disabled: false, hidden: true });
   const diagnosticsManifest = {
     hidden: true,
     children: [] as unknown[],
@@ -339,7 +338,6 @@ async function renderUi(
           '[data-diagnostics-guidance-before-section]': diagnosticsGuidanceBeforeSection,
           '[data-diagnostics-guidance-before]': diagnosticsGuidanceBefore,
           '[data-diagnostics-guidance-action]': diagnosticsGuidanceAction,
-          '[data-diagnostics-review]': diagnosticsReview,
           '[data-diagnostics-manifest]': diagnosticsManifest,
           '[data-diagnostics-review-confirm]': diagnosticsReviewConfirm,
           '[data-diagnostics-review-confirm-label]': diagnosticsReviewConfirmLabel,
@@ -587,7 +585,6 @@ async function renderUi(
     diagnosticsGuidanceBeforeSection,
     diagnosticsGuidanceBefore,
     diagnosticsGuidanceAction,
-    diagnosticsReview,
     diagnosticsManifest,
     diagnosticsReviewConfirm,
     diagnosticsReviewConfirmLabel,
@@ -936,7 +933,6 @@ describe('packed plugin', () => {
           'devicesEyebrow',
           'diagnosticsActionLabel',
           'diagnosticsArchiveExport',
-          'diagnosticsArchiveReview',
           'diagnosticsArchiveReviewConfirm',
           'diagnosticsArchiveReviewIntro',
           'diagnosticsStaysLocal',
@@ -1557,21 +1553,19 @@ describe('packed plugin', () => {
           issueUrl: 'https://example.invalid/issue',
         },
       );
-      expect(completedDiagnosticsUi, 'reviewing the manifest is the only action on offer').toMatchObject({
-        diagnosticsReview: { hidden: false },
-        diagnosticsIssue: { hidden: true },
-        diagnosticsExport: { hidden: true },
-        diagnosticsResult: { hidden: false },
-        diagnosticsWizardPanel: { hidden: true },
-      });
-      await completedDiagnosticsUi.diagnosticsReview.dispatch('click');
-      expect(completedDiagnosticsUi, 'the review gives way to the two steps that follow it').toMatchObject({
-        diagnosticsReview: { hidden: true },
+      expect(completedDiagnosticsUi, 'the steps arrive with the completed state').toMatchObject({
         diagnosticsManifest: { hidden: false },
         diagnosticsReviewConfirmLabel: { hidden: false },
         diagnosticsExport: { disabled: true, hidden: false },
         diagnosticsIssue: { hidden: false, href: '' },
+        diagnosticsResult: { hidden: false },
+        diagnosticsWizardPanel: { hidden: true },
       });
+      expect(completedDiagnosticsUi.requests, 'the manifest is fetched once, unasked').toContainEqual({
+        path: '/diagnostics/archive/review',
+        body: undefined,
+      });
+
       const manifestChildren = completedDiagnosticsUi.diagnosticsManifest.children as Array<{
         children?: Array<{ children?: Array<{ textContent: string }>; textContent: string }>;
         textContent: string;
@@ -1612,7 +1606,6 @@ describe('packed plugin', () => {
       ).toMatchObject({ hidden: false, href: 'https://example.invalid/issue' });
       await completedDiagnosticsUi.diagnosticsClose.dispatch('click');
       await completedDiagnosticsUi.menuDiagnostics.dispatch('click');
-      await completedDiagnosticsUi.diagnosticsReview.dispatch('click');
       expect(
         completedDiagnosticsUi.diagnosticsIssue,
         'leaving the panel and returning does not withdraw an offer the reporter already earned',

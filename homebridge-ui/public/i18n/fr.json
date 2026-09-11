@@ -83,7 +83,6 @@
   "diagnosticsArchiveExport": "Télécharger l’archive chiffrée",
   "diagnosticsArchiveFields": "champs :",
   "diagnosticsArchiveMode": "mode :",
-  "diagnosticsArchiveReview": "Examiner le manifeste de l’archive",
   "diagnosticsArchiveReviewConfirm": "Je comprends ce que contient ce fichier et je veux le créer.",
   "diagnosticsArchiveReviewIntro": "L’étape suivante crée le fichier. Ci-dessous, ce qu’il ne contient jamais.",
   "diagnosticsArchiveTruncated": "enregistrements les plus récents conservés à la limite de l’archive",

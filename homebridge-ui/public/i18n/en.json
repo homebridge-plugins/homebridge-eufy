@@ -83,7 +83,6 @@
   "diagnosticsArchiveExport": "Download encrypted archive",
   "diagnosticsArchiveFields": "fields:",
   "diagnosticsArchiveMode": "mode:",
-  "diagnosticsArchiveReview": "Review archive manifest",
   "diagnosticsArchiveReviewConfirm": "I understand what this file contains, and want to create it.",
   "diagnosticsArchiveReviewIntro": "Creating the file is the next step. Below is what it never contains.",
   "diagnosticsArchiveTruncated": "newest records retained at the archive limit",
