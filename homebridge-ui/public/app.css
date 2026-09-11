@@ -25,8 +25,6 @@
   --muted: var(--bs-secondary-color, #667085);
   --ink-disabled: color-mix(in srgb, var(--muted) 55%, var(--panel));
 
-  --on-ok: #f2fbf5;
-
   --alert: #d99a21;
   --fault: #b42318;
   --ok: #1a7f4b;
@@ -430,27 +428,39 @@ button.diagnostics-quiet-action {
   content: '1';
 }
 
+/*
+ * Step two is the same progression as step one and is filled differently rather than coloured
+ * differently: a success colour would claim the task is complete, and colour alone must not be what
+ * tells two controls apart.
+ */
 .diagnostics-result [data-diagnostics-issue] {
-  background: var(--ok);
-  color: var(--on-ok);
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent-ink);
 }
 
 .diagnostics-result [data-diagnostics-issue]::before {
-  background: var(--on-ok);
-  color: var(--ok);
+  background: var(--accent);
+  color: var(--on-accent);
   content: '2';
 }
 
 /* Without an archive there is nothing to attach, so the step is present and not yet a link. */
-.diagnostics-result a[data-diagnostics-issue]:not([href]) {
-  background: color-mix(in srgb, var(--ok) 28%, var(--panel));
-  color: color-mix(in srgb, var(--on-ok) 60%, var(--panel));
-  cursor: not-allowed;
+.diagnostics-result a[data-diagnostics-issue][aria-disabled='true'] {
+  border-color: var(--line);
+  color: var(--ink-disabled);
+  cursor: default;
 }
 
-.diagnostics-result a[data-diagnostics-issue]:not([href])::before {
-  background: color-mix(in srgb, var(--on-ok) 45%, var(--panel));
-  color: color-mix(in srgb, var(--ok) 55%, var(--panel));
+.diagnostics-result a[data-diagnostics-issue][aria-disabled='true']::before {
+  background: var(--ink-disabled);
+  color: var(--panel);
+}
+
+.diagnostics-step-hint {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .diagnostics-local-note {

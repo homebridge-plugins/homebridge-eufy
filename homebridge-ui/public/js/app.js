@@ -57,6 +57,7 @@ const diagnosticsAuthorize = document.querySelector('[data-diagnostics-authorize
 const diagnosticsReproduction = document.querySelector('[data-diagnostics-reproduction]');
 const diagnosticsStatus = document.querySelector('[data-diagnostics-status]');
 const diagnosticsIssue = document.querySelector('[data-diagnostics-issue]');
+const diagnosticsIssueHint = document.querySelector('[data-diagnostics-issue-hint]');
 const diagnosticsResult = document.querySelector('[data-diagnostics-result]');
 const diagnosticsActions = document.querySelector('[data-diagnostics-actions]');
 const diagnosticsGuidanceTitle = document.querySelector('[data-diagnostics-guidance-title]');
@@ -284,6 +285,19 @@ function renderDiagnosticsWizard() {
   }
 }
 
+/**
+ * The report step, reachable or not.
+ *
+ * Without an archive there is nothing to attach, so the anchor carries no `href` — it is not a link — and
+ * `aria-disabled` states the same thing to a reader who cannot see it greyed. The hint says why, because a
+ * control that cannot be used and does not explain itself reads as broken rather than as not yet.
+ */
+function setIssueStepReachable(url) {
+  diagnosticsIssue.href = url;
+  diagnosticsIssue.setAttribute('aria-disabled', url ? 'false' : 'true');
+  diagnosticsIssueHint.textContent = messages[url ? 'diagnosticsIssueOpensTab' : 'diagnosticsIssueNeedsArchive'] ?? '';
+}
+
 function renderDiagnostics(state) {
   if (state.supportCaseId !== diagnosticsState.supportCaseId) diagnosticsArchiveDownloaded = false;
   diagnosticsState = state;
@@ -314,7 +328,7 @@ function renderDiagnostics(state) {
         ? messages.diagnosticsNowFinish
         : messages.diagnosticsStartRecording;
   diagnosticsIssue.hidden = true;
-  diagnosticsIssue.href = diagnosticsArchiveDownloaded ? (state.issueUrl ?? '') : '';
+  setIssueStepReachable(diagnosticsArchiveDownloaded ? (state.issueUrl ?? '') : '');
   diagnosticsResult.hidden = !reviewing;
   const reviewed = reviewing && diagnosticsReviewedCaseId === (state.supportCaseId ?? '');
   diagnosticsManifest.hidden = !reviewed;
@@ -467,7 +481,7 @@ diagnosticsExport.addEventListener('click', async () => {
     diagnosticsReviewedCaseId = '';
     diagnosticsReviewConfirm.checked = false;
     diagnosticsArchiveDownloaded = true;
-    diagnosticsIssue.href = diagnosticsState.issueUrl ?? '';
+    setIssueStepReachable(diagnosticsState.issueUrl ?? '');
   } catch {
     diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
   }

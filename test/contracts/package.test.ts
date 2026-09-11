@@ -142,7 +142,15 @@ async function renderUi(
   const diagnosticsAuthorize = interactiveElement({ disabled: false, textContent: '' });
   const diagnosticsReproduction = interactiveElement({ disabled: true, textContent: '' });
   const diagnosticsStatus = { textContent: '' };
-  const diagnosticsIssue = { hidden: true, href: '' };
+  const diagnosticsIssueHint = { textContent: '' };
+  const diagnosticsIssue = {
+    hidden: true,
+    href: '',
+    attributes: {} as Record<string, string>,
+    setAttribute(name: string, value: string) {
+      this.attributes[name] = value;
+    },
+  };
   const diagnosticsResult = { hidden: true };
   const diagnosticsActions = { hidden: true };
   const diagnosticsGuidanceTitle = {
@@ -329,6 +337,7 @@ async function renderUi(
           '[data-diagnostics-reproduction]': diagnosticsReproduction,
           '[data-diagnostics-status]': diagnosticsStatus,
           '[data-diagnostics-issue]': diagnosticsIssue,
+          '[data-diagnostics-issue-hint]': diagnosticsIssueHint,
           '[data-diagnostics-result]': diagnosticsResult,
           '[data-diagnostics-actions]': diagnosticsActions,
           '[data-diagnostics-guidance-title]': diagnosticsGuidanceTitle,
@@ -576,6 +585,7 @@ async function renderUi(
     diagnosticsReproduction,
     diagnosticsStatus,
     diagnosticsIssue,
+    diagnosticsIssueHint,
     diagnosticsResult,
     diagnosticsActions,
     diagnosticsModeSummary,
@@ -1040,6 +1050,8 @@ describe('packed plugin', () => {
         'diagnosticsAuthorized',
         'diagnosticsAuthorize',
         'diagnosticsArchiveCoverageGap',
+        'diagnosticsIssueNeedsArchive',
+        'diagnosticsIssueOpensTab',
         'diagnosticsArchiveDetail',
         'excludedCredentials',
         'excludedInternalData',
@@ -1553,6 +1565,10 @@ describe('packed plugin', () => {
           issueUrl: 'https://example.invalid/issue',
         },
       );
+      expect(
+        completedDiagnosticsUi.diagnosticsIssue.attributes,
+        'a control a reader can see but not use says so, and says why',
+      ).toMatchObject({ 'aria-disabled': 'true' });
       expect(completedDiagnosticsUi, 'the steps arrive with the completed state').toMatchObject({
         diagnosticsManifest: { hidden: false },
         diagnosticsReviewConfirmLabel: { hidden: false },
