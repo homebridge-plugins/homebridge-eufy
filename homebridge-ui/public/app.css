@@ -1763,13 +1763,37 @@ input:focus-visible {
 }
 
 @media (max-width: 540px) {
+  /*
+   * Stacked rather than side by side: one list above, one below, and the buttons between them. Two lists abreast
+   * leave nothing readable at this width, and the transfer reads along the axis it moves the device.
+   *
+   * Everything the wide layout pinned is undone here — the shared rows, the spans, and the column the buttons
+   * claimed — because that arrangement exists only to line three columns up against each other.
+   */
   .warm-up-transfer {
     grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  .warm-up-column {
+    grid-row: auto;
+    grid-template-rows: auto 1fr;
+  }
+
+  .warm-up-column ul {
+    align-self: stretch;
   }
 
   .warm-up-controls {
+    grid-row: auto;
+    grid-column: 1;
     grid-auto-flow: column;
     justify-content: center;
+  }
+
+  /* The chevrons point the way the device travels, which is now down the page rather than across it. */
+  .warm-up-arrow {
+    transform: rotate(90deg);
   }
 }
 
