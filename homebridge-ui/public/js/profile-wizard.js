@@ -9,12 +9,18 @@
     'other',
   ];
 
+  const deviceProfiles = ['device-representation', 'control-state', 'live-media', 'hksv-recording'];
+
   function start() {
     return { mode: 'tiles', profile: undefined };
   }
 
   function select(state, profile) {
-    return { ...state, mode: 'frequency', profile };
+    return { ...state, mode: deviceProfiles.includes(profile) ? 'devices' : 'frequency', profile };
+  }
+
+  function chooseDevices(state, devices) {
+    return { ...state, mode: 'frequency', devices };
   }
 
   function reject() {
@@ -25,8 +31,8 @@
     return { ...state, mode: 'match', reproductionMode };
   }
 
-  function backFromFrequency() {
-    return start();
+  function backFromFrequency(state) {
+    return deviceProfiles.includes(state.profile) ? { ...state, mode: 'devices' } : start();
   }
 
   function screen(session, startingAnother) {
@@ -43,7 +49,9 @@
   global.HomebridgeEufyDiagnosticsWizard = {
     backFromFrequency,
     backgroundActive,
+    chooseDevices,
     chooseReproductionMode,
+    deviceProfiles,
     profiles,
     reject,
     screen,

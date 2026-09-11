@@ -245,6 +245,15 @@ export type DiagnosticsProfile =
 
 export type DiagnosticsReproductionMode = 'now' | 'intermittent';
 
+/**
+ * The devices a reporter says a fault involves: every one of them, or the ones they named.
+ *
+ * It selects nothing. Every log a profile calls for is collected either way, because a fault a reporter
+ * attributes to one camera is regularly caused by something they did not name. What it does is carry their
+ * answer, so the question is asked once here rather than again in the issue.
+ */
+export type AffectedDevices = 'all' | readonly string[];
+
 /** The bounded UI events a support session may record, and the only vocabulary the sink accepts. */
 const DIAGNOSTICS_UI_EVENTS = [
   'background-started',
@@ -272,7 +281,7 @@ export interface SupportArchiveManifest {
   reproductionStartedAt: string;
   reproductionEndedAt: string;
   evidence: readonly {
-    evidence: DiagnosticEvidence | 'environment' | 'reproduction-markers';
+    evidence: DiagnosticEvidence | 'environment' | 'reporter-statement' | 'reproduction-markers';
     privacyClass: 'diagnostic' | 'operational';
     status: 'included' | 'missing';
     contentType?: 'application/json' | 'application/x-ndjson';
@@ -305,7 +314,7 @@ interface SupportArchiveKey {
 }
 
 interface SupportArchiveEvidence {
-  evidence: DiagnosticEvidence | 'environment' | 'reproduction-markers';
+  evidence: DiagnosticEvidence | 'environment' | 'reporter-statement' | 'reproduction-markers';
   privacyClass: 'diagnostic' | 'operational';
   contentType: 'application/json' | 'application/x-ndjson';
   content: string;
@@ -434,6 +443,7 @@ interface PersistedDiagnosticsSession {
   expiresAt: string;
   reproductionStartedAt?: string;
   reproductionEndedAt?: string;
+  affectedDevices?: AffectedDevices;
 }
 
 export interface GuidedDiagnosticsStatus {
@@ -448,6 +458,7 @@ export interface GuidedDiagnosticsStatus {
   reproductionStartedAt?: string;
   reproductionEndedAt?: string;
   partialExportAvailable: boolean;
+  affectedDevices?: AffectedDevices;
   issueUrl?: string;
 }
 
@@ -614,12 +625,16 @@ export class GuidedDiagnostics {
   async authorize(
     profile: DiagnosticsProfile,
     reproductionMode: DiagnosticsReproductionMode,
+    affectedDevices?: AffectedDevices,
   ): Promise<GuidedDiagnosticsStatus> {
     if (!isDiagnosticsProfile(profile)) {
       throw new Error('Unknown diagnostics profile');
     }
     if (!isDiagnosticsReproductionMode(reproductionMode)) {
       throw new Error('Unknown diagnostics reproduction mode');
+    }
+    if (affectedDevices !== undefined && affectedDevices !== 'all' && !Array.isArray(affectedDevices)) {
+      throw new Error('Affected devices must be "all" or a list of serials');
     }
     this.uiEventsClosing = true;
     try {
@@ -632,6 +647,7 @@ export class GuidedDiagnostics {
         reproductionMode,
         authorizedAt: new Date(authorizedAt).toISOString(),
         expiresAt: new Date(authorizedAt + DEBUG_AUTHORIZATION_MS).toISOString(),
+        ...(affectedDevices === undefined ? {} : { affectedDevices }),
       };
       await this.writeSession(session);
       this.pendingSupportArchive = undefined;
@@ -855,6 +871,25 @@ export class GuidedDiagnostics {
   private async collectSupportEvidence(session: PersistedDiagnosticsSession): Promise<SupportArchiveEvidence[]> {
     const ffmpeg = readFfmpegEnvironment(this.storageRoot);
     const evidence: SupportArchiveEvidence[] = [
+      ...(session.affectedDevices === undefined
+        ? []
+        : [
+            {
+              evidence: 'reporter-statement' as const,
+              privacyClass: 'diagnostic' as const,
+              contentType: 'application/json' as const,
+              content: `${JSON.stringify({ version: 1, affectedDevices: session.affectedDevices })}\n`,
+              /**
+               * What the reporter answered, not what the plugin observed. A serial identifies one household's
+               * hardware, so the record is classified above the environment it sits beside and stays inside
+               * the archive.
+               */
+              fields: [
+                { field: 'version', privacyClass: 'operational' as const },
+                { field: 'affectedDevices', privacyClass: 'pseudonymous' as const },
+              ],
+            },
+          ]),
       {
         evidence: 'environment',
         privacyClass: 'operational',
@@ -1115,6 +1150,7 @@ export class GuidedDiagnostics {
       ...(session.reproductionStartedAt ? { reproductionStartedAt: session.reproductionStartedAt } : {}),
       ...(session.reproductionEndedAt ? { reproductionEndedAt: session.reproductionEndedAt } : {}),
       partialExportAvailable: Boolean(session.reproductionEndedAt),
+      ...(session.affectedDevices === undefined ? {} : { affectedDevices: session.affectedDevices }),
       issueUrl: bugReportUrl(session, missingEvidence),
     };
   }

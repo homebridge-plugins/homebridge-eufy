@@ -6,13 +6,16 @@ import { describe, expect, it } from 'vitest';
 interface WizardState {
   mode: string;
   profile?: string;
+  devices?: 'all' | readonly string[];
   reproductionMode?: 'now' | 'intermittent';
 }
 
 interface DiagnosticsWizard {
   backFromFrequency(state: WizardState): WizardState;
   backgroundActive(session: { profile?: string; status: string }): boolean;
+  chooseDevices(state: WizardState, devices: 'all' | readonly string[]): WizardState;
   chooseReproductionMode(state: WizardState, mode: 'now' | 'intermittent'): WizardState;
+  deviceProfiles: readonly string[];
   profiles: readonly string[];
   reject(state: WizardState): WizardState;
   screen(session: { partialExportAvailable?: boolean; status: string }, startingAnother: boolean): string;
@@ -45,9 +48,39 @@ describe('diagnostics profile wizard', () => {
       'other',
     ]);
     expect(wizard.start()).toMatchObject({ mode: 'tiles', profile: undefined });
-    expect(wizard.select(wizard.start(), 'live-media')).toMatchObject({
+    expect(wizard.select(wizard.start(), 'live-media')).toMatchObject({ profile: 'live-media' });
+  });
+
+  /**
+   * An area that belongs to a device asks which ones before anything else, so the reporter states it once
+   * rather than being asked again in the issue. An area that belongs to the account or the interface does not
+   * ask, because there is nothing to name.
+   */
+  it('asks which devices only where the area belongs to one', () => {
+    const wizard = loadWizard();
+
+    expect(wizard.deviceProfiles).toEqual(['device-representation', 'control-state', 'live-media', 'hksv-recording']);
+    expect(wizard.select(wizard.start(), 'live-media')).toMatchObject({ mode: 'devices', profile: 'live-media' });
+    expect(wizard.select(wizard.start(), 'startup-authentication')).toMatchObject({
       mode: 'frequency',
-      profile: 'live-media',
+      profile: 'startup-authentication',
+    });
+    expect(wizard.select(wizard.start(), 'dashboard-ui')).toMatchObject({ mode: 'frequency' });
+    expect(wizard.select(wizard.start(), 'other')).toMatchObject({ mode: 'frequency' });
+  });
+
+  /**
+   * Naming the devices, or saying it is all of them, is what moves on to frequency. Both answers are recorded,
+   * because "all of them" is a statement about the fault and not an absence of one.
+   */
+  it('records either the named devices or that it is all of them', () => {
+    const wizard = loadWizard();
+    const asking = wizard.select(wizard.start(), 'control-state');
+
+    expect(wizard.chooseDevices(asking, 'all')).toMatchObject({ mode: 'frequency', devices: 'all' });
+    expect(wizard.chooseDevices(asking, ['T8000P0000000000'])).toMatchObject({
+      mode: 'frequency',
+      devices: ['T8000P0000000000'],
     });
   });
 
@@ -57,7 +90,7 @@ describe('diagnostics profile wizard', () => {
    */
   it('asks for reproduction frequency after a pick, and returns to the tiles', () => {
     const wizard = loadWizard();
-    const frequency = wizard.select(wizard.start(), 'live-media');
+    const frequency = wizard.chooseDevices(wizard.select(wizard.start(), 'live-media'), 'all');
     const intermittent = wizard.chooseReproductionMode(frequency, 'intermittent');
 
     expect(intermittent).toMatchObject({
@@ -66,7 +99,11 @@ describe('diagnostics profile wizard', () => {
       reproductionMode: 'intermittent',
     });
     expect(wizard.reject(intermittent)).toMatchObject({ mode: 'tiles', profile: undefined });
-    expect(wizard.backFromFrequency(frequency)).toMatchObject({ mode: 'tiles', profile: undefined });
+    expect(
+      wizard.backFromFrequency(frequency),
+      'back from frequency returns to the question just asked, not past it',
+    ).toMatchObject({ mode: 'devices', profile: 'live-media' });
+    expect(wizard.backFromFrequency(wizard.select(wizard.start(), 'dashboard-ui'))).toMatchObject({ mode: 'tiles' });
   });
 
   /**

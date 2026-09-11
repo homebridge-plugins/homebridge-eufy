@@ -1536,13 +1536,14 @@ describe('guided diagnostics issue handoff', () => {
 
     try {
       recordFfmpegEnvironment(root, { path: ffmpegPath, source: 'configured' });
-      await diagnostics.authorize('live-media', 'now');
+      await diagnostics.authorize('live-media', 'now', ['T8410P0000000000']);
       await diagnostics.startReproduction();
       const complete = await diagnostics.endReproduction();
       const { manifest } = await diagnostics.reviewSupportArchive();
       const url = complete.issueUrl ?? '';
       const values = [...new URL(url).searchParams.values()].join('\n');
       const resolvable: Readonly<Record<string, string>> = {
+        affectedDevices: 'T8410P0000000000',
         supportCaseId: complete.supportCaseId ?? '',
         ffmpeg: ffmpegPath,
       };
@@ -1628,6 +1629,49 @@ describe('guided diagnostics issue handoff', () => {
           expect(messages[key ?? ''], `${excluded} in ${locale}`).toBeTruthy();
         }
       }
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /**
+   * The devices a reporter names are recorded once, with the session, so nobody has to ask again in the issue.
+   * They do not select what is collected — every log is read either way — and a serial is not operational data,
+   * so the manifest declares the field above that class and the archive is where it travels.
+   */
+  it('records the devices a reporter names, as evidence rather than as a filter', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-affected-'));
+    const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-11T08:00:00.000Z'));
+    const named = ['T8410P0000000000', 'T8010P0000000000'];
+
+    try {
+      const authorized = await diagnostics.authorize('live-media', 'now', named);
+      await diagnostics.startReproduction();
+      await diagnostics.endReproduction();
+      const { manifest } = await diagnostics.reviewSupportArchive();
+      const record = manifest.evidence.find((entry) => entry.evidence === 'reporter-statement');
+
+      expect(authorized.affectedDevices).toEqual(named);
+      expect(record, 'the statement is an evidence class of its own').toBeDefined();
+      expect(record?.fields).toContainEqual({ field: 'affectedDevices', privacyClass: 'pseudonymous' });
+      expect(manifest.evidence.map((entry) => entry.evidence)).toContain('plugin-log');
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /**
+   * Saying every device is affected is a statement about the fault, so it is recorded as one rather than as an
+   * empty list that reads the same as having been asked nothing.
+   */
+  it('records that every device is affected, distinctly from naming none', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-affected-'));
+    const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-11T08:00:00.000Z'));
+
+    try {
+      expect((await diagnostics.authorize('control-state', 'now', 'all')).affectedDevices).toBe('all');
+      await diagnostics.authorize('startup-authentication', 'now');
+      expect((await diagnostics.status()).affectedDevices).toBeUndefined();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

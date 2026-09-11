@@ -204,6 +204,20 @@
             <button type="button" data-diagnostics-tile="other" data-i18n="diagnosticsProfileOther"></button>
           </div>
         </div>
+        <div class="diagnostics-devices" data-diagnostics-devices hidden>
+          <strong id="diagnostics-devices-heading" tabindex="-1" data-i18n="diagnosticsDevicesHeading"></strong>
+          <p data-i18n="diagnosticsDevicesHint"></p>
+          <div class="diagnostics-device-list" data-diagnostics-device-list role="group" aria-labelledby="diagnostics-devices-heading"></div>
+          <div class="diagnostics-choice-actions">
+            <button
+              type="button"
+              class="diagnostics-secondary-action"
+              data-diagnostics-devices-all
+              data-i18n="diagnosticsDevicesAll"
+            ></button>
+            <button type="button" data-diagnostics-devices-chosen disabled data-i18n="diagnosticsDevicesChosen"></button>
+          </div>
+        </div>
         <div class="diagnostics-frequency" data-diagnostics-frequency hidden>
           <strong
             id="diagnostics-frequency-heading"

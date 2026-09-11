@@ -122,6 +122,19 @@ async function renderUi(
     'dashboard-ui',
     'other',
   ].map((profile) => interactiveElement({ dataset: { diagnosticsTile: profile } }));
+  const diagnosticsDevices = { hidden: true };
+  const diagnosticsDeviceList = {
+    children: [] as unknown[],
+    replaceChildren(...children: unknown[]) {
+      this.children = children;
+    },
+    append(...children: unknown[]) {
+      this.children.push(...children);
+    },
+    querySelectorAll: () => [] as unknown[],
+  };
+  const diagnosticsDevicesAll = interactiveElement({});
+  const diagnosticsDevicesChosen = interactiveElement({ disabled: true });
   const diagnosticsQuestionText = {
     focused: false,
     textContent: '',
@@ -345,6 +358,10 @@ async function renderUi(
           '[data-diagnostics-authorize]': diagnosticsAuthorize,
           '[data-diagnostics-reproduction]': diagnosticsReproduction,
           '[data-diagnostics-status]': diagnosticsStatus,
+          '[data-diagnostics-devices]': diagnosticsDevices,
+          '[data-diagnostics-device-list]': diagnosticsDeviceList,
+          '[data-diagnostics-devices-all]': diagnosticsDevicesAll,
+          '[data-diagnostics-devices-chosen]': diagnosticsDevicesChosen,
           '[data-diagnostics-issue]': diagnosticsIssue,
           '[data-diagnostics-issue-hint]': diagnosticsIssueHint,
           '[data-diagnostics-result]': diagnosticsResult,
@@ -446,10 +463,15 @@ async function renderUi(
             'other',
           ]);
           const mode = fields === 'profile' ? 'now' : payload?.reproductionMode;
+          const naming = fields === 'affectedDevices,profile,reproductionMode';
+          const named = (payload as { affectedDevices?: unknown }).affectedDevices;
           if (
-            (fields !== 'profile' && fields !== 'profile,reproductionMode') ||
+            (fields !== 'profile' && fields !== 'profile,reproductionMode' && !naming) ||
             !profiles.has(String(payload?.profile)) ||
-            !['now', 'intermittent'].includes(String(mode))
+            !['now', 'intermittent'].includes(String(mode)) ||
+            (naming &&
+              named !== 'all' &&
+              !(Array.isArray(named) && named.every((serial) => typeof serial === 'string')))
           ) {
             throw new Error('Invalid diagnostics request');
           }
@@ -577,6 +599,10 @@ async function renderUi(
     diagnosticsWizardPanel,
     diagnosticsQuestion,
     diagnosticsTiles,
+    diagnosticsDevices,
+    diagnosticsDeviceList,
+    diagnosticsDevicesAll,
+    diagnosticsDevicesChosen,
     diagnosticsQuestionText,
     diagnosticsYes,
     diagnosticsNo,
@@ -969,6 +995,10 @@ describe('packed plugin', () => {
           'diagnosticsProfileLiveMedia',
           'diagnosticsProfileOther',
           'diagnosticsProfileRecording',
+          'diagnosticsDevicesAll',
+          'diagnosticsDevicesChosen',
+          'diagnosticsDevicesHeading',
+          'diagnosticsDevicesHint',
           'diagnosticsTilesHeading',
           'diagnosticsProfileStartup',
           'diagnosticsPrivacy',
@@ -1302,8 +1332,15 @@ describe('packed plugin', () => {
         (tile) => (tile as { dataset: { diagnosticsTile: string } }).dataset.diagnosticsTile === 'control-state',
       )!;
       await controlTile.dispatch('click');
-      expect(menuUi, 'picking an area is the whole narrowing step').toMatchObject({
+      expect(menuUi, 'an area that belongs to a device asks which ones').toMatchObject({
         diagnosticsQuestion: { hidden: true },
+        diagnosticsDevices: { hidden: false },
+        diagnosticsFrequency: { hidden: true },
+        diagnosticsDevicesChosen: { disabled: true },
+      });
+      await menuUi.diagnosticsDevicesAll.dispatch('click');
+      expect(menuUi, 'saying all of them is a complete answer').toMatchObject({
+        diagnosticsDevices: { hidden: true },
         diagnosticsFrequency: { hidden: false },
         diagnosticsFrequencyHeading: { focused: true },
         diagnosticsMatch: { hidden: true },
@@ -1319,11 +1356,12 @@ describe('packed plugin', () => {
       await menuUi.diagnosticsReject.dispatch('click');
       expect(menuUi.diagnosticsQuestion.hidden, 'changing the answer returns to the one opening screen').toBe(false);
       await controlTile.dispatch('click');
+      await menuUi.diagnosticsDevicesAll.dispatch('click');
       await menuUi.diagnosticsFrequencyIntermittent.dispatch('click');
       await menuUi.diagnosticsAuthorize.dispatch('click');
       expect(menuUi.requests).toContainEqual({
         path: '/diagnostics/authorize',
-        body: { profile: 'control-state', reproductionMode: 'intermittent' },
+        body: { profile: 'control-state', reproductionMode: 'intermittent', affectedDevices: 'all' },
       });
       expect(menuUi).toMatchObject({
         diagnosticsWizardPanel: { hidden: true },

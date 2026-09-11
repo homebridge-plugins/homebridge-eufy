@@ -18,6 +18,7 @@ import {
   isDiagnosticsProfile,
   isDiagnosticsReproductionMode,
   isDiagnosticsUiEvent,
+  type AffectedDevices,
   type DiagnosticsProfile,
   type DiagnosticsReproductionMode,
   type DiagnosticsUiEvent,
@@ -144,9 +145,29 @@ function parseRepresentationPreferences(value: unknown): Record<string, boolean>
   return { ...(preferences as Record<string, boolean>) };
 }
 
+/** The most devices a reporter may name, and the longest a serial may be, before the session refuses it. */
+const MOST_AFFECTED_DEVICES = 64;
+const LONGEST_SERIAL = 64;
+
+/**
+ * Whether a submitted affected-devices field is the word for all of them or a bounded list of serials.
+ *
+ * The value is persisted with the session, so its size is constrained here rather than at the point that writes
+ * it: an unbounded list arrives as supplied and is written as supplied.
+ */
+function isAffectedDevices(value: unknown): value is AffectedDevices {
+  if (value === 'all') return true;
+  return (
+    Array.isArray(value) &&
+    value.length <= MOST_AFFECTED_DEVICES &&
+    value.every((serial) => typeof serial === 'string' && serial.length > 0 && serial.length <= LONGEST_SERIAL)
+  );
+}
+
 export function parseDiagnosticsAuthorization(value: unknown): {
   profile: DiagnosticsProfile;
   reproductionMode: DiagnosticsReproductionMode;
+  affectedDevices?: AffectedDevices;
 } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new RequestError('Invalid diagnostics request', { status: 400 });
@@ -154,14 +175,20 @@ export function parseDiagnosticsAuthorization(value: unknown): {
   const payload = value as Record<string, unknown>;
   const fields = Object.keys(payload).sort().join(',');
   const reproductionMode = fields === 'profile' ? 'now' : payload.reproductionMode;
+  const naming = fields === 'affectedDevices,profile,reproductionMode';
   if (
-    (fields !== 'profile' && fields !== 'profile,reproductionMode') ||
+    (fields !== 'profile' && fields !== 'profile,reproductionMode' && !naming) ||
     !isDiagnosticsProfile(payload.profile) ||
-    !isDiagnosticsReproductionMode(reproductionMode)
+    !isDiagnosticsReproductionMode(reproductionMode) ||
+    (naming && !isAffectedDevices(payload.affectedDevices))
   ) {
     throw new RequestError('Invalid diagnostics request', { status: 400 });
   }
-  return { profile: payload.profile, reproductionMode };
+  return {
+    profile: payload.profile,
+    reproductionMode,
+    ...(naming ? { affectedDevices: payload.affectedDevices as AffectedDevices } : {}),
+  };
 }
 
 /**
@@ -272,7 +299,11 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
     this.onRequest('/diagnostics/status', () => this.diagnostics.status());
     this.onRequest('/diagnostics/authorize', async (payload) => {
       const authorization = parseDiagnosticsAuthorization(payload);
-      const status = await this.diagnostics.authorize(authorization.profile, authorization.reproductionMode);
+      const status = await this.diagnostics.authorize(
+        authorization.profile,
+        authorization.reproductionMode,
+        authorization.affectedDevices,
+      );
       if (status.supportCaseId) {
         void this.runtimeChannel.notifyAuthorization(status.supportCaseId);
       }

@@ -535,6 +535,28 @@ button.diagnostics-quiet-action {
   mask-image: url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%20-960%20960%20960%22%3E%3Cpath%20d=%22M513.5-254.5Q528-269%20528-290t-14.5-35.5Q499-340%20478-340t-35.5%2014.5Q428-311%20428-290t14.5%2035.5Q457-240%20478-240t35.5-14.5ZM442-394h74q0-33%207.5-52t42.5-52q26-26%2041-49.5t15-56.5q0-56-41-86t-97-30q-57%200-92.5%2030T342-618l66%2026q5-18%2022.5-39t53.5-21q32%200%2048%2017.5t16%2038.5q0%2020-12%2037.5T506-526q-44%2039-54%2059t-10%2073Zm38%20314q-83%200-156-31.5T197-197q-54-54-85.5-127T80-480q0-83%2031.5-156T197-763q54-54%20127-85.5T480-880q83%200%20156%2031.5T763-763q54%2054%2085.5%20127T880-480q0%2083-31.5%20156T763-197q-54%2054-127%2085.5T480-80Zm0-80q134%200%20227-93t93-227q0-134-93-227t-227-93q-134%200-227%2093t-93%20227q0%20134%2093%20227t227%2093Zm0-320Z%22/%3E%3C/svg%3E');
 }
 
+.diagnostics-device-list {
+  display: grid;
+  max-height: 220px;
+  gap: 2px;
+  overflow-y: auto;
+  margin: 8px 0 12px;
+}
+
+.diagnostics-device-list label {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+  border-radius: var(--radius-control);
+  font-size: 13px;
+}
+
+.diagnostics-device-list label:hover {
+  background: var(--accent-soft);
+}
+
 .diagnostics-step-hint {
   margin: 4px 0 0;
   color: var(--muted);

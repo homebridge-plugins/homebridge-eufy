@@ -132,6 +132,42 @@ describe('custom UI diagnostics input', () => {
     }
   });
 
+  /**
+   * The devices a reporter names cross a trust boundary and are persisted, so the field is accepted only as the
+   * word for all of them or as a bounded list of non-empty strings. An unbounded one would be written to the
+   * session as supplied.
+   */
+  it('accepts the affected devices as all of them or a bounded list', () => {
+    expect(
+      parseDiagnosticsAuthorization({
+        profile: 'live-media',
+        reproductionMode: 'now',
+        affectedDevices: 'all',
+      }),
+    ).toEqual({ profile: 'live-media', reproductionMode: 'now', affectedDevices: 'all' });
+    expect(
+      parseDiagnosticsAuthorization({
+        profile: 'live-media',
+        reproductionMode: 'now',
+        affectedDevices: ['T8410P0000000000'],
+      }),
+    ).toEqual({ profile: 'live-media', reproductionMode: 'now', affectedDevices: ['T8410P0000000000'] });
+
+    for (const affectedDevices of [
+      'every',
+      [''],
+      ['T8410P0000000000', 42],
+      [{ serial: 'T8410P0000000000' }],
+      Array.from({ length: 65 }, (_, index) => `T8410P${String(index).padStart(10, '0')}`),
+      ['x'.repeat(65)],
+      null,
+    ]) {
+      expect(() =>
+        parseDiagnosticsAuthorization({ profile: 'live-media', reproductionMode: 'now', affectedDevices }),
+      ).toThrow('Invalid diagnostics request');
+    }
+  });
+
   it('accepts only one allowlisted UI event field', () => {
     expect(parseDiagnosticsUiEvent({ event: 'dashboard-opened' })).toBe('dashboard-opened');
 

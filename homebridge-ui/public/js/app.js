@@ -40,6 +40,10 @@ const diagnosticsWizardPanel = document.querySelector('[data-diagnostics-wizard]
 const diagnosticsQuestion = document.querySelector('[data-diagnostics-question]');
 const diagnosticsQuestionText = document.querySelector('[data-diagnostics-question-text]');
 const diagnosticsTiles = [...document.querySelectorAll('[data-diagnostics-tile]')];
+const diagnosticsDevices = document.querySelector('[data-diagnostics-devices]');
+const diagnosticsDeviceList = document.querySelector('[data-diagnostics-device-list]');
+const diagnosticsDevicesAll = document.querySelector('[data-diagnostics-devices-all]');
+const diagnosticsDevicesChosen = document.querySelector('[data-diagnostics-devices-chosen]');
 const diagnosticsFrequency = document.querySelector('[data-diagnostics-frequency]');
 const diagnosticsFrequencyHeading = document.querySelector('#diagnostics-frequency-heading');
 const diagnosticsFrequencyNow = document.querySelector('[data-diagnostics-frequency-answer="now"]');
@@ -258,8 +262,46 @@ function renderDiagnosticsGuidance(profile) {
   diagnosticsGuidanceAction.textContent = messages[guidance.action] ?? '';
 }
 
+/**
+ * The devices the reporter may name, one checkbox each.
+ *
+ * The list is asked for when it is empty rather than relying on the devices view having been opened first, and
+ * an unanswered request leaves the step offering "all of them" alone — which is a complete answer.
+ */
+async function renderDiagnosticsDeviceList() {
+  if (dashboardDevices.length === 0) {
+    try {
+      const snapshot = await requestWithinDeadline('/dashboard', { representationPreferences: {} }, 12000);
+      dashboardDevices = snapshot.devices ?? [];
+    } catch {
+      dashboardDevices = [];
+    }
+  }
+  diagnosticsDeviceList.replaceChildren();
+  for (const device of dashboardDevices) {
+    const row = document.createElement('label');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = device.serial;
+    box.addEventListener('change', () => {
+      diagnosticsDevicesChosen.disabled = chosenDiagnosticsDevices().length === 0;
+    });
+    const name = document.createElement('span');
+    name.textContent = device.name;
+    row.append(box, name);
+    diagnosticsDeviceList.append(row);
+  }
+  diagnosticsDevicesChosen.disabled = true;
+}
+
+/** The serials ticked in the device step, in the order the list drew them. */
+function chosenDiagnosticsDevices() {
+  return [...diagnosticsDeviceList.querySelectorAll('input')].filter((box) => box.checked).map((box) => box.value);
+}
+
 function renderDiagnosticsWizard() {
   diagnosticsQuestion.hidden = diagnosticsWizardState.mode !== 'tiles';
+  diagnosticsDevices.hidden = diagnosticsWizardState.mode !== 'devices';
   diagnosticsFrequency.hidden = diagnosticsWizardState.mode !== 'frequency';
   diagnosticsMatch.hidden = diagnosticsWizardState.mode !== 'match';
   if (diagnosticsWizardState.mode === 'match') {
@@ -484,6 +526,7 @@ diagnosticsAuthorize.addEventListener('click', async () => {
       {
         profile: diagnosticsWizardState.profile,
         reproductionMode: diagnosticsWizardState.reproductionMode,
+        ...(diagnosticsWizardState.devices === undefined ? {} : { affectedDevices: diagnosticsWizardState.devices }),
       },
       12000,
     );
@@ -509,12 +552,25 @@ diagnosticsAuthorize.addEventListener('click', async () => {
 });
 
 for (const tile of diagnosticsTiles) {
-  tile.addEventListener('click', () => {
+  tile.addEventListener('click', async () => {
     diagnosticsWizardState = diagnosticsWizard.select(diagnosticsWizardState, tile.dataset.diagnosticsTile);
     renderDiagnosticsWizard();
-    diagnosticsFrequencyHeading.focus?.();
+    if (diagnosticsWizardState.mode === 'devices') await renderDiagnosticsDeviceList();
+    else diagnosticsFrequencyHeading.focus?.();
   });
 }
+
+diagnosticsDevicesAll.addEventListener('click', () => {
+  diagnosticsWizardState = diagnosticsWizard.chooseDevices(diagnosticsWizardState, 'all');
+  renderDiagnosticsWizard();
+  diagnosticsFrequencyHeading.focus?.();
+});
+
+diagnosticsDevicesChosen.addEventListener('click', () => {
+  diagnosticsWizardState = diagnosticsWizard.chooseDevices(diagnosticsWizardState, chosenDiagnosticsDevices());
+  renderDiagnosticsWizard();
+  diagnosticsFrequencyHeading.focus?.();
+});
 
 function chooseDiagnosticsReproductionMode(reproductionMode) {
   diagnosticsWizardState = diagnosticsWizard.chooseReproductionMode(diagnosticsWizardState, reproductionMode);
