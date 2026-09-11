@@ -42,7 +42,7 @@ const diagnosticsQuestionText = document.querySelector('[data-diagnostics-questi
 const diagnosticsTiles = [...document.querySelectorAll('[data-diagnostics-tile]')];
 const diagnosticsDevices = document.querySelector('[data-diagnostics-devices]');
 const diagnosticsDeviceList = document.querySelector('[data-diagnostics-device-list]');
-const diagnosticsDevicesAll = document.querySelector('[data-diagnostics-devices-all]');
+const diagnosticsDevicesEvery = document.querySelector('[data-diagnostics-devices-every]');
 const diagnosticsDevicesChosen = document.querySelector('[data-diagnostics-devices-chosen]');
 const diagnosticsFrequency = document.querySelector('[data-diagnostics-frequency]');
 const diagnosticsFrequencyHeading = document.querySelector('#diagnostics-frequency-heading');
@@ -262,11 +262,17 @@ function renderDiagnosticsGuidance(profile) {
   diagnosticsGuidanceAction.textContent = messages[guidance.action] ?? '';
 }
 
+/** The icon each device class is drawn with, falling back to the one the devices view uses for all of them. */
+const DEVICE_CLASS_ICONS = { camera: 'videocam', sensor: 'sensors', vacuum: 'cleaning_services' };
+
 /**
- * The devices the reporter may name, one checkbox each.
+ * The devices the reporter may name, one tile each.
+ *
+ * A tile carries the device's own name and an icon for its class, not its snapshot: the step asks which
+ * hardware is involved, and a picture of what a camera can currently see answers a different question.
  *
  * The list is asked for when it is empty rather than relying on the devices view having been opened first, and
- * an unanswered request leaves the step offering "all of them" alone — which is a complete answer.
+ * a request that goes unanswered leaves the step able to say every device, which is a complete answer.
  */
 async function renderDiagnosticsDeviceList() {
   if (dashboardDevices.length === 0) {
@@ -279,24 +285,30 @@ async function renderDiagnosticsDeviceList() {
   }
   diagnosticsDeviceList.replaceChildren();
   for (const device of dashboardDevices) {
-    const row = document.createElement('label');
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.value = device.serial;
-    box.addEventListener('change', () => {
-      diagnosticsDevicesChosen.disabled = chosenDiagnosticsDevices().length === 0;
-    });
+    const tile = document.createElement('button');
+    tile.type = 'button';
+    tile.dataset.serial = device.serial;
+    tile.setAttribute('aria-pressed', 'false');
+    const icon = document.createElement('img');
+    icon.src = `assets/icons/${DEVICE_CLASS_ICONS[device.deviceClass] ?? 'inventory'}.svg`;
+    icon.alt = '';
     const name = document.createElement('span');
     name.textContent = device.name;
-    row.append(box, name);
-    diagnosticsDeviceList.append(row);
+    tile.append(icon, name);
+    tile.addEventListener('click', () => {
+      tile.setAttribute('aria-pressed', tile.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+      diagnosticsDevicesChosen.disabled = chosenDiagnosticsDevices().length === 0;
+    });
+    diagnosticsDeviceList.append(tile);
   }
   diagnosticsDevicesChosen.disabled = true;
 }
 
-/** The serials ticked in the device step, in the order the list drew them. */
+/** The serials pressed in the device step, in the order the grid drew them. */
 function chosenDiagnosticsDevices() {
-  return [...diagnosticsDeviceList.querySelectorAll('input')].filter((box) => box.checked).map((box) => box.value);
+  return [...diagnosticsDeviceList.querySelectorAll('[data-serial]')]
+    .filter((tile) => tile.getAttribute('aria-pressed') === 'true')
+    .map((tile) => tile.dataset.serial);
 }
 
 function renderDiagnosticsWizard() {
@@ -560,10 +572,15 @@ for (const tile of diagnosticsTiles) {
   });
 }
 
-diagnosticsDevicesAll.addEventListener('click', () => {
-  diagnosticsWizardState = diagnosticsWizard.chooseDevices(diagnosticsWizardState, 'all');
-  renderDiagnosticsWizard();
-  diagnosticsFrequencyHeading.focus?.();
+diagnosticsDevicesEvery.addEventListener('click', () => {
+  const tiles = [...diagnosticsDeviceList.querySelectorAll('[data-serial]')];
+  for (const tile of tiles) tile.setAttribute('aria-pressed', 'true');
+  diagnosticsDevicesChosen.disabled = tiles.length === 0;
+  if (tiles.length === 0) {
+    diagnosticsWizardState = diagnosticsWizard.chooseDevices(diagnosticsWizardState, 'all');
+    renderDiagnosticsWizard();
+    diagnosticsFrequencyHeading.focus?.();
+  }
 });
 
 diagnosticsDevicesChosen.addEventListener('click', () => {

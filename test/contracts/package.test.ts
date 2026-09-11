@@ -124,16 +124,18 @@ async function renderUi(
   ].map((profile) => interactiveElement({ dataset: { diagnosticsTile: profile } }));
   const diagnosticsDevices = { hidden: true };
   const diagnosticsDeviceList = {
-    children: [] as unknown[],
+    children: [] as Array<{ attributes: Record<string, string>; dataset: Record<string, string> }>,
     replaceChildren(...children: unknown[]) {
-      this.children = children;
+      this.children = children as typeof this.children;
     },
     append(...children: unknown[]) {
-      this.children.push(...children);
+      this.children.push(...(children as typeof this.children));
     },
-    querySelectorAll: () => [] as unknown[],
+    querySelectorAll(selector: string) {
+      return selector === '[data-serial]' ? this.children.filter((child) => child.dataset?.serial) : [];
+    },
   };
-  const diagnosticsDevicesAll = interactiveElement({});
+  const diagnosticsDevicesEvery = interactiveElement({});
   const diagnosticsDevicesChosen = interactiveElement({ disabled: true });
   const diagnosticsQuestionText = {
     focused: false,
@@ -360,7 +362,7 @@ async function renderUi(
           '[data-diagnostics-status]': diagnosticsStatus,
           '[data-diagnostics-devices]': diagnosticsDevices,
           '[data-diagnostics-device-list]': diagnosticsDeviceList,
-          '[data-diagnostics-devices-all]': diagnosticsDevicesAll,
+          '[data-diagnostics-devices-every]': diagnosticsDevicesEvery,
           '[data-diagnostics-devices-chosen]': diagnosticsDevicesChosen,
           '[data-diagnostics-issue]': diagnosticsIssue,
           '[data-diagnostics-issue-hint]': diagnosticsIssueHint,
@@ -601,7 +603,7 @@ async function renderUi(
     diagnosticsTiles,
     diagnosticsDevices,
     diagnosticsDeviceList,
-    diagnosticsDevicesAll,
+    diagnosticsDevicesEvery,
     diagnosticsDevicesChosen,
     diagnosticsQuestionText,
     diagnosticsYes,
@@ -995,7 +997,7 @@ describe('packed plugin', () => {
           'diagnosticsProfileLiveMedia',
           'diagnosticsProfileOther',
           'diagnosticsProfileRecording',
-          'diagnosticsDevicesAll',
+          'diagnosticsDevicesEvery',
           'diagnosticsDevicesChosen',
           'diagnosticsDevicesHeading',
           'diagnosticsDevicesHint',
@@ -1338,7 +1340,7 @@ describe('packed plugin', () => {
         diagnosticsFrequency: { hidden: true },
         diagnosticsDevicesChosen: { disabled: true },
       });
-      await menuUi.diagnosticsDevicesAll.dispatch('click');
+      await menuUi.diagnosticsDevicesEvery.dispatch('click');
       expect(menuUi, 'saying all of them is a complete answer').toMatchObject({
         diagnosticsDevices: { hidden: true },
         diagnosticsFrequency: { hidden: false },
@@ -1356,7 +1358,7 @@ describe('packed plugin', () => {
       await menuUi.diagnosticsReject.dispatch('click');
       expect(menuUi.diagnosticsQuestion.hidden, 'changing the answer returns to the one opening screen').toBe(false);
       await controlTile.dispatch('click');
-      await menuUi.diagnosticsDevicesAll.dispatch('click');
+      await menuUi.diagnosticsDevicesEvery.dispatch('click');
       await menuUi.diagnosticsFrequencyIntermittent.dispatch('click');
       await menuUi.diagnosticsAuthorize.dispatch('click');
       expect(menuUi.requests).toContainEqual({
