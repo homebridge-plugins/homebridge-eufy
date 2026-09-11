@@ -51,14 +51,13 @@ describe('custom UI downloads', () => {
     expect(stylesheet).toContain('width: 18px;\n  min-height: 18px;\n  height: 18px;\n  flex: 0 0 auto;');
   });
 
-  it('progressively discloses diagnostics while retaining direct profile selection', () => {
+  it('opens on the areas, then discloses one screen at a time', () => {
     const document = readFileSync(new URL('../../homebridge-ui/public/index.html', import.meta.url), 'utf8');
 
     expect(document).toContain('data-diagnostics-question');
-    expect(document).toContain('data-diagnostics-answer="yes"');
-    expect(document).toContain('data-diagnostics-answer="no"');
-    expect(document).toContain('data-diagnostics-direct');
-    expect(document).toMatch(/data-diagnostics-direct-panel hidden/);
+    expect(document).toContain('class="diagnostics-tiles"');
+    expect(document, 'a pick replaces a sequence of yes and no').not.toContain('data-diagnostics-answer="yes"');
+    expect(document).not.toContain('data-diagnostics-direct-panel');
     expect(document).toMatch(/data-diagnostics-frequency hidden/);
     expect(document).toContain('data-diagnostics-frequency-answer="intermittent"');
     expect(document).toContain('data-diagnostics-frequency-answer="now"');
@@ -67,7 +66,9 @@ describe('custom UI downloads', () => {
     expect(document).toMatch(/data-diagnostics-result hidden/);
     expect(document).toMatch(/data-diagnostics-guidance[^>]+hidden/);
     expect(document).toContain('data-diagnostics-start-another');
-    expect(document).toContain('tabindex="-1" data-diagnostics-question-text');
+    expect(document, 'the heading takes focus and is the one the group is named by').toMatch(
+      /id="diagnostics-question-heading"\s+tabindex="-1"\s+data-diagnostics-question-text/,
+    );
     expect(document).toContain('tabindex="-1" data-diagnostics-guidance-title');
     expect(document).toContain('aria-labelledby="diagnostics-question-heading"');
     expect(document).toContain('aria-labelledby="diagnostics-match-heading"');

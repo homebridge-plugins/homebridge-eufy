@@ -188,44 +188,20 @@
     <div class="diagnostics-stage">
       <div class="diagnostics-wizard diagnostics-surface" data-diagnostics-wizard aria-live="polite">
         <div class="diagnostics-question" data-diagnostics-question>
-          <strong id="diagnostics-question-heading" tabindex="-1" data-diagnostics-question-text></strong>
-          <div class="diagnostics-choice-actions" role="group" aria-labelledby="diagnostics-question-heading">
-            <button
-              type="button"
-              class="diagnostics-secondary-action"
-              data-diagnostics-answer="no"
-              data-i18n="diagnosticsNo"
-            ></button>
-            <button type="button" data-diagnostics-answer="yes" data-i18n="diagnosticsYes"></button>
-          </div>
-          <button
-            type="button"
-            class="diagnostics-quiet-action"
-            data-diagnostics-direct
-            data-i18n="diagnosticsChooseDirectly"
-          ></button>
-        </div>
-        <div class="diagnostics-direct" data-diagnostics-direct-panel hidden>
-          <label>
-            <span data-i18n="diagnosticsProfileLabel"></span>
-            <select data-diagnostics-profile>
-              <option value="startup-authentication" data-i18n="diagnosticsProfileStartup"></option>
-              <option value="device-representation" data-i18n="diagnosticsProfileDevices"></option>
-              <option value="control-state" data-i18n="diagnosticsProfileControl"></option>
-              <option value="live-media" data-i18n="diagnosticsProfileLiveMedia"></option>
-              <option value="hksv-recording" data-i18n="diagnosticsProfileRecording"></option>
-              <option value="dashboard-ui" data-i18n="diagnosticsProfileDashboard"></option>
-              <option value="other" data-i18n="diagnosticsProfileOther"></option>
-            </select>
-          </label>
-          <div class="diagnostics-choice-actions">
-            <button
-              type="button"
-              class="diagnostics-secondary-action"
-              data-diagnostics-direct-back
-              data-i18n="diagnosticsBackToQuestions"
-            ></button>
-            <button type="button" data-diagnostics-direct-choose data-i18n="diagnosticsUseProfile"></button>
+          <strong
+            id="diagnostics-question-heading"
+            tabindex="-1"
+            data-diagnostics-question-text
+            data-i18n="diagnosticsTilesHeading"
+          ></strong>
+          <div class="diagnostics-tiles" role="group" aria-labelledby="diagnostics-question-heading">
+            <button type="button" data-diagnostics-tile="startup-authentication" data-i18n="diagnosticsProfileStartup"></button>
+            <button type="button" data-diagnostics-tile="device-representation" data-i18n="diagnosticsProfileDevices"></button>
+            <button type="button" data-diagnostics-tile="control-state" data-i18n="diagnosticsProfileControl"></button>
+            <button type="button" data-diagnostics-tile="live-media" data-i18n="diagnosticsProfileLiveMedia"></button>
+            <button type="button" data-diagnostics-tile="hksv-recording" data-i18n="diagnosticsProfileRecording"></button>
+            <button type="button" data-diagnostics-tile="dashboard-ui" data-i18n="diagnosticsProfileDashboard"></button>
+            <button type="button" data-diagnostics-tile="other" data-i18n="diagnosticsProfileOther"></button>
           </div>
         </div>
         <div class="diagnostics-frequency" data-diagnostics-frequency hidden>

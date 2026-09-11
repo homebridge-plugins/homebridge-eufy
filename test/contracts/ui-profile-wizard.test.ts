@@ -6,21 +6,17 @@ import { describe, expect, it } from 'vitest';
 interface WizardState {
   mode: string;
   profile?: string;
-  questionIndex: number;
   reproductionMode?: 'now' | 'intermittent';
-  source: string;
 }
 
 interface DiagnosticsWizard {
-  answer(state: WizardState, matches: boolean): WizardState;
   backFromFrequency(state: WizardState): WizardState;
   backgroundActive(session: { profile?: string; status: string }): boolean;
   chooseReproductionMode(state: WizardState, mode: 'now' | 'intermittent'): WizardState;
-  direct(): WizardState;
-  questions: Array<{ message: string; profile: string }>;
+  profiles: readonly string[];
   reject(state: WizardState): WizardState;
   screen(session: { partialExportAvailable?: boolean; status: string }, startingAnother: boolean): string;
-  selectDirect(state: WizardState, profile: string): WizardState;
+  select(state: WizardState, profile: string): WizardState;
   start(): WizardState;
 }
 
@@ -32,87 +28,73 @@ function loadWizard(): DiagnosticsWizard {
 }
 
 describe('diagnostics profile wizard', () => {
-  it('asks one ordered question at a time and maps the first yes to its profile', () => {
+  /**
+   * The opening screen offers every area at once, in the order they are shown, and picking one is the whole
+   * narrowing step. There is no sequence to walk and no position to remember.
+   */
+  it('offers every area at once and takes a pick as the whole choice', () => {
     const wizard = loadWizard();
-    expect(wizard.questions.map(({ profile }) => profile)).toEqual([
-      'dashboard-ui',
+
+    expect(wizard.profiles).toEqual([
       'startup-authentication',
       'device-representation',
       'control-state',
       'live-media',
       'hksv-recording',
+      'dashboard-ui',
+      'other',
     ]);
-
-    let state = wizard.start();
-    state = wizard.answer(state, false);
-    state = wizard.answer(state, false);
-    expect(state).toMatchObject({ mode: 'questions', questionIndex: 2, profile: undefined });
-    expect(wizard.answer(state, true)).toMatchObject({ mode: 'frequency', profile: 'device-representation' });
-
-    expect(wizard.answer(wizard.start(), true)).toMatchObject({
+    expect(wizard.start()).toMatchObject({ mode: 'tiles', profile: undefined });
+    expect(wizard.select(wizard.start(), 'live-media')).toMatchObject({
       mode: 'frequency',
-      profile: 'dashboard-ui',
+      profile: 'live-media',
     });
-    expect(wizard.answer(wizard.start(), false)).toMatchObject({
-      mode: 'questions',
-      questionIndex: 1,
-      profile: undefined,
-    });
-
-    state = wizard.start();
-    for (let question = 0; question < wizard.questions.length; question++) state = wizard.answer(state, false);
-    expect(state).toMatchObject({ mode: 'frequency', profile: 'other' });
   });
 
-  it('asks for reproduction frequency after questionnaire and direct profile selection', () => {
+  /**
+   * Frequency follows the pick, and both ways back from it return to the same opening screen, because there
+   * is only one.
+   */
+  it('asks for reproduction frequency after a pick, and returns to the tiles', () => {
     const wizard = loadWizard();
-    const direct = wizard.direct();
-    const frequency = wizard.selectDirect(direct, 'live-media');
+    const frequency = wizard.select(wizard.start(), 'live-media');
     const intermittent = wizard.chooseReproductionMode(frequency, 'intermittent');
 
-    expect(direct).toMatchObject({ mode: 'direct', source: 'direct' });
-    expect(frequency).toMatchObject({ mode: 'frequency', profile: 'live-media', source: 'direct' });
     expect(intermittent).toMatchObject({
       mode: 'match',
       profile: 'live-media',
       reproductionMode: 'intermittent',
-      source: 'direct',
     });
-    expect(wizard.reject(intermittent)).toMatchObject({ mode: 'direct', profile: undefined });
-    expect(wizard.backFromFrequency(frequency)).toMatchObject({ mode: 'direct', profile: undefined });
-
-    const questionnaireFrequency = wizard.answer(wizard.start(), true);
-    const now = wizard.chooseReproductionMode(questionnaireFrequency, 'now');
-    expect(now).toMatchObject({ mode: 'match', reproductionMode: 'now' });
-    expect(wizard.reject(now)).toMatchObject({ mode: 'questions', questionIndex: 0, profile: undefined });
+    expect(wizard.reject(intermittent)).toMatchObject({ mode: 'tiles', profile: undefined });
+    expect(wizard.backFromFrequency(frequency)).toMatchObject({ mode: 'tiles', profile: undefined });
   });
 
-  it('has matching English and French copy for every question', () => {
+  /**
+   * Every area the opening screen offers has a tile in the markup, in the module's order, and a phrase in both
+   * catalogues. A profile added to one and not the other would otherwise ship a tile with no label, or a label
+   * nothing reaches.
+   */
+  it('has a tile and a phrase in both languages for every area', () => {
     const wizard = loadWizard();
+    const markup = readFileSync(new URL('../../homebridge-ui/public/index.html', import.meta.url), 'utf8');
     const english = JSON.parse(
       readFileSync(new URL('../../homebridge-ui/public/i18n/en.json', import.meta.url), 'utf8'),
     ) as Record<string, string>;
     const french = JSON.parse(
       readFileSync(new URL('../../homebridge-ui/public/i18n/fr.json', import.meta.url), 'utf8'),
     ) as Record<string, string>;
+    const tiles = [...markup.matchAll(/data-diagnostics-tile="([^"]+)"\s+data-i18n="([^"]+)"/g)];
 
     expect(Object.keys(french).sort()).toEqual(Object.keys(english).sort());
-    for (const { message } of wizard.questions) {
-      expect(english[message]).toBeTruthy();
-      expect(french[message]).toBeTruthy();
+    expect(tiles.map(([, profile]) => profile)).toEqual([...wizard.profiles]);
+    for (const [, profile, key] of tiles) {
+      expect(english[key], `${profile} in English`).toBeTruthy();
+      expect(french[key], `${profile} in French`).toBeTruthy();
     }
-    expect(english.diagnosticsQuestionDevices).toBe(
-      'Is an accessory missing, duplicated, or shown as the wrong type in HomeKit?',
-    );
-    expect(french.diagnosticsQuestionDevices).toBe(
-      'Un accessoire est-il absent, dupliqué ou affiché avec le mauvais type dans HomeKit ?',
-    );
+    expect(english.diagnosticsTilesHeading).toBe('What is going wrong?');
+    expect(english.diagnosticsProfileDevices).toBe('Missing or incorrect device');
     expect(english.diagnosticsQuestionReproduceNow).toBe('Can you reproduce the problem now?');
     expect(french.diagnosticsQuestionReproduceNow).toBe('Pouvez-vous reproduire le problème maintenant ?');
-    expect(english.diagnosticsQuestionDashboard).toBe('Is the problem in the dashboard, login, or setup screens?');
-    expect(french.diagnosticsQuestionDashboard).toBe(
-      'Le problème se situe-t-il dans les écrans du tableau de bord, de connexion ou de configuration ?',
-    );
 
     const normalFlowKeys = [
       'diagnosticsControlAction',
@@ -166,5 +148,26 @@ describe('diagnostics profile wizard', () => {
     expect(wizard.backgroundActive({ status: 'authorized', profile: 'dashboard-ui' })).toBe(false);
     expect(wizard.backgroundActive({ status: 'complete', profile: 'dashboard-ui' })).toBe(false);
     expect(wizard.backgroundActive({ status: 'reproducing', profile: 'control-state' })).toBe(false);
+  });
+
+  /**
+   * Every tile has an inline icon, and no icon exists for a tile that does not. The data URI is inline because
+   * a host with no route to the internet renders the panel the same as one with it.
+   */
+  it('gives every tile an inline icon and nothing else one', () => {
+    const wizard = loadWizard();
+    const stylesheet = readFileSync(new URL('../../homebridge-ui/public/app.css', import.meta.url), 'utf8');
+    const masked = [
+      ...stylesheet.matchAll(/data-diagnostics-tile='([^']+)'\]::before \{\s*mask-image: url\('data:image\/svg\+xml,/g),
+    ].map(([, profile]) => profile);
+
+    expect(masked.sort()).toEqual([...wizard.profiles].sort());
+    expect(stylesheet, 'three to a row').toContain('grid-template-columns: repeat(3, minmax(0, 1fr))');
+    expect(stylesheet, 'and two where three would not read').toMatch(
+      /@media \(max-width: 420px\) \{[\s\S]*?\.diagnostics-tiles \{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/,
+    );
+    expect(stylesheet, 'an icon fetched at render time is an icon a local host may never see').not.toMatch(
+      /mask-image: url\('https?:/,
+    );
   });
 });

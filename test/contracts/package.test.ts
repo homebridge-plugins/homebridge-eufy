@@ -113,6 +113,15 @@ async function renderUi(
   const diagnosticsPanel = { hidden: true, scrollIntoView() {}, querySelector: () => diagnosticsClose };
   const diagnosticsWizardPanel = { hidden: false };
   const diagnosticsQuestion = { hidden: false };
+  const diagnosticsTiles = [
+    'startup-authentication',
+    'device-representation',
+    'control-state',
+    'live-media',
+    'hksv-recording',
+    'dashboard-ui',
+    'other',
+  ].map((profile) => interactiveElement({ dataset: { diagnosticsTile: profile } }));
   const diagnosticsQuestionText = {
     focused: false,
     textContent: '',
@@ -373,6 +382,7 @@ async function renderUi(
         }[selector];
       },
       querySelectorAll(selector: string) {
+        if (selector === '[data-diagnostics-tile]') return diagnosticsTiles;
         return selector === '[data-i18n]' ? translatedNodes : translatedLabels;
       },
       createElement() {
@@ -566,6 +576,7 @@ async function renderUi(
     diagnosticsClose,
     diagnosticsWizardPanel,
     diagnosticsQuestion,
+    diagnosticsTiles,
     diagnosticsQuestionText,
     diagnosticsYes,
     diagnosticsNo,
@@ -946,10 +957,8 @@ describe('packed plugin', () => {
           'diagnosticsArchiveReviewConfirm',
           'diagnosticsArchiveReviewIntro',
           'diagnosticsStaysLocal',
-          'diagnosticsBackToQuestions',
           'diagnosticsBeforeLabel',
           'diagnosticsBestMatch',
-          'diagnosticsChooseDirectly',
           'diagnosticsEvidenceReady',
           'diagnosticsEyebrow',
           'diagnosticsOpenIssue',
@@ -957,10 +966,10 @@ describe('packed plugin', () => {
           'diagnosticsProfileControl',
           'diagnosticsProfileDashboard',
           'diagnosticsProfileDevices',
-          'diagnosticsProfileLabel',
           'diagnosticsProfileLiveMedia',
           'diagnosticsProfileOther',
           'diagnosticsProfileRecording',
+          'diagnosticsTilesHeading',
           'diagnosticsProfileStartup',
           'diagnosticsPrivacy',
           'diagnosticsFrequencyBack',
@@ -970,7 +979,6 @@ describe('packed plugin', () => {
           'diagnosticsChangeAnswers',
           'diagnosticsStartAnother',
           'diagnosticsTitle',
-          'diagnosticsUseProfile',
           'diagnosticsYes',
           'oneAccountSession',
           'pageTitle',
@@ -1098,12 +1106,6 @@ describe('packed plugin', () => {
         'diagnosticsOtherBefore',
         'diagnosticsOtherSummary',
         'diagnosticsProfileChanged',
-        'diagnosticsQuestionControl',
-        'diagnosticsQuestionDashboard',
-        'diagnosticsQuestionDevices',
-        'diagnosticsQuestionLiveMedia',
-        'diagnosticsQuestionRecording',
-        'diagnosticsQuestionStartup',
         'diagnosticsReauthorize',
         'diagnosticsRecordingAction',
         'diagnosticsRecordingBefore',
@@ -1292,24 +1294,16 @@ describe('packed plugin', () => {
         diagnosticsIssue: { hidden: true },
         diagnosticsResult: { hidden: true },
         diagnosticsQuestion: { hidden: false },
-        diagnosticsQuestionText: { textContent: catalogs['i18n/en.json'].diagnosticsQuestionDashboard },
-        diagnosticsDirectPanel: { hidden: true },
         diagnosticsFrequency: { hidden: true },
         diagnosticsMatch: { hidden: true },
         diagnosticsActions: { hidden: true },
       });
-      await menuUi.diagnosticsNo.dispatch('click');
-      expect(menuUi.diagnosticsQuestionText.textContent).toBe(catalogs['i18n/en.json'].diagnosticsQuestionStartup);
-      expect(menuUi.diagnosticsQuestionText.focused).toBe(true);
-      await menuUi.diagnosticsDirect.dispatch('click');
-      expect(menuUi).toMatchObject({
+      const controlTile = menuUi.diagnosticsTiles.find(
+        (tile) => (tile as { dataset: { diagnosticsTile: string } }).dataset.diagnosticsTile === 'control-state',
+      )!;
+      await controlTile.dispatch('click');
+      expect(menuUi, 'picking an area is the whole narrowing step').toMatchObject({
         diagnosticsQuestion: { hidden: true },
-        diagnosticsDirectPanel: { hidden: false },
-      });
-      menuUi.diagnosticsProfile.value = 'control-state';
-      await menuUi.diagnosticsDirectChoose.dispatch('click');
-      expect(menuUi).toMatchObject({
-        diagnosticsDirectPanel: { hidden: true },
         diagnosticsFrequency: { hidden: false },
         diagnosticsFrequencyHeading: { focused: true },
         diagnosticsMatch: { hidden: true },
@@ -1323,9 +1317,8 @@ describe('packed plugin', () => {
       });
       expect(menuUi.diagnosticsGuidanceTitle.focused).toBe(true);
       await menuUi.diagnosticsReject.dispatch('click');
-      expect(menuUi.diagnosticsDirectPanel.hidden).toBe(false);
-      menuUi.diagnosticsProfile.value = 'control-state';
-      await menuUi.diagnosticsDirectChoose.dispatch('click');
+      expect(menuUi.diagnosticsQuestion.hidden, 'changing the answer returns to the one opening screen').toBe(false);
+      await controlTile.dispatch('click');
       await menuUi.diagnosticsFrequencyIntermittent.dispatch('click');
       await menuUi.diagnosticsAuthorize.dispatch('click');
       expect(menuUi.requests).toContainEqual({
@@ -1459,9 +1452,9 @@ describe('packed plugin', () => {
         catalogs,
       );
       await dashboardBackgroundUi.menuDiagnostics.dispatch('click');
-      await dashboardBackgroundUi.diagnosticsDirect.dispatch('click');
-      dashboardBackgroundUi.diagnosticsProfile.value = 'dashboard-ui';
-      await dashboardBackgroundUi.diagnosticsDirectChoose.dispatch('click');
+      await dashboardBackgroundUi.diagnosticsTiles
+        .find((tile) => (tile as { dataset: { diagnosticsTile: string } }).dataset.diagnosticsTile === 'dashboard-ui')!
+        .dispatch('click');
       await dashboardBackgroundUi.diagnosticsFrequencyNow.dispatch('click');
       await dashboardBackgroundUi.diagnosticsAuthorize.dispatch('click');
       await dashboardBackgroundUi.diagnosticsReproduction.dispatch('click');

@@ -1,45 +1,32 @@
 (function attachDiagnosticsWizard(global) {
-  const questions = [
-    { profile: 'dashboard-ui', message: 'diagnosticsQuestionDashboard' },
-    { profile: 'startup-authentication', message: 'diagnosticsQuestionStartup' },
-    { profile: 'device-representation', message: 'diagnosticsQuestionDevices' },
-    { profile: 'control-state', message: 'diagnosticsQuestionControl' },
-    { profile: 'live-media', message: 'diagnosticsQuestionLiveMedia' },
-    { profile: 'hksv-recording', message: 'diagnosticsQuestionRecording' },
+  const profiles = [
+    'startup-authentication',
+    'device-representation',
+    'control-state',
+    'live-media',
+    'hksv-recording',
+    'dashboard-ui',
+    'other',
   ];
 
   function start() {
-    return { mode: 'questions', questionIndex: 0, profile: undefined, source: 'questions' };
+    return { mode: 'tiles', profile: undefined };
   }
 
-  function answer(state, matches) {
-    if (matches) {
-      return { ...state, mode: 'frequency', profile: questions[state.questionIndex].profile };
-    }
-    if (state.questionIndex === questions.length - 1) {
-      return { ...state, mode: 'frequency', profile: 'other' };
-    }
-    return { ...state, questionIndex: state.questionIndex + 1 };
+  function select(state, profile) {
+    return { ...state, mode: 'frequency', profile };
   }
 
-  function direct() {
-    return { mode: 'direct', questionIndex: 0, profile: undefined, source: 'direct' };
-  }
-
-  function selectDirect(state, profile) {
-    return { ...state, mode: 'frequency', profile, source: 'direct' };
-  }
-
-  function reject(state) {
-    return state.source === 'direct' ? direct() : start();
+  function reject() {
+    return start();
   }
 
   function chooseReproductionMode(state, reproductionMode) {
     return { ...state, mode: 'match', reproductionMode };
   }
 
-  function backFromFrequency(state) {
-    return state.source === 'direct' ? direct() : start();
+  function backFromFrequency() {
+    return start();
   }
 
   function screen(session, startingAnother) {
@@ -54,15 +41,13 @@
   }
 
   global.HomebridgeEufyDiagnosticsWizard = {
-    answer,
     backFromFrequency,
     backgroundActive,
     chooseReproductionMode,
-    direct,
-    questions,
+    profiles,
     reject,
     screen,
-    selectDirect,
+    select,
     start,
   };
 })(window);

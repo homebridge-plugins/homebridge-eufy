@@ -39,12 +39,7 @@ const diagnosticsClose = document.querySelector('[data-diagnostics-close]');
 const diagnosticsWizardPanel = document.querySelector('[data-diagnostics-wizard]');
 const diagnosticsQuestion = document.querySelector('[data-diagnostics-question]');
 const diagnosticsQuestionText = document.querySelector('[data-diagnostics-question-text]');
-const diagnosticsYes = document.querySelector('[data-diagnostics-answer="yes"]');
-const diagnosticsNo = document.querySelector('[data-diagnostics-answer="no"]');
-const diagnosticsDirect = document.querySelector('[data-diagnostics-direct]');
-const diagnosticsDirectPanel = document.querySelector('[data-diagnostics-direct-panel]');
-const diagnosticsDirectChoose = document.querySelector('[data-diagnostics-direct-choose]');
-const diagnosticsDirectBack = document.querySelector('[data-diagnostics-direct-back]');
+const diagnosticsTiles = [...document.querySelectorAll('[data-diagnostics-tile]')];
 const diagnosticsFrequency = document.querySelector('[data-diagnostics-frequency]');
 const diagnosticsFrequencyHeading = document.querySelector('#diagnostics-frequency-heading');
 const diagnosticsFrequencyNow = document.querySelector('[data-diagnostics-frequency-answer="now"]');
@@ -52,7 +47,6 @@ const diagnosticsFrequencyIntermittent = document.querySelector('[data-diagnosti
 const diagnosticsFrequencyBack = document.querySelector('[data-diagnostics-frequency-back]');
 const diagnosticsMatch = document.querySelector('[data-diagnostics-match]');
 const diagnosticsReject = document.querySelector('[data-diagnostics-reject]');
-const diagnosticsProfile = document.querySelector('[data-diagnostics-profile]');
 const diagnosticsAuthorize = document.querySelector('[data-diagnostics-authorize]');
 const diagnosticsReproduction = document.querySelector('[data-diagnostics-reproduction]');
 const diagnosticsStatus = document.querySelector('[data-diagnostics-status]');
@@ -265,16 +259,10 @@ function renderDiagnosticsGuidance(profile) {
 }
 
 function renderDiagnosticsWizard() {
-  diagnosticsQuestion.hidden = diagnosticsWizardState.mode !== 'questions';
-  diagnosticsDirectPanel.hidden = diagnosticsWizardState.mode !== 'direct';
+  diagnosticsQuestion.hidden = diagnosticsWizardState.mode !== 'tiles';
   diagnosticsFrequency.hidden = diagnosticsWizardState.mode !== 'frequency';
   diagnosticsMatch.hidden = diagnosticsWizardState.mode !== 'match';
-  if (diagnosticsWizardState.mode === 'questions') {
-    const question = diagnosticsWizard.questions[diagnosticsWizardState.questionIndex];
-    diagnosticsQuestionText.textContent = messages[question.message] ?? '';
-  }
   if (diagnosticsWizardState.mode === 'match') {
-    diagnosticsProfile.value = diagnosticsWizardState.profile;
     renderDiagnosticsGuidance(diagnosticsWizardState.profile);
     diagnosticsModeSummary.textContent =
       messages[
@@ -341,7 +329,6 @@ function renderDiagnostics(state) {
     diagnosticsReviewId = '';
     if (reviewing) void ensureArchiveReview(state.supportCaseId ?? '');
   }
-  if (state.profile) diagnosticsProfile.value = state.profile;
   if (screen === 'reproduce') {
     renderDiagnosticsGuidance(state.profile);
     if (reproductionMode === 'intermittent') {
@@ -521,36 +508,13 @@ diagnosticsAuthorize.addEventListener('click', async () => {
   }
 });
 
-diagnosticsYes.addEventListener('click', () => {
-  diagnosticsWizardState = diagnosticsWizard.answer(diagnosticsWizardState, true);
-  renderDiagnosticsWizard();
-  diagnosticsFrequencyHeading.focus?.();
-});
-
-diagnosticsNo.addEventListener('click', () => {
-  diagnosticsWizardState = diagnosticsWizard.answer(diagnosticsWizardState, false);
-  renderDiagnosticsWizard();
-  if (diagnosticsWizardState.mode === 'frequency') diagnosticsFrequencyHeading.focus?.();
-  else diagnosticsQuestionText.focus?.();
-});
-
-diagnosticsDirect.addEventListener('click', () => {
-  diagnosticsWizardState = diagnosticsWizard.direct();
-  renderDiagnosticsWizard();
-  diagnosticsProfile.focus?.();
-});
-
-diagnosticsDirectChoose.addEventListener('click', () => {
-  diagnosticsWizardState = diagnosticsWizard.selectDirect(diagnosticsWizardState, diagnosticsProfile.value);
-  renderDiagnosticsWizard();
-  diagnosticsFrequencyHeading.focus?.();
-});
-
-diagnosticsDirectBack.addEventListener('click', () => {
-  diagnosticsWizardState = diagnosticsWizard.start();
-  renderDiagnosticsWizard();
-  diagnosticsQuestionText.focus?.();
-});
+for (const tile of diagnosticsTiles) {
+  tile.addEventListener('click', () => {
+    diagnosticsWizardState = diagnosticsWizard.select(diagnosticsWizardState, tile.dataset.diagnosticsTile);
+    renderDiagnosticsWizard();
+    diagnosticsFrequencyHeading.focus?.();
+  });
+}
 
 function chooseDiagnosticsReproductionMode(reproductionMode) {
   diagnosticsWizardState = diagnosticsWizard.chooseReproductionMode(diagnosticsWizardState, reproductionMode);
@@ -564,15 +528,13 @@ diagnosticsFrequencyIntermittent.addEventListener('click', () => chooseDiagnosti
 diagnosticsFrequencyBack.addEventListener('click', () => {
   diagnosticsWizardState = diagnosticsWizard.backFromFrequency(diagnosticsWizardState);
   renderDiagnosticsWizard();
-  if (diagnosticsWizardState.mode === 'direct') diagnosticsProfile.focus?.();
-  else diagnosticsQuestionText.focus?.();
+  diagnosticsQuestionText.focus?.();
 });
 
 diagnosticsReject.addEventListener('click', () => {
   diagnosticsWizardState = diagnosticsWizard.reject(diagnosticsWizardState);
   renderDiagnosticsWizard();
-  if (diagnosticsWizardState.mode === 'direct') diagnosticsProfile.focus?.();
-  else diagnosticsQuestionText.focus?.();
+  diagnosticsQuestionText.focus?.();
 });
 
 diagnosticsStartAnother.addEventListener('click', () => {
