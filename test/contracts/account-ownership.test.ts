@@ -128,7 +128,6 @@ describe('account SDK ownership', () => {
       expect(successorAcquired).toBe(false);
     });
 
-    expect(successorAcquired).toBe(false);
     const result = await successor;
     expect(result?.state).toBe('owner');
     if (result?.state === 'owner') {
