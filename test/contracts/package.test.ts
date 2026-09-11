@@ -748,29 +748,6 @@ describe('packed plugin', () => {
     ]);
   });
 
-  /**
-   * A published plugin resolves one exact SDK build, so the specifier names a version rather than a range and
-   * the lockfile carries the integrity that build hashes to.
-   */
-  it.skipIf(LINKED_SDK_EXEMPTION)('pins one exact published SDK build and the integrity it hashes to', () => {
-    const repository = fileURLToPath(new URL('../..', import.meta.url));
-    const packageJson = JSON.parse(readFileSync(join(repository, 'package.json'), 'utf8')) as {
-      dependencies?: Record<string, string>;
-    };
-    const packageLock = JSON.parse(readFileSync(join(repository, 'package-lock.json'), 'utf8')) as {
-      packages: Record<string, { version?: string; integrity?: string }>;
-    };
-    const sdk = packageLock.packages['node_modules/@mega-yfue/eufy-sdk'];
-
-    expect(packageJson.dependencies?.['@mega-yfue/eufy-sdk']).toBe('0.1.0-beta.1');
-    expect(sdk).toEqual(
-      expect.objectContaining({
-        version: '0.1.0-beta.1',
-        integrity: 'sha512-v2190lha2l9APC8SHgw/eF1ctqgrCnFB0aCbTa6YKEPqx9Mep7JsHpdPSmaOByvN3rN9uRzNJrgfHTzuDaC/4w==',
-      }),
-    );
-  });
-
   it('contains an importable runtime and production custom UI shell', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'homebridge-eufy-security-'));
     const repository = fileURLToPath(new URL('../..', import.meta.url));

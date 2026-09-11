@@ -215,16 +215,25 @@ Every one of these has already produced a false conclusion, so each is checked r
   that lacks the work under test. Check that `node_modules/@mega-yfue/eufy-sdk` is still a symlink and that
   its `package.json` version is the local one.
 - **`package.json` must not be committed with the `file:` dependency.** The contract suite passes on a linked
-  checkout: the SDK provenance contract skips while the specifier is `file:`, and continuous integration sets
-  `CI`, which refuses that exemption. Publication refuses it too, because `prepublishOnly` builds and
-  qualifies the release before it verifies, and release qualification rejects a `file:` specifier and a
-  symlinked install outright. So a local run is green and a `file:` specifier that reaches a commit fails the
+  checkout: the packed-entry-point contract skips while the specifier is `file:`, because a packed tarball
+  cannot resolve a working copy, and continuous integration sets `CI`, which refuses that exemption.
+  Publication refuses the specifier too, because `prepublishOnly` builds and qualifies the release before it
+  verifies, and release qualification rejects a `file:` specifier and a symlinked install outright. So a local
+  run is green and a `file:` specifier that reaches a commit fails the
   gate instead of hiding in it. A failing local suite is a defect. What a linked checkout still
   cannot do is build against the published pin, so while the committed pin names an SDK older than the
   surface `src/` is written against, CI fails at the `build` step and never reaches the tests: `tsc` resolves
   the pinned package and reports every symbol the local SDK has and the published one does not. Confirm those
   by comparing the failing run's error set against the previous commit's — an unchanged set implicates neither
   commit.
+- **The SDK specifier is one exact published version, and `npm run qualify:release` is what says so.** It
+  reads the manifest and the lockfile and checks the shape — an exact version rather than a range, a lockfile
+  that agrees with the manifest, a `sha512-` integrity, a resolution from npmjs, and an installed directory
+  that is not a symlink. A dist-tag such as `@beta` fails it, and a range that happens to resolve to an exact
+  version is still not an exact declared identity: the acceptance record hashes the one SDK build the plugin
+  was qualified against, and a floating specifier attests to an artifact the next `npm install` can replace.
+  Bumping the SDK is therefore `npm pkg set` followed by `npm install`, with no literal to maintain by hand
+  anywhere.
 - **Read the code that actually ran.** Grep the built `dist` for the symbol the change introduces or
   removes. A source tree that typechecks says nothing about what the host loaded.
 - **Turn the host's debug output on before measuring**, so a negotiated selection or a protocol trace is
