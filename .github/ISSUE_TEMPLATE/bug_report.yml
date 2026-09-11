@@ -19,13 +19,13 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: "Use the **🐛 Report Issue** button in the plugin Settings page to auto-fill this."
+      description: "The diagnostics archive carries these too, but fill them in so triage can start without opening it."
       value: |
         - **Plugin Version**: 
         - **Homebridge Version**: 
         - **Node.js Version**: 
         - **OS**: 
-        - **eufy-security-client**: 
+        - **Support Case ID** (shown when the archive is created): 
       render: markdown
     validations:
       required: true
@@ -39,14 +39,15 @@ body:
         - Installation / Setup
         - Login / Authentication
         - Livestream / Streaming
-        - Events / Notifications
+        - Motion / Doorbell / Sensor events
         - Snapshots
         - Recording
         - Talkback
-        - Guard Modes / Security System
+        - Security Modes
         - Device Discovery
         - HomeKit Integration
-        - Plugin UI
+        - Plugin UI / Dashboard
+        - Diagnostics
         - Other
     validations:
       required: true
@@ -54,9 +55,9 @@ body:
   - type: textarea
     id: diagnostics
     attributes:
-      label: Diagnostics File
-      description: "Drag & drop the diagnostics `.tar.gz.enc` file downloaded from the plugin's Diagnostics page. This helps developers investigate your issue much faster."
-      placeholder: "Drag & drop your diagnostics file here..."
+      label: Diagnostics Archive
+      description: "Open the plugin settings, select the device that is misbehaving, click **Run diagnostics**, and follow it through. Drag the `homebridge-eufy-<case-id>.eufysupport` file it gives you into this box. It is encrypted, nothing was uploaded, and it does not contain your serial numbers, addresses or login details."
+      placeholder: "Drag the .eufysupport file here..."
     validations:
       required: true
 
