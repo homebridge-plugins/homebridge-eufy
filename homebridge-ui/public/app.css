@@ -570,17 +570,19 @@ button.diagnostics-quiet-action {
 }
 
 /*
- * The retained image, at half the tile and no more. It is there to be recognised at a glance; filling the tile
- * would leave the name it belongs to competing with it, and a dark frame from a night capture would read as an
- * empty tile.
+ * The device's own artwork, contained rather than cropped and at half the tile.
+ *
+ * `contain` is how the devices view draws the same image, because it is a cutout of the hardware and not a
+ * scene: cropping it to fill cuts the device out of its own picture. Half the tile keeps the name it belongs
+ * to from competing with it. That view's darkening filter is not carried over — it exists to seat the image
+ * under white text on a coloured tile, and these tiles read dark text on the panel.
  */
 .diagnostics-device-list img.device-photo {
   width: 100%;
   max-width: 100%;
   height: auto;
   max-height: 50%;
-  border-radius: calc(var(--radius-control) - 2px);
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .diagnostics-device-list button:hover {
