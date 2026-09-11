@@ -1542,16 +1542,20 @@ describe('packed plugin', () => {
           issueUrl: 'https://example.invalid/issue',
         },
       );
-      expect(completedDiagnosticsUi).toMatchObject({
-        diagnosticsIssue: { hidden: true, href: 'https://example.invalid/issue' },
+      expect(completedDiagnosticsUi, 'reviewing the manifest is the only action on offer').toMatchObject({
+        diagnosticsReview: { hidden: false },
+        diagnosticsIssue: { hidden: true },
+        diagnosticsExport: { hidden: true },
         diagnosticsResult: { hidden: false },
         diagnosticsWizardPanel: { hidden: true },
       });
       await completedDiagnosticsUi.diagnosticsReview.dispatch('click');
-      expect(completedDiagnosticsUi).toMatchObject({
+      expect(completedDiagnosticsUi, 'the review gives way to the two steps that follow it').toMatchObject({
+        diagnosticsReview: { hidden: true },
         diagnosticsManifest: { hidden: false },
         diagnosticsReviewConfirmLabel: { hidden: false },
         diagnosticsExport: { disabled: true, hidden: false },
+        diagnosticsIssue: { hidden: false, href: '' },
       });
       const manifestChildren = completedDiagnosticsUi.diagnosticsManifest.children as Array<{
         children?: Array<{ textContent: string }>;
@@ -1582,12 +1586,17 @@ describe('packed plugin', () => {
         hidden: false,
         href: 'https://example.invalid/issue',
       });
+      expect(
+        completedDiagnosticsUi.diagnosticsIssue,
+        'the archive in hand is what makes step two reachable',
+      ).toMatchObject({ hidden: false, href: 'https://example.invalid/issue' });
       await completedDiagnosticsUi.diagnosticsClose.dispatch('click');
       await completedDiagnosticsUi.menuDiagnostics.dispatch('click');
+      await completedDiagnosticsUi.diagnosticsReview.dispatch('click');
       expect(
         completedDiagnosticsUi.diagnosticsIssue,
         'leaving the panel and returning does not withdraw an offer the reporter already earned',
-      ).toMatchObject({ hidden: false });
+      ).toMatchObject({ hidden: false, href: 'https://example.invalid/issue' });
       await completedDiagnosticsUi.diagnosticsStartAnother.dispatch('click');
       expect(completedDiagnosticsUi).toMatchObject({
         diagnosticsResult: { hidden: true },

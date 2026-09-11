@@ -391,6 +391,13 @@ button.diagnostics-quiet-action {
   font-weight: 600;
 }
 
+/* Step two before its archive exists: an anchor with no href is not a link, and reads as one. */
+.diagnostics-result a:not([href]) {
+  color: var(--ink-disabled);
+  font-weight: 400;
+  cursor: default;
+}
+
 .diagnostics-result button {
   width: 100%;
 }

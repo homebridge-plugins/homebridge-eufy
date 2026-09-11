@@ -310,8 +310,8 @@ function renderDiagnostics(state) {
       : state.status === 'reproducing'
         ? messages.diagnosticsNowFinish
         : messages.diagnosticsStartRecording;
-  diagnosticsIssue.hidden = !(reviewing && diagnosticsArchiveDownloaded);
-  diagnosticsIssue.href = state.issueUrl ?? '';
+  diagnosticsIssue.hidden = true;
+  diagnosticsIssue.href = diagnosticsArchiveDownloaded ? (state.issueUrl ?? '') : '';
   diagnosticsResult.hidden = !reviewing;
   diagnosticsReview.hidden = !reviewing;
   diagnosticsManifest.hidden = true;
@@ -394,8 +394,10 @@ diagnosticsReview.addEventListener('click', async () => {
     const review = await requestWithinDeadline('/diagnostics/archive/review', undefined, 12000);
     diagnosticsReviewId = review.reviewId;
     renderArchiveManifest(review.manifest);
+    diagnosticsReview.hidden = true;
     diagnosticsReviewConfirmLabel.hidden = false;
     diagnosticsExport.hidden = false;
+    diagnosticsIssue.hidden = false;
   } catch {
     try {
       renderDiagnostics(await requestWithinDeadline('/diagnostics/status', undefined, 12000));
@@ -430,7 +432,7 @@ diagnosticsExport.addEventListener('click', async () => {
     diagnosticsReviewId = '';
     diagnosticsReviewConfirm.checked = false;
     diagnosticsArchiveDownloaded = true;
-    diagnosticsIssue.hidden = !diagnosticsIssue.href;
+    diagnosticsIssue.href = diagnosticsState.issueUrl ?? '';
   } catch {
     diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
   }
