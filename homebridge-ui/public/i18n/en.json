@@ -198,6 +198,7 @@
   "setupStatusEyebrow": "Setup status",
   "shareLink": "How to share your Eufy home",
   "snapshotModeCloudDescription": "Uses only a stored image without waking the camera.",
+  "snapshotModeHelp": "Refresh suits most cameras and is the default. Choose Live if a picture is out of date and you would rather wait for a new one, or Cloud if waking this camera costs too much battery.",
   "snapshotModeLiveDescription": "Requests a fresh live image each time.",
   "snapshotModeRefreshDescription": "Returns the cached image immediately and refreshes it in the background at a limited rate.",
   "stepAuthenticate": "Authenticate",

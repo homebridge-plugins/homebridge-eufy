@@ -198,6 +198,7 @@
   "setupStatusEyebrow": "État de la configuration",
   "shareLink": "Comment partager votre domicile Eufy",
   "snapshotModeCloudDescription": "Utilise uniquement une image enregistrée sans réveiller la caméra.",
+  "snapshotModeHelp": "Refresh convient à la plupart des caméras et reste la valeur par défaut. Choisissez Live si une image est périmée et que vous préférez attendre la suivante, ou Cloud si réveiller cette caméra coûte trop de batterie.",
   "snapshotModeLiveDescription": "Demande une nouvelle image en direct à chaque fois.",
   "snapshotModeRefreshDescription": "Renvoie immédiatement l’image en cache et l’actualise en arrière-plan à fréquence limitée.",
   "stepAuthenticate": "Authentification",

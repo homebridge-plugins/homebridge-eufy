@@ -1123,6 +1123,7 @@ describe('packed plugin', () => {
         'preferenceSnapshotMode',
         'snapshotModeCloudDescription',
         'snapshotModeLiveDescription',
+        'snapshotModeHelp',
         'snapshotModeRefreshDescription',
         'representationLabel',
         'serviceCamera',
