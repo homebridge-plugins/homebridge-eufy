@@ -307,7 +307,7 @@ function renderDiagnostics(state) {
       : state.status === 'reproducing'
         ? messages.diagnosticsNowFinish
         : messages.diagnosticsStartRecording;
-  diagnosticsIssue.hidden = !reviewing;
+  diagnosticsIssue.hidden = true;
   diagnosticsIssue.href = state.issueUrl ?? '';
   diagnosticsResult.hidden = !reviewing;
   diagnosticsReview.hidden = !reviewing;
@@ -426,6 +426,7 @@ diagnosticsExport.addEventListener('click', async () => {
     document.body.removeChild(download);
     diagnosticsReviewId = '';
     diagnosticsReviewConfirm.checked = false;
+    diagnosticsIssue.hidden = !diagnosticsIssue.href;
   } catch {
     diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
   }

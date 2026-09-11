@@ -1,31 +1,54 @@
 name: Release
 
-# This workflow handles latest, beta, and alpha releases:
-# - Latest: Triggered by GitHub releases (tag vX.Y.Z)
-# - Beta: Triggered by pushes to beta-X.Y.Z branches
-# - Alpha: Triggered by pushes to alpha-X.Y.Z branches
+# Publishes @homebridge-plugins/homebridge-eufy-security.
+#
+# ── One trigger: a published GitHub Release ─────────────────────────────────────────────────────
+# Every channel goes out the same way, so there is one path to audit and one place a release is
+# announced. A release page is what a reader of the Homebridge UI sees when it offers an update, so a
+# published version without one is a version nobody was told anything about.
+#
+# The TAG names the version and the channel:
+#
+#   v1.2.3          publishes 1.2.3          on `latest`
+#   v1.2.3-beta.4   publishes 1.2.3-beta.4   on `beta`
+#   v1.2.3-alpha.1  publishes 1.2.3-alpha.1  on `alpha`
+#
+# package.json's committed version is never what ships and is not consulted. Releasing is creating a
+# release; there is no bump commit to remember and no way for the number on the release page to
+# disagree with the number on npm.
+#
+# A prerelease tag must be flagged `prerelease` on the release, and a stable tag must not be: the flag
+# is what decides whether the Homebridge UI offers the version to everyone or only to the beta channel,
+# and a mismatch between the flag and the tag would ship a beta to every user. The job checks it rather
+# than trusting it.
+#
+# ── Credentials: none stored ────────────────────────────────────────────────────────────────────
+# The runner mints a short-lived OIDC identity that npm verifies against the trusted publisher
+# configured on the package, which pins this repository and this workflow's FILENAME. Rename this file
+# and publishing stops working — the failure looks like an auth error, not a config error. It also
+# requires `package.json`'s `repository.url` to match this repository exactly.
+#
+# ── Actions pinned to full-length commit SHAs ───────────────────────────────────────────────────
+# A tag is mutable: the action's owner can move `v7` onto different code and this workflow would run it,
+# here, with publish rights in scope. A SHA makes an update a reviewable diff.
 
 on:
   release:
     types: [published]
-  push:
-    branches:
-      - beta-*.*.*
-      - alpha-*.*.*
 
 permissions:
   id-token: write
   contents: read
 
+# Never cancel an in-flight publish: a killed job can leave the registry half-updated.
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   publish:
-    if: >-
-      github.repository == 'homebridge-plugins/homebridge-eufy'
-      && !(github.event_name == 'release' && github.event.release.prerelease)
+    # A fork must not publish.
+    if: github.repository == 'homebridge-plugins/homebridge-eufy'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -55,6 +78,44 @@ jobs:
           fi
           echo "npm $have — OIDC capable"
 
+      # The tag is the only source of the version and the channel, so it is validated before anything is
+      # built. `npm version` accepts plenty of strings that are not the release anyone meant, and a
+      # published version can never be withdrawn.
+      - name: Read the version and channel from the tag
+        id: release
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          FLAGGED_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          core='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+          if printf '%s' "$TAG" | grep -qE "^v${core}$"; then
+            channel=latest
+          elif printf '%s' "$TAG" | grep -qE "^v${core}-beta\.(0|[1-9][0-9]*)$"; then
+            channel=beta
+          elif printf '%s' "$TAG" | grep -qE "^v${core}-alpha\.(0|[1-9][0-9]*)$"; then
+            channel=alpha
+          else
+            echo "::error::tag $TAG is not vX.Y.Z, vX.Y.Z-beta.N or vX.Y.Z-alpha.N"
+            exit 1
+          fi
+
+          # The release's prerelease flag decides what the Homebridge UI offers to everyone, so it has to
+          # agree with the channel the tag asks for. Disagreement ships the wrong audience a build.
+          if [ "$channel" = latest ] && [ "$FLAGGED_PRERELEASE" = true ]; then
+            echo "::error::$TAG is a stable version but the release is flagged as a prerelease"
+            exit 1
+          fi
+          if [ "$channel" != latest ] && [ "$FLAGGED_PRERELEASE" != true ]; then
+            echo "::error::$TAG is a $channel prerelease but the release is not flagged as one"
+            exit 1
+          fi
+
+          version="${TAG#v}"
+          npm version "$version" --no-git-tag-version --allow-same-version >/dev/null
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "publishing $version to the $channel channel"
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
@@ -70,37 +131,10 @@ jobs:
       - name: Verify
         run: npm run verify
 
-      - name: Determine release type
-        id: release-type
-        run: |
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            echo "type=latest" >> $GITHUB_OUTPUT
-            echo "tag=latest" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == refs/heads/beta-* ]]; then
-            echo "type=beta" >> $GITHUB_OUTPUT
-            echo "tag=beta" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == refs/heads/alpha-* ]]; then
-            echo "type=alpha" >> $GITHUB_OUTPUT
-            echo "tag=alpha" >> $GITHUB_OUTPUT
-          else
-            echo "type=none" >> $GITHUB_OUTPUT
-            echo "tag=none" >> $GITHUB_OUTPUT
-            echo "No valid release type detected - skipping publish"
-          fi
-
-      - name: Handle prerelease versioning
-        if: steps.release-type.outputs.type == 'beta' || steps.release-type.outputs.type == 'alpha'
-        run: |
-          # Download versioning script from homebridge/.github
-          mkdir -p .github
-          wget -q https://raw.githubusercontent.com/homebridge/.github/latest/.github/npm-version-script-esm.js -O .github/npm-version-script-esm.js
-
-          # Run the script to set base version
-          node .github/npm-version-script-esm.js ${{ github.ref }} ${{ steps.release-type.outputs.type }}
-
-          # Add prerelease suffix
-          npm version pre --preid=${{ steps.release-type.outputs.type }} --no-git-tag-version
+      # Inspect what actually ships before it ships — a stray path in the tarball listing is the signal
+      # that something leaked into the package.
+      - name: Inspect the tarball
+        run: npm pack --dry-run
 
       - name: Publish to npm with OIDC
-        if: steps.release-type.outputs.type != 'none'
-        run: npm publish --tag ${{ steps.release-type.outputs.tag }} --provenance --access public
+        run: npm publish --tag ${{ steps.release.outputs.channel }} --provenance --access public

@@ -45,6 +45,7 @@ body:
         - Talkback
         - Security Modes
         - Device Discovery
+        - Device controls
         - HomeKit Integration
         - Plugin UI / Dashboard
         - Diagnostics
@@ -56,8 +57,8 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics Archive
-      description: "Open the plugin settings, select the device that is misbehaving, click **Run diagnostics**, and follow it through. Drag the `homebridge-eufy-<case-id>.eufysupport` file it gives you into this box. It is encrypted, nothing was uploaded, and it does not contain your serial numbers, addresses or login details."
-      placeholder: "Drag the .eufysupport file here..."
+      description: "Open the plugin settings, select the device that is misbehaving, click **Run diagnostics**, and follow it through. Drag the `homebridge-eufy-<case-id>.eufysupport.gz` file it gives you into this box. It is encrypted, nothing was uploaded, and it does not contain your serial numbers, addresses or login details."
+      placeholder: "Drag the .eufysupport.gz file here..."
     validations:
       required: true
 

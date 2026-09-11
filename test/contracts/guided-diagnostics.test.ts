@@ -561,7 +561,9 @@ describe('guided diagnostics session', () => {
         partialExportAvailable: true,
       });
       expect(prepared.issueUrl).toContain(encodeURIComponent(authorized.supportCaseId));
-      expect(prepared.issueUrl).toContain(encodeURIComponent('Reproduction mode: now'));
+      const prefilled = new URL(prepared.issueUrl ?? '').searchParams.get('environment') ?? '';
+      expect(prefilled).toContain('control-state (now)');
+      expect(prefilled).toContain('**Missing evidence**: plugin-log, sdk-log');
       expect((await diagnostics.reviewSupportArchive()).manifest.evidence).toContainEqual({
         evidence: 'sdk-log',
         privacyClass: 'diagnostic',
@@ -1414,6 +1416,173 @@ describe('a diagnostics authorization the runtime is notified of', () => {
 
       expect(info).not.toHaveBeenCalled();
       expect(existsSync(join(root, 'logs', 'homebridge-eufy.jsonl'))).toBe(false);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+});
+
+describe('guided diagnostics issue handoff', () => {
+  /**
+   * The report link addresses the committed bug report form. A `?body=` URL is discarded when blank issues
+   * are disabled and only forms exist, so the template has to be named for anything to survive the click.
+   */
+  it('addresses the bug report form rather than a blank issue body', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-issue-'));
+    const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-11T08:00:00.000Z'));
+
+    try {
+      await diagnostics.authorize('live-media', 'now');
+      await diagnostics.startReproduction();
+      const complete = await diagnostics.endReproduction();
+      const url = new URL(complete.issueUrl ?? '');
+
+      expect(url.origin + url.pathname).toBe('https://github.com/homebridge-plugins/homebridge-eufy/issues/new');
+      expect(url.searchParams.get('template')).toBe('bug_report.yml');
+      expect(url.searchParams.has('body')).toBe(false);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /**
+   * The environment block carries the facts the plugin holds and a reporter would otherwise type: the
+   * versions it runs under, the host shape, and the support case id that ties the report to the archive.
+   */
+  it('fills the environment block with the versions and the support case id', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-issue-'));
+    const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-11T08:00:00.000Z'));
+    const repository = fileURLToPath(new URL('../..', import.meta.url));
+    const declaredVersion = (JSON.parse(readFileSync(join(repository, 'package.json'), 'utf8')) as { version: string })
+      .version;
+
+    try {
+      await diagnostics.authorize('live-media', 'now');
+      await diagnostics.startReproduction();
+      const complete = await diagnostics.endReproduction();
+      const environment = new URL(complete.issueUrl ?? '').searchParams.get('environment') ?? '';
+
+      expect(environment).toContain(declaredVersion);
+      expect(environment).toContain(process.version);
+      expect(environment).toContain(process.platform);
+      expect(environment).toContain(process.arch);
+      expect(environment).toContain(complete.supportCaseId ?? 'no-case-id');
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /**
+   * A URL cannot carry a file, so the prefill names the one the reporter has to attach — including the
+   * extension the export actually produces, since an instruction naming a file nobody has is worse than none.
+   */
+  it('names the archive the export produces in the attachment instruction', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-issue-'));
+    const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-11T08:00:00.000Z'));
+
+    try {
+      await diagnostics.authorize('control-state', 'now');
+      await diagnostics.startReproduction();
+      const complete = await diagnostics.endReproduction();
+      const attachment = new URL(complete.issueUrl ?? '').searchParams.get('diagnostics') ?? '';
+
+      expect(attachment).toContain(`homebridge-eufy-${complete.supportCaseId}.eufysupport.gz`);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /**
+   * A dropdown prefill is honoured only when it equals one of the committed options, so every profile the
+   * flow can select resolves to an option the form declares. The form file is the expected value here:
+   * renaming an option without remapping fails this rather than silently leaving the dropdown unset.
+   */
+  it('selects an area the committed form declares, for every profile', async () => {
+    const repository = fileURLToPath(new URL('../..', import.meta.url));
+    const form = readFileSync(join(repository, '.github', 'ISSUE_TEMPLATE', 'bug_report.yml'), 'utf8');
+    const declared = form
+      .slice(form.indexOf('id: area'), form.indexOf('id: diagnostics'))
+      .split('\n')
+      .map((line) => /^\s{8}- (.+)$/.exec(line)?.[1])
+      .filter((option): option is string => Boolean(option));
+    const profiles = [
+      'startup-authentication',
+      'device-representation',
+      'control-state',
+      'live-media',
+      'hksv-recording',
+      'dashboard-ui',
+      'other',
+    ] as const;
+
+    expect(declared.length).toBeGreaterThan(1);
+
+    for (const profile of profiles) {
+      const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-issue-'));
+      const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-11T08:00:00.000Z'));
+
+      try {
+        await diagnostics.authorize(profile, 'now');
+        await diagnostics.startReproduction();
+        const complete = await diagnostics.endReproduction();
+        const area = new URL(complete.issueUrl ?? '').searchParams.get('area');
+
+        expect(declared, profile).toContain(area);
+      } finally {
+        rmSync(root, { force: true, recursive: true });
+      }
+    }
+  });
+
+  /**
+   * A query string lands in browser history and in every proxy between the reporter and GitHub, so only the
+   * operational class travels in one. The resolved FFmpeg path is classified above it because it can carry
+   * the home directory of the account Homebridge runs as, and it stays inside the encrypted archive.
+   */
+  it('keeps a field classified above operational out of the query string', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-issue-'));
+    const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-11T08:00:00.000Z'));
+    const ffmpegPath = '/home/synthetic-operator/.local/bin/ffmpeg';
+
+    try {
+      recordFfmpegEnvironment(root, { path: ffmpegPath, source: 'configured' });
+      await diagnostics.authorize('live-media', 'now');
+      await diagnostics.startReproduction();
+      const complete = await diagnostics.endReproduction();
+      const url = complete.issueUrl ?? '';
+
+      const values = [...new URL(url).searchParams.values()].join('\n');
+      expect(url).not.toContain('synthetic-operator');
+      expect(values).not.toContain(ffmpegPath);
+      expect(values).not.toContain('synthetic-operator');
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /**
+   * Every field the prefill addresses is declared by the committed form. GitHub drops a parameter naming a
+   * field that does not exist, silently, so renaming an id in the YAML has to fail here rather than produce
+   * an empty box nobody notices.
+   */
+  it('addresses only field ids the committed form declares', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-issue-'));
+    const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-11T08:00:00.000Z'));
+    const repository = fileURLToPath(new URL('../..', import.meta.url));
+    const form = readFileSync(join(repository, '.github', 'ISSUE_TEMPLATE', 'bug_report.yml'), 'utf8');
+    const declared = [...form.matchAll(/^\s{4}id: (\S+)$/gm)].map(([, id]) => id);
+
+    try {
+      await diagnostics.authorize('live-media', 'now');
+      await diagnostics.startReproduction();
+      const complete = await diagnostics.endReproduction();
+      const addressed = [...new URL(complete.issueUrl ?? '').searchParams.keys()].filter((key) => key !== 'template');
+
+      expect(declared).toContain('environment');
+      expect(addressed.length).toBeGreaterThan(0);
+      for (const field of addressed) {
+        expect(declared, field).toContain(field);
+      }
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

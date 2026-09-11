@@ -1543,7 +1543,7 @@ describe('packed plugin', () => {
         },
       );
       expect(completedDiagnosticsUi).toMatchObject({
-        diagnosticsIssue: { hidden: false, href: 'https://example.invalid/issue' },
+        diagnosticsIssue: { hidden: true, href: 'https://example.invalid/issue' },
         diagnosticsResult: { hidden: false },
         diagnosticsWizardPanel: { hidden: true },
       });
@@ -1578,6 +1578,11 @@ describe('packed plugin', () => {
           href: 'data:application/gzip;base64,c3ludGhldGlj',
         }),
       ]);
+      // The report is offered once the archive is in the reporter's hands, since the form requires it.
+      expect(completedDiagnosticsUi.diagnosticsIssue).toMatchObject({
+        hidden: false,
+        href: 'https://example.invalid/issue',
+      });
       await completedDiagnosticsUi.diagnosticsStartAnother.dispatch('click');
       expect(completedDiagnosticsUi).toMatchObject({
         diagnosticsResult: { hidden: true },

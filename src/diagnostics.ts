@@ -351,6 +351,55 @@ const SUPPORT_ARCHIVE_EXCLUDED_CLASSES = [
   'camera-images-talkback-and-raw-media',
 ] as const;
 
+/**
+ * The bug form's `area` option each diagnostics profile belongs to.
+ *
+ * A dropdown prefill is honoured only when it equals a declared option exactly, so these strings are the
+ * form's and not a paraphrase of it. Two profiles share `HomeKit Integration`: a device that is recognized
+ * without being represented and one whose representation reads the wrong state are the same area to triage.
+ */
+const BUG_REPORT_AREAS: Readonly<Record<DiagnosticsProfile, string>> = {
+  'startup-authentication': 'Login / Authentication',
+  'device-representation': 'HomeKit Integration',
+  'control-state': 'Device controls',
+  'live-media': 'Livestream / Streaming',
+  'hksv-recording': 'Recording',
+  'dashboard-ui': 'Plugin UI / Dashboard',
+  other: 'Other',
+};
+
+/** Where a report goes, and the form whose field ids the query string addresses. */
+const BUG_REPORT_FORM = 'https://github.com/homebridge-plugins/homebridge-eufy/issues/new';
+
+/**
+ * A prepared bug report for a finished support session.
+ *
+ * Addresses the committed issue form by filename: `?body=` is discarded when blank issues are disabled and
+ * the repository offers forms only, so naming the template is what makes any prefill survive the click.
+ */
+function bugReportUrl(session: PersistedDiagnosticsSession, missingEvidence: readonly string[]): string {
+  const url = new URL(BUG_REPORT_FORM);
+  url.searchParams.set('template', 'bug_report.yml');
+  url.searchParams.set(
+    'environment',
+    [
+      `- **Plugin Version**: ${PLUGIN_VERSION}`,
+      `- **eufy SDK**: ${SDK_VERSION}`,
+      `- **Node.js Version**: ${process.version}`,
+      `- **OS**: ${process.platform} ${process.arch}`,
+      `- **Support Case ID**: ${session.supportCaseId}`,
+      `- **Diagnostics profile**: ${session.profile} (${session.reproductionMode})`,
+      `- **Missing evidence**: ${missingEvidence.length ? missingEvidence.join(', ') : 'none'}`,
+    ].join('\n'),
+  );
+  url.searchParams.set('area', BUG_REPORT_AREAS[session.profile]);
+  url.searchParams.set(
+    'diagnostics',
+    `Attach homebridge-eufy-${session.supportCaseId}.eufysupport.gz, downloaded from the diagnostics page.`,
+  );
+  return url.toString();
+}
+
 const DIAGNOSTICS_PROFILES: Readonly<Record<DiagnosticsProfile, readonly DiagnosticEvidence[]>> = {
   'startup-authentication': ['plugin-log', 'sdk-log'],
   'device-representation': ['plugin-log', 'sdk-log', 'homekit-log'],
@@ -1054,12 +1103,6 @@ export class GuidedDiagnostics {
         : session.reproductionStartedAt
           ? 'reproducing'
           : 'authorized';
-    const issueBody = [
-      `Support case: ${session.supportCaseId}`,
-      `Profile: ${session.profile}`,
-      `Reproduction mode: ${session.reproductionMode}`,
-      `Missing evidence: ${missingEvidence.length ? missingEvidence.join(', ') : 'none'}`,
-    ].join('\n');
     return {
       status,
       supportCaseId: session.supportCaseId,
@@ -1072,7 +1115,7 @@ export class GuidedDiagnostics {
       ...(session.reproductionStartedAt ? { reproductionStartedAt: session.reproductionStartedAt } : {}),
       ...(session.reproductionEndedAt ? { reproductionEndedAt: session.reproductionEndedAt } : {}),
       partialExportAvailable: Boolean(session.reproductionEndedAt),
-      issueUrl: `https://github.com/homebridge-plugins/homebridge-eufy/issues/new?body=${encodeURIComponent(issueBody)}`,
+      issueUrl: bugReportUrl(session, missingEvidence),
     };
   }
 

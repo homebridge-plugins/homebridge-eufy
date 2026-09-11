@@ -110,6 +110,32 @@ describe('verification gate', () => {
   });
 
   /**
+   * Publication happens through a published GitHub Release and nothing else, and the tag it carries is what
+   * names the version and the channel. A branch push that published would ship a version with no release
+   * page behind it, which is what the Homebridge UI shows a reader when it offers an update.
+   */
+  it('publishes only from a published release, on a channel the tag names', () => {
+    const release = workflow('release');
+
+    expect(release).toMatch(/^on:\n {2}release:\n {4}types: \[published]\n\npermissions:/m);
+    expect(release, 'a branch push must not reach the registry').not.toMatch(/^ {2}push:/m);
+    expect(release).toContain('TAG: ${{ github.event.release.tag_name }}');
+    expect(release).toContain('FLAGGED_PRERELEASE: ${{ github.event.release.prerelease }}');
+    expect(release).toContain('npm publish --tag ${{ steps.release.outputs.channel }}');
+  });
+
+  /**
+   * The publish job runs no code fetched at run time. An unpinned remote script executed with publish rights
+   * in scope is an update nobody reviewed, on the one workflow that can reach the registry.
+   */
+  it('fetches no script at run time in the job that can publish', () => {
+    const release = workflow('release');
+
+    expect(release).not.toMatch(/\b(wget|curl)\b/);
+    expect(release).not.toContain('raw.githubusercontent.com');
+  });
+
+  /**
    * Exactly one guard binds the publish job to the repository allowed to publish, and it names that
    * repository exactly. A guard that cannot match skips the job while the run still reports success, so the
    * name is a contract here rather than a discovery at the registry.
