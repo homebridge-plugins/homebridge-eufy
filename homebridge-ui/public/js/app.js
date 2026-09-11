@@ -619,6 +619,8 @@ dashboardDiagnose.addEventListener('click', () => menuDiagnostics.click());
 
 menuDiagnostics.addEventListener('click', async () => {
   openDashboardPanel(diagnosticsPanel, menuDiagnostics);
+  // Drawn on opening, because the wizard's first question is only ever put on the page by this call.
+  renderDiagnosticsWizard();
   try {
     renderDiagnostics(await requestWithinDeadline('/diagnostics/status', undefined, 12000));
   } catch {
