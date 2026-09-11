@@ -939,6 +939,7 @@ describe('packed plugin', () => {
           'diagnosticsArchiveReview',
           'diagnosticsArchiveReviewConfirm',
           'diagnosticsArchiveReviewIntro',
+          'diagnosticsStaysLocal',
           'diagnosticsBackToQuestions',
           'diagnosticsBeforeLabel',
           'diagnosticsBestMatch',

@@ -386,30 +386,59 @@ button.diagnostics-quiet-action {
   gap: 8px;
 }
 
-.diagnostics-result a {
-  display: inline-block;
-  margin-top: 8px;
-  color: var(--accent-ink);
-  font-weight: 600;
-}
-
 /*
- * The report step navigates to GitHub, so it stays an anchor, and it sits in a sequence beside the download,
- * so it carries that sequence's shape. Its own colour is what tells the two steps apart at a glance.
+ * The two steps of the handoff share one shape, so the sequence reads as a sequence: same height, same
+ * gap, same badge, and a colour each. The download is a button because it acts here; the report is an
+ * anchor because it navigates to GitHub.
  */
-.diagnostics-result a[data-diagnostics-issue] {
+.diagnostics-result [data-diagnostics-export],
+.diagnostics-result [data-diagnostics-issue] {
   display: flex;
   width: 100%;
   min-height: 44px;
   align-items: center;
   justify-content: center;
+  gap: 10px;
   margin-top: 8px;
   border-radius: var(--radius-control);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/*
+ * The step number is generated content rather than an element, because translation assigns `textContent`
+ * on the control and would remove any child it had.
+ */
+.diagnostics-result [data-diagnostics-export]::before,
+.diagnostics-result [data-diagnostics-issue]::before {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/* Each badge inverts its own control's pair, so the digit keeps its contrast on either background. */
+.diagnostics-result [data-diagnostics-export]::before {
+  background: var(--on-accent);
+  color: var(--accent);
+  content: '1';
+}
+
+.diagnostics-result [data-diagnostics-issue] {
   background: var(--ok);
   color: var(--on-ok);
-  font-weight: 600;
-  text-align: center;
-  text-decoration: none;
+}
+
+.diagnostics-result [data-diagnostics-issue]::before {
+  background: var(--on-ok);
+  color: var(--ok);
+  content: '2';
 }
 
 /* Without an archive there is nothing to attach, so the step is present and not yet a link. */
@@ -417,6 +446,17 @@ button.diagnostics-quiet-action {
   background: color-mix(in srgb, var(--ok) 28%, var(--panel));
   color: color-mix(in srgb, var(--on-ok) 60%, var(--panel));
   cursor: not-allowed;
+}
+
+.diagnostics-result a[data-diagnostics-issue]:not([href])::before {
+  background: color-mix(in srgb, var(--on-ok) 45%, var(--panel));
+  color: color-mix(in srgb, var(--ok) 55%, var(--panel));
+}
+
+.diagnostics-local-note {
+  margin: 12px 0 0;
+  color: var(--ink-secondary);
+  font-size: 12px;
 }
 
 .diagnostics-result button {
