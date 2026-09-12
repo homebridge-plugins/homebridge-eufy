@@ -1,17 +1,19 @@
 name: Report completeness
 
-# A report the maintainers cannot act on should say so on the issue, at once, rather than wait for someone
-# to read it. Two things are checked, and nothing here is ever closed: closing a report the reporter cannot
-# fix is how a real defect gets lost.
+# A report the maintainers cannot act on says so on the issue, at once, rather than waiting for someone to
+# read it. Three things are checked, and nothing here is ever closed: closing a report its reporter can still
+# complete is how a real defect gets lost.
 #
-# 1. The diagnostics archive. The form marks the field required, and GitHub satisfies that with any text, so
-#    it cannot tell an attachment from a sentence. This can.
-# 2. The plugin version. V4 is unmaintained, so a V4 report is stated as unactionable while it is still the
+# 1. The diagnostics archive. The form marks the field required and GitHub honours that with any text, so the
+#    form cannot tell an attachment from a sentence. This can.
+# 2. The environment block, on whether its lines were answered. A blank one is the first thing triage asks
+#    for, and a blank version is what leaves the version check with nothing to read.
+# 3. The plugin version. V4 is unmaintained, so a 4.x report is stated as unactionable while it is still the
 #    reporter's evening rather than a week later.
 #
-# The archive may arrive in a later comment, so every event re-reads the whole thread and the labels follow
-# what is there now. The version is advisory only: a reporter who retests says so in prose, and no label
-# state may depend on a body they will not edit.
+# The archive may arrive in a later comment, so every event re-reads the whole thread. Only the archive moves
+# a label: a reporter answers the other two in prose, and no label may depend on a body they will not edit.
+# The waiting state is set once, with the ask, so a maintainer who lifts it to work an issue keeps it lifted.
 
 on:
   issues:
@@ -51,11 +53,11 @@ jobs:
 
             // A GitHub upload of a file, which is where a diagnostics archive lands whatever it is called;
             // an image or a pasted screenshot lands under `assets/` instead. Matching the upload rather than
-            // an extension keeps this working across the v4 `.tar.gz` and the v5 `.eufysupport.gz`.
+            // an extension covers both the v4 `.tar.gz` and the v5 `.eufysupport.gz`.
             const ATTACHED_FILE = /github\.com\/user-attachments\/files\/\d+\//;
 
-            // The version line the form asks for, read only where it states a bare 4.x. A blank, a range or
-            // anything unparseable says nothing, and a guess here would tell a V5 reporter to upgrade.
+            // The version line, read only where it states a bare 4.x. A blank, a range or anything
+            // unparseable says nothing, and a guess here would tell a V5 reporter to upgrade.
             const V4_VERSION = /^\s*-\s*\*\*Plugin Version\*\*:\s*v?4\.\d+/im;
 
             const request = { owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number };
@@ -65,6 +67,14 @@ jobs:
             // This workflow's own voice, so every path is idempotent without a label standing in for one.
             const MARKER = '<!-- report-completeness -->';
             const spoken = comments.some((comment) => (comment.body || '').includes(MARKER));
+
+            // The environment block's lines, and the names of those left with nothing after the colon. The
+            // support case id is excluded: it is carried by the archive that is asked for separately, and the
+            // plugin deliberately keeps it out of a prefill because a query string is not private.
+            const block = /^###\s+Environment\s*$([\s\S]*?)^###\s/m.exec(`${body}\n### `);
+            const unanswered = [...(block?.[1] ?? '').matchAll(/^\s*-\s*\*\*(.+?)\*\*[^:]*:\s*$/gm)]
+              .map(([, name]) => name)
+              .filter((name) => !name.startsWith('Support Case ID'));
 
             const findings = [];
             if (V4_VERSION.test(body)) {
@@ -91,9 +101,15 @@ jobs:
                 ].join('\n'),
               );
             }
-
-            const labels = (issue.labels || []).map((label) => (typeof label === 'string' ? label : label.name));
-            const waiting = labels.includes('needs-info');
+            if (unanswered.length) {
+              findings.push(
+                [
+                  `**The environment block is missing ${unanswered.length === 1 ? 'a line' : 'some lines'}:** ${unanswered.map((name) => `\`${name}\``).join(', ')}.`,
+                  '',
+                  'Editing them into the report is enough. They decide which code you are running, and the answers are on the Homebridge status page and in the plugin settings.',
+                ].join('\n'),
+              );
+            }
 
             if (findings.length && !spoken) {
               await github.rest.issues.createComment({
@@ -109,9 +125,10 @@ jobs:
               });
             }
 
-            // Only the archive governs the labels. It is the one finding a reporter resolves by attaching
-            // something this can see.
-            if (!attached && !waiting) {
+            const labels = (issue.labels || []).map((label) => (typeof label === 'string' ? label : label.name));
+
+            // Set with the ask and cleared by the archive, and touched on no other event.
+            if (!attached && !spoken) {
               await github.rest.issues.addLabels({ ...request, labels: ['needs-info'] });
               for (const name of ['needs-triage', 'needs triage']) {
                 if (labels.includes(name)) {
@@ -120,7 +137,7 @@ jobs:
               }
               return;
             }
-            if (attached && waiting) {
+            if (attached && labels.includes('needs-info')) {
               await github.rest.issues.removeLabel({ ...request, name: 'needs-info' });
               await github.rest.issues.addLabels({ ...request, labels: ['needs-triage'] });
             }
