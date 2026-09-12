@@ -22,7 +22,7 @@ import {
   createDiagnosticLogger,
   type DiagnosticsProfile,
   GuidedDiagnostics,
-  recordFfmpegEnvironment,
+  recordHostEnvironment,
   reportAdaptationNotice,
   reportHomeKitEvent,
   reportInvalidSnapshotCache,
@@ -793,7 +793,7 @@ describe('guided diagnostics session', () => {
         JSON.parse(payload.evidence[0]!.content),
         'an archive names the builds that produced it, so a reader can see a fault is already fixed',
       ).toMatchObject({
-        version: 2,
+        version: 3,
         plugin: ownManifest.version,
         sdk: installedSdk.version,
       });
@@ -1299,17 +1299,24 @@ describe('guided diagnostics session', () => {
    * without the resolved binary in the record an adaptation failure can be attributed to FFmpeg in general
    * and to nothing more precise. A path that names nothing runnable answers with no version at all, which is
    * what tells a missing or wrong `ffmpegPath` apart from an encoder the build does not have.
+   *
+   * The host's own version sits beside it, because this plugin requires Homebridge 2 and a host that predates
+   * it loads the plugin and then fails in ways a media fault cannot be told from. The two facts are
+   * independent: a malformed binary identity does not withhold the host version.
    */
-  it('reports the resolved FFmpeg identity as environment evidence and declares its privacy class', async () => {
+  it('reports the host and the resolved FFmpeg identity as environment evidence, each declared', async () => {
     const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-guided-'));
     let now = Date.parse('2026-08-17T08:00:00.000Z');
     const diagnostics = new GuidedDiagnostics(root, () => now);
 
     try {
-      recordFfmpegEnvironment(root, {
-        path: '/synthetic/bin/ffmpeg',
-        source: 'configured',
-        version: 'ffmpeg version 8.0 Copyright (c) 2000-2026 the FFmpeg developers',
+      recordHostEnvironment(root, {
+        homebridge: '2.4.0',
+        ffmpeg: {
+          path: '/synthetic/bin/ffmpeg',
+          source: 'configured',
+          version: 'ffmpeg version 8.0 Copyright (c) 2000-2026 the FFmpeg developers',
+        },
       });
       await diagnostics.authorize('live-media', 'now');
       await diagnostics.startReproduction();
@@ -1328,22 +1335,35 @@ describe('guided diagnostics session', () => {
           { field: 'node', privacyClass: 'operational' },
           { field: 'platform', privacyClass: 'operational' },
           { field: 'arch', privacyClass: 'operational' },
+          { field: 'homebridge', privacyClass: 'operational' },
           { field: 'ffmpeg', privacyClass: 'diagnostic' },
         ],
       });
-      expect(statSync(join(root, 'diagnostics', 'ffmpeg.json')).mode & 0o777).toBe(0o600);
+      expect(statSync(join(root, 'diagnostics', 'host.json')).mode & 0o777).toBe(0o600);
 
-      recordFfmpegEnvironment(root, { path: '/synthetic/bin/ffmpeg', source: 'bundled' });
+      recordHostEnvironment(root, {
+        homebridge: '2.4.0',
+        ffmpeg: { path: '/synthetic/bin/ffmpeg', source: 'bundled' },
+      });
       const rerecorded = (await diagnostics.reviewSupportArchive()).manifest.evidence[0]!;
       expect(
         rerecorded.fields,
         'a binary that answered no version banner is reported without one rather than with a guess',
-      ).toHaveLength(7);
+      ).toHaveLength(8);
 
-      writeFileSync(join(root, 'diagnostics', 'ffmpeg.json'), '{"version":1,"ffmpeg":{"source":"invented"}}\n');
+      writeFileSync(
+        join(root, 'diagnostics', 'host.json'),
+        '{"version":2,"homebridge":"2.4.0","ffmpeg":{"source":"invented"}}\n',
+      );
       expect(
         (await diagnostics.reviewSupportArchive()).manifest.evidence[0]!.fields,
-        'a record whose own fields do not narrow is dropped rather than partly reported',
+        'a binary identity that does not narrow is dropped without withholding the host version',
+      ).toHaveLength(7);
+
+      writeFileSync(join(root, 'diagnostics', 'host.json'), '{"version":2,"ffmpeg":{"source":"invented"}}\n');
+      expect(
+        (await diagnostics.reviewSupportArchive()).manifest.evidence[0]!.fields,
+        'a record stating neither fact is no record at all',
       ).toHaveLength(6);
     } finally {
       rmSync(root, { force: true, recursive: true });
@@ -1540,7 +1560,7 @@ describe('guided diagnostics issue handoff', () => {
     const ffmpegPath = '/home/synthetic-operator/.local/bin/ffmpeg';
 
     try {
-      recordFfmpegEnvironment(root, { path: ffmpegPath, source: 'configured' });
+      recordHostEnvironment(root, { homebridge: '2.4.0', ffmpeg: { path: ffmpegPath, source: 'configured' } });
       await diagnostics.authorize('live-media', 'now', ['T8410P0000000000']);
       await diagnostics.startReproduction();
       const complete = await diagnostics.endReproduction();

@@ -4,7 +4,7 @@ import { ffmpegPathSource, parseConfig } from './configuration.js';
 import {
   createDiagnosticLogger,
   DiagnosticConditions,
-  recordFfmpegEnvironment,
+  recordHostEnvironment,
   reportAdaptationNotice,
   reportDiscardedV4Settings,
   reportHomeKitEvent,
@@ -36,6 +36,8 @@ export interface PlatformSignalTarget {
 
 export interface PlatformApi {
   on(event: PlatformLifecycleEvent, listener: () => void): void;
+  /** The host's own semver version, which decides whether this plugin can run on it at all. */
+  serverVersion?: string;
   user?: { storagePath(): string };
   hap?: HAP;
   platformAccessory?: API['platformAccessory'];
@@ -122,10 +124,14 @@ export function createEufyPlatform(
       });
       api.on('didFinishLaunching', () => {
         const ffmpegPath = configuredConfig.ffmpegPath;
-        if (ffmpegPath && storageRoot) {
-          void resolveFfmpegIdentity(ffmpegPath, ffmpegPathSource(ffmpegPath)).then((identity) =>
-            recordFfmpegEnvironment(storageRoot, identity),
-          );
+        if (storageRoot) {
+          const homebridge = typeof api.serverVersion === 'string' ? { homebridge: api.serverVersion } : {};
+          recordHostEnvironment(storageRoot, homebridge);
+          if (ffmpegPath) {
+            void resolveFfmpegIdentity(ffmpegPath, ffmpegPathSource(ffmpegPath)).then((ffmpeg) =>
+              recordHostEnvironment(storageRoot, { ...homebridge, ffmpeg }),
+            );
+          }
         }
         const accessoryStore = createAccessoryStore(api);
         if (accessoryStore) {
