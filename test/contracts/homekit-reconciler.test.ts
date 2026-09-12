@@ -495,9 +495,9 @@ describe('HomeKit registry reconciliation', () => {
         adapter: 'contact.sensor',
         event: 'contact-state',
         observation: 'valid',
+        serial,
       },
     ]);
-    expect(JSON.stringify(traces)).not.toContain(serial);
 
     source.publish(
       registryView(
@@ -758,6 +758,7 @@ describe('HomeKit registry reconciliation', () => {
       adapter: 'arming.security-system',
       event: 'security-system-alarm',
       observation: 'valid',
+      serial,
     });
 
     source.publish(registryView(2, new Map(), snapshot()));

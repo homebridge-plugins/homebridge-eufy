@@ -1411,6 +1411,7 @@ describe('diagnostic conditions', () => {
     reportHomeKitEvent({ debug }, {
       adapter: 'camera.streaming',
       event: 'live-session-released',
+      release: 'requested',
       serial: 'T8000P0000000000',
     } as never);
     reportHomeKitEvent(
@@ -1423,6 +1424,15 @@ describe('diagnostic conditions', () => {
         stage: 'raw-transport' as never,
       },
     );
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-released',
+        release: 'gave-up' as never,
+      },
+    );
+    reportHomeKitEvent({ debug }, { adapter: 'camera.streaming', event: 'live-session-released' } as never);
 
     expect(debug).toHaveBeenCalledExactlyOnceWith(
       JSON.stringify({
@@ -1430,6 +1440,7 @@ describe('diagnostic conditions', () => {
         level: 'debug',
         adapter: 'camera.streaming',
         event: 'live-session-released',
+        release: 'requested',
       }),
     );
     expect(JSON.stringify(debug.mock.calls)).not.toContain('T8000P0000000000');
@@ -1455,6 +1466,7 @@ describe('diagnostic conditions', () => {
     reportHomeKitEvent(logger, {
       adapter: 'camera.streaming',
       event: 'live-session-released',
+      release: 'failed',
     });
     reportHomeKitEvent(logger, {
       adapter: 'camera.streaming',
@@ -1507,6 +1519,7 @@ describe('diagnostic conditions', () => {
           level: 'debug',
           adapter: 'camera.streaming',
           event: 'live-session-released',
+          release: 'failed',
         }),
       ]),
     );
