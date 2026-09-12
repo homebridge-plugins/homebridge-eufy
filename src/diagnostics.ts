@@ -385,10 +385,9 @@ const BUG_REPORT_FORM = 'https://github.com/homebridge-plugins/homebridge-eufy/i
  * Addresses the committed issue form by filename, and fills the field ids that form declares. A prefill is
  * honoured only against a named template, and only the operational class travels in a query string.
  *
- * The archive field is deliberately left unfilled. It is a required field, GitHub satisfies that with any
- * text, and a URL cannot carry a file — so prefilling it hands the reporter a form that submits with no
- * archive attached. Empty, the form refuses to submit until the reporter puts the file there, and the field's
- * own description and placeholder name it.
+ * The archive field is left unaddressed, because a query string cannot carry a file. Any text placed there
+ * satisfies the field's own `required` validation, so a prefill would answer it on the reporter's behalf and
+ * the form would accept a report with no archive on it.
  */
 function bugReportUrl(session: PersistedDiagnosticsSession, missingEvidence: readonly string[]): string {
   const url = new URL(BUG_REPORT_FORM);

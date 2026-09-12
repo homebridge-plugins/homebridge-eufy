@@ -1422,6 +1422,11 @@ describe('a diagnostics authorization the runtime is notified of', () => {
   });
 });
 
+/** This checkout's root, which is what the committed issue form and manifest are read relative to. */
+function repositoryRoot(): string {
+  return fileURLToPath(new URL('../..', import.meta.url));
+}
+
 /**
  * One finished support session, and the report it prepares.
  *
@@ -1472,7 +1477,7 @@ describe('guided diagnostics issue handoff', () => {
    * line it cannot answer, so a prefilled form never asks triage for less than an empty one.
    */
   it('fills the environment block it can answer and prompts for the rest', async () => {
-    const repository = fileURLToPath(new URL('../..', import.meta.url));
+    const repository = repositoryRoot();
     const declaredVersion = (JSON.parse(readFileSync(join(repository, 'package.json'), 'utf8')) as { version: string })
       .version;
     const { url, supportCaseId } = await preparedReport('live-media');
@@ -1488,17 +1493,16 @@ describe('guided diagnostics issue handoff', () => {
   });
 
   /**
-   * The archive field arrives empty, because it is required and GitHub satisfies that with any text: a
-   * prefilled instruction submits as an answer, and the report lands with no archive on it. The form's own
-   * description and placeholder name the file, so nothing is lost by leaving it to the reporter.
+   * The archive field is never addressed. A query string cannot carry a file, and any text placed there
+   * satisfies the field's own `required` validation, so a prefill would answer it on the reporter's behalf.
+   * The form states the file it wants, and this holds it to the extension the export produces.
    */
-  it('leaves the archive field for the reporter, so the form refuses a report without one', async () => {
-    const repository = fileURLToPath(new URL('../..', import.meta.url));
-    const form = readFileSync(join(repository, '.github', 'ISSUE_TEMPLATE', 'bug_report.yml'), 'utf8');
+  it('addresses no archive field, and the form names the extension the export produces', async () => {
+    const form = readFileSync(join(repositoryRoot(), '.github', 'ISSUE_TEMPLATE', 'bug_report.yml'), 'utf8');
     const { url } = await preparedReport('control-state');
 
     expect(url.searchParams.has('diagnostics')).toBe(false);
-    expect(form.slice(form.indexOf('id: diagnostics'))).toContain('.eufysupport.gz');
+    expect(form.slice(form.indexOf('id: diagnostics'), form.indexOf('id: description'))).toContain('.eufysupport.gz');
   });
 
   /**
@@ -1507,7 +1511,7 @@ describe('guided diagnostics issue handoff', () => {
    * fails this rather than silently leaving the dropdown unset.
    */
   it('selects an area the committed form declares, for every profile', async () => {
-    const repository = fileURLToPath(new URL('../..', import.meta.url));
+    const repository = repositoryRoot();
     const form = readFileSync(join(repository, '.github', 'ISSUE_TEMPLATE', 'bug_report.yml'), 'utf8');
     const declared = form
       .slice(form.indexOf('id: area'), form.indexOf('id: diagnostics'))
@@ -1575,7 +1579,7 @@ describe('guided diagnostics issue handoff', () => {
    * empty box nobody notices.
    */
   it('addresses only field ids the committed form declares', async () => {
-    const repository = fileURLToPath(new URL('../..', import.meta.url));
+    const repository = repositoryRoot();
     const form = readFileSync(join(repository, '.github', 'ISSUE_TEMPLATE', 'bug_report.yml'), 'utf8');
     const declared = [...form.matchAll(/^\s{4}id: (\S+)$/gm)].map(([, id]) => id);
     const { url } = await preparedReport('live-media');
@@ -1606,7 +1610,7 @@ describe('guided diagnostics issue handoff', () => {
   it('has a reader-facing phrase for every class it never collects, in both languages', async () => {
     const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-issue-'));
     const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-11T08:00:00.000Z'));
-    const repository = fileURLToPath(new URL('../..', import.meta.url));
+    const repository = repositoryRoot();
     const script = readFileSync(join(repository, 'homebridge-ui', 'public', 'js', 'app.js'), 'utf8');
     const catalogues = ['en', 'fr'].map((locale) => ({
       locale,
