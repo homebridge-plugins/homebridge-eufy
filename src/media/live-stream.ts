@@ -959,16 +959,20 @@ function outputArguments(
  * whole session onto one instant; the constant-rate output then resolves the collision by discarding almost
  * every frame it was given.
  *
- * A negotiated frame rate is a CEILING, not a cadence, and this output carries the cadence its source arrived
- * at. A constant-rate output fills every gap in that arrival with a duplicate of the last picture, and each
- * duplicate costs a full encode and a share of the negotiated bit rate for a frame carrying nothing new; a
- * source over this transport gaps as its normal case, and an adaptation once behind real time does not recover
- * inside one session. Measured on the bundled encoder against a 15 fps arrival stalled 1.5 seconds after every
- * second of media: a constant rate emitted 266 frames of which 146 were duplicates at 0.90x real time, and the
- * arrival timestamps passed through emitted 120 frames with no duplicate in the same wall time.
+ * A negotiated frame rate is a CEILING, not a cadence, so the rate is bounded rather than pinned. Pinning it
+ * with `-r` makes the encoder interpolate a cadence a bare Annex-B pipe never states, which collapses a session
+ * onto one instant.
  *
- * `-fpsmax` states a ceiling for a constant-rate output only and FFmpeg refuses it beside any other frame-rate
- * mode, so the rate of this output is the rate its source delivers.
+ * The output is constant-rate, which fills a gap in arrival with a duplicate of the last picture rather than
+ * carrying the gap. A duplicate costs a full encode and a share of the negotiated bit rate for a frame carrying
+ * nothing new, and a source over this transport gaps as its normal case: measured on the bundled encoder against
+ * a 15 fps arrival stalled 1.5 seconds after every second of media, a constant rate emitted 266 frames of which
+ * 146 were duplicates, against 120 frames and none when the arrival timestamps were passed through, at the same
+ * 0.90x real time either way. What the duplicates buy is a dense presentation timeline: a controller shown the
+ * gaps instead displays a picture that visibly jumps at every one of them.
+ *
+ * `-fpsmax` states that ceiling for a constant-rate output only, and FFmpeg refuses it beside any other
+ * frame-rate mode, so the two cannot be combined.
  *
  * A negotiated selection states no refresh cadence, so the keyframe interval is plugin policy: `-g` and
  * `-keyint_min` are the negotiated rate doubled and scene-cut detection is off, which is a refresh every two
@@ -1012,8 +1016,8 @@ function videoArguments(
     'yuv420p',
     '-vf',
     `scale=${selection.width}:${selection.height}:force_original_aspect_ratio=decrease,pad=${selection.width}:${selection.height}:(ow-iw)/2:(oh-ih)/2`,
-    '-fps_mode:v',
-    'passthrough',
+    '-fpsmax',
+    String(selection.fps),
     '-g',
     String(selection.fps * 2),
     '-keyint_min',

@@ -1218,8 +1218,8 @@ describe('live media adaptation', () => {
         'main',
         '-level:v',
         '3.1',
-        '-fps_mode:v',
-        'passthrough',
+        '-fpsmax',
+        '30',
         '-b:v',
         '288k',
         '-payload_type',
@@ -1301,8 +1301,8 @@ describe('live media adaptation', () => {
           'high',
           '-level:v',
           '4.0',
-          '-fps_mode:v',
-          'passthrough',
+          '-fpsmax',
+          '15',
           '-g',
           '30',
           '-b:v',
@@ -1367,7 +1367,7 @@ describe('live media adaptation', () => {
     );
     expect(spawned[1]).toContain('scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2');
     expect(spawned[1]).toEqual(
-      expect.arrayContaining(['-fps_mode:v', 'passthrough', '-g', '30', '-b:v', '144k', '-maxrate', '144k']),
+      expect.arrayContaining(['-fpsmax', '15', '-g', '30', '-b:v', '144k', '-maxrate', '144k']),
     );
     expect(spawned[1]).toEqual(
       expect.arrayContaining([
@@ -1480,9 +1480,7 @@ describe('live media adaptation', () => {
     expect(spawned.map((args) => args[args.indexOf('-f') + 1])).toEqual(['h264', 'hevc']);
     for (const args of spawned) {
       expect(args).toContain('scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2');
-      expect(args).toEqual(
-        expect.arrayContaining(['-fps_mode:v', 'passthrough', '-b:v', '288k', '-payload_type', '99']),
-      );
+      expect(args).toEqual(expect.arrayContaining(['-fpsmax', '30', '-b:v', '288k', '-payload_type', '99']));
       expect(args).not.toContain('-r');
     }
     expect(stream.stop).not.toHaveBeenCalled();
@@ -2103,27 +2101,29 @@ describe('adaptation binary identity', () => {
 });
 
 /**
- * A live adaptation carries the cadence its source arrived at.
+ * A negotiated frame rate is a ceiling, not a cadence, and the output is constant-rate.
  *
- * A constant-rate output fills every gap in arrival with a duplicate of the last picture, and each duplicate
- * costs a full encode and a share of the negotiated bit rate for a frame carrying nothing new. Measured on the
- * bundled encoder against a 15 fps arrival stalled 1.5 seconds after every second of media: a constant rate
- * emitted 266 frames of which 146 were duplicates at 0.90x real time, and the arrival timestamps passed through
- * emitted 120 frames with no duplicate in the same wall time.
+ * Pinning the rate with `-r` makes the encoder interpolate a cadence a bare Annex-B pipe never states, which
+ * collapses a session onto one instant. Bounding it leaves the encoder filling a gap in arrival with a duplicate
+ * of the last picture, which costs a full encode and a share of the negotiated bit rate for a frame carrying
+ * nothing new: measured on the bundled encoder against a 15 fps arrival stalled 1.5 seconds after every second
+ * of media, 266 frames of which 146 were duplicates, against 120 frames and none when the arrival timestamps
+ * were passed through, at the same 0.90x real time either way. What the duplicates buy is a dense presentation
+ * timeline, which is what a controller displays without visibly jumping at every gap.
  *
- * `-fpsmax` states a ceiling for a constant-rate output only and FFmpeg refuses it beside any other frame-rate
- * mode, so neither it nor `-r` may appear on this path.
+ * `-fpsmax` states that ceiling for a constant-rate output only, and FFmpeg refuses it beside any other
+ * frame-rate mode, so the two never appear together.
  */
 describe('live output frame rate', () => {
-  it('passes the source cadence through instead of resampling it to a constant rate', async () => {
+  it('bounds the rate for a constant-rate output, without pinning it', async () => {
     const session = await liveSession();
     await session.start();
     session.stream.video(KEYFRAME);
 
     const args = session.spawned[0]!;
-    expect(args[args.indexOf('-fps_mode:v') + 1]).toBe('passthrough');
+    expect(args[args.indexOf('-fpsmax') + 1]).toBe('30');
     expect(args).not.toContain('-r');
-    expect(args).not.toContain('-fpsmax');
+    expect(args, 'FFmpeg refuses a frame-rate mode beside -fpsmax').not.toContain('-fps_mode:v');
     session.prepared.stop();
   });
 });
