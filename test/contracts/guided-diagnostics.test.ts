@@ -1488,16 +1488,17 @@ describe('guided diagnostics issue handoff', () => {
   });
 
   /**
-   * A URL cannot carry a file, so the prefill names the one the reporter has to attach, with the extension the
-   * export produces. An instruction naming a file nobody has is worse than none.
+   * The archive field arrives empty, because it is required and GitHub satisfies that with any text: a
+   * prefilled instruction submits as an answer, and the report lands with no archive on it. The form's own
+   * description and placeholder name the file, so nothing is lost by leaving it to the reporter.
    */
-  it('names the archive the export produces in the attachment instruction', async () => {
-    const { url, supportCaseId } = await preparedReport('control-state');
-    const attachment = url.searchParams.get('diagnostics') ?? '';
+  it('leaves the archive field for the reporter, so the form refuses a report without one', async () => {
+    const repository = fileURLToPath(new URL('../..', import.meta.url));
+    const form = readFileSync(join(repository, '.github', 'ISSUE_TEMPLATE', 'bug_report.yml'), 'utf8');
+    const { url } = await preparedReport('control-state');
 
-    expect(attachment).toContain('.eufysupport.gz');
-    expect(attachment).toContain('homebridge-eufy-');
-    expect(attachment, 'the id belongs in the file, not the URL').not.toContain(supportCaseId);
+    expect(url.searchParams.has('diagnostics')).toBe(false);
+    expect(form.slice(form.indexOf('id: diagnostics'))).toContain('.eufysupport.gz');
   });
 
   /**
