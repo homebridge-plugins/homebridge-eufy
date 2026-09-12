@@ -1,11 +1,17 @@
 name: Report completeness
 
-# A report whose form asked for a diagnostics archive cannot be triaged without one, and the form's own
-# `required` validation cannot tell an attachment from a sentence. This checks the one thing it cannot, and
-# says so on the issue: no archive means the report waits on its reporter rather than on a maintainer.
+# A report the maintainers cannot act on should say so on the issue, at once, rather than wait for someone
+# to read it. Two things are checked, and nothing here is ever closed: closing a report the reporter cannot
+# fix is how a real defect gets lost.
 #
-# The archive may arrive in a later comment, so every event re-reads the whole thread and the label follows
-# what is there now. Nothing here judges the archive's contents.
+# 1. The diagnostics archive. The form marks the field required, and GitHub satisfies that with any text, so
+#    it cannot tell an attachment from a sentence. This can.
+# 2. The plugin version. V4 is unmaintained, so a V4 report is stated as unactionable while it is still the
+#    reporter's evening rather than a week later.
+#
+# The archive may arrive in a later comment, so every event re-reads the whole thread and the labels follow
+# what is there now. The version is advisory only: a reporter who retests says so in prose, and no label
+# state may depend on a body they will not edit.
 
 on:
   issues:
@@ -24,7 +30,7 @@ jobs:
   completeness:
     runs-on: ubuntu-latest
     steps:
-      - name: Check for a diagnostics archive
+      - name: Assess the report
         uses: actions/github-script@v7
         with:
           script: |
@@ -33,10 +39,12 @@ jobs:
               return;
             }
 
+            const body = issue.body || '';
+
             // Only a report whose form asked for the archive is judged on whether one arrived, which keeps
             // this off device-support requests and off issues opened without a template. Both labels are
             // matched because reports filed against the previous form say "File".
-            if (!/^###\s+Diagnostics (?:Archive|File)\s*$/im.test(issue.body || '')) {
+            if (!/^###\s+Diagnostics (?:Archive|File)\s*$/im.test(body)) {
               core.info(`#${issue.number} was not asked for an archive`);
               return;
             }
@@ -46,50 +54,73 @@ jobs:
             // an extension keeps this working across the v4 `.tar.gz` and the v5 `.eufysupport.gz`.
             const ATTACHED_FILE = /github\.com\/user-attachments\/files\/\d+\//;
 
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue.number,
-              per_page: 100,
-            });
-            const attached =
-              ATTACHED_FILE.test(issue.body || '') || comments.some((comment) => ATTACHED_FILE.test(comment.body || ''));
+            // The version line the form asks for, read only where it states a bare 4.x. A blank, a range or
+            // anything unparseable says nothing, and a guess here would tell a V5 reporter to upgrade.
+            const V4_VERSION = /^\s*-\s*\*\*Plugin Version\*\*:\s*v?4\.\d+/im;
+
+            const request = { owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number };
+            const comments = await github.paginate(github.rest.issues.listComments, { ...request, per_page: 100 });
+            const attached = ATTACHED_FILE.test(body) || comments.some((comment) => ATTACHED_FILE.test(comment.body || ''));
+
+            // This workflow's own voice, so every path is idempotent without a label standing in for one.
+            const MARKER = '<!-- report-completeness -->';
+            const spoken = comments.some((comment) => (comment.body || '').includes(MARKER));
+
+            const findings = [];
+            if (V4_VERSION.test(body)) {
+              findings.push(
+                [
+                  '**This report is against V4, which is no longer maintained.** It depends on `eufy-security-client`, which its own maintainer has deprecated, and eufy has since moved its apps to a new protocol. No further fixes will be made to 4.x, so this cannot be actioned as filed.',
+                  '',
+                  'Please update to V5 and tell us whether it still happens:',
+                  '',
+                  '```bash',
+                  'npm install -g @homebridge-plugins/homebridge-eufy-security@beta',
+                  '```',
+                  '',
+                  'V5 needs Homebridge 2 and Node 24.5 or newer, and it registers its own accessories instead of adopting the V4 ones, so expect to reassign rooms, names and automations once. If you cannot move yet, say so and this stays open — it simply waits for V5.',
+                ].join('\n'),
+              );
+            }
+            if (!attached) {
+              findings.push(
+                [
+                  '**No diagnostics archive is attached**, and without it the logs that would say which part failed do not exist.',
+                  '',
+                  'To produce one: open the plugin settings, select the device that is misbehaving, click **Run diagnostics**, and follow it through. Reproduce the problem once while it is collecting, then drag the file it gives you into a comment here. It is encrypted and redacted — no serial numbers, addresses, tokens or login details, and the plugin uploads nothing anywhere.',
+                ].join('\n'),
+              );
+            }
 
             const labels = (issue.labels || []).map((label) => (typeof label === 'string' ? label : label.name));
             const waiting = labels.includes('needs-info');
-            const request = { owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number };
 
-            if (attached) {
-              core.info(`#${issue.number} has an archive`);
-              if (waiting) {
-                await github.rest.issues.removeLabel({ ...request, name: 'needs-info' });
-                await github.rest.issues.addLabels({ ...request, labels: ['needs-triage'] });
+            if (findings.length && !spoken) {
+              await github.rest.issues.createComment({
+                ...request,
+                body: [
+                  MARKER,
+                  'Thanks for the report. Before anyone can look into this, there is something to sort out first.',
+                  '',
+                  findings.join('\n\n---\n\n'),
+                  '',
+                  'This issue stays open and picks itself back up as soon as that lands.',
+                ].join('\n'),
+              });
+            }
+
+            // Only the archive governs the labels. It is the one finding a reporter resolves by attaching
+            // something this can see.
+            if (!attached && !waiting) {
+              await github.rest.issues.addLabels({ ...request, labels: ['needs-info'] });
+              for (const name of ['needs-triage', 'needs triage']) {
+                if (labels.includes(name)) {
+                  await github.rest.issues.removeLabel({ ...request, name });
+                }
               }
               return;
             }
-
-            // Already asked. Saying it again on every edit and every comment would be the loudest possible
-            // way to add nothing.
-            if (waiting) {
-              core.info(`#${issue.number} is already waiting on its reporter`);
-              return;
-            }
-
-            await github.rest.issues.createComment({
-              ...request,
-              body: [
-                'Thanks for the report. Before anyone can look into this, it needs the **diagnostics archive** — the form asked for one and none is attached.',
-                '',
-                'To produce it: open the plugin settings, select the device that is misbehaving, click **Run diagnostics**, and follow it through. Reproduce the problem once while it is collecting, then drag the file it gives you into a comment here.',
-                '',
-                'It is encrypted and redacted: no serial numbers, addresses, tokens or login details, and the plugin uploads nothing anywhere.',
-                '',
-                'Without it the logs that would say which part failed do not exist, and the likely causes are indistinguishable from the outside. This issue stays open and will pick itself back up as soon as the file lands.',
-              ].join('\n'),
-            });
-            await github.rest.issues.addLabels({ ...request, labels: ['needs-info'] });
-            for (const name of ['needs-triage', 'needs triage']) {
-              if (labels.includes(name)) {
-                await github.rest.issues.removeLabel({ ...request, name });
-              }
+            if (attached && waiting) {
+              await github.rest.issues.removeLabel({ ...request, name: 'needs-info' });
+              await github.rest.issues.addLabels({ ...request, labels: ['needs-triage'] });
             }

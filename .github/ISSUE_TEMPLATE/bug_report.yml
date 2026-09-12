@@ -1,14 +1,34 @@
 name: 🐛 Bug Report
 description: Report a bug or unexpected behavior
 type: Bug
-labels: ["needs-triage"]
+labels: ["needs triage"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!IMPORTANT]
+        > **V4 is no longer maintained.** It depends on `eufy-security-client`, which its own maintainer has
+        > deprecated, and eufy has since moved its apps to a new protocol. No further fixes will be made to
+        > 4.x — a V4 report cannot be actioned, whatever it turns out to be.
+        >
+        > If something is broken on V4, please update to V5 and report from there:
+        >
+        > ```bash
+        > npm install -g @homebridge-plugins/homebridge-eufy-security@beta
+        > ```
+        >
+        > V5 needs **Homebridge 2** and **Node 24.5+**, and it registers its own accessories rather than
+        > adopting the V4 ones, so expect to reassign rooms, names and automations once. If you cannot move
+        > yet, you are welcome to file anyway for the record — just know it waits for V5.
+
   - type: checkboxes
     id: preflight
     attributes:
       label: Preflight Checklist
       options:
         - label: I have searched the [existing issues](https://github.com/homebridge-plugins/homebridge-eufy/issues) and this bug has not been reported before.
+          required: true
+        - label: I understand **V4 is no longer maintained**, and that a fix will only ever land in V5.
           required: true
         - label: I am using a **dedicated guest admin account** (not my main Eufy account).
           required: true
