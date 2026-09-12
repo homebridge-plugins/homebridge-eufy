@@ -1,5 +1,5 @@
 import type { LiveAudioFrame, LiveStreamConsumer, LiveVideoConfig, LiveVideoFrame, TalkbackHandle } from '@mega-yfue/eufy-sdk';
-import { LiveStreamStartError } from '@mega-yfue/eufy-sdk';
+import { LiveStreamStartError, StationBusyError } from '@mega-yfue/eufy-sdk';
 import { createSocket } from 'node:dgram';
 import { execFile, spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -56,7 +56,18 @@ function canCode(running: LiveVideoConfig, announced: LiveVideoConfig): boolean 
 const MAX_SOURCE_INPUT_REPLACEMENTS = 3;
 
 const INITIAL_RTCP_GRACE_MS = 15_000;
-const SOURCE_ACQUISITION_DEADLINE_MS = 10_000;
+/**
+ * The longest a session waits for the SDK to hand over a source, after which it cancels the acquisition.
+ *
+ * Reaching a station is inside this wait: an unconnected station is reconnected within it, and a HomeBase
+ * resolves its session before it can start one. The bound is therefore above what reaching a station costs and
+ * below both {@link SOURCE_START_BACKSTOP_MS} and the window a started request is owed an outcome within, so
+ * the acquisition is what this expiry reports.
+ *
+ * Expiry cancels the acquisition. A station serves one media channel, and an uncancelled acquisition holds it
+ * until the SDK's own wait elapses, which refuses every camera behind that station meanwhile.
+ */
+const SOURCE_ACQUISITION_DEADLINE_MS = 25_000;
 const RETURN_AUDIO_BIND_GRACE_MS = 250;
 /**
  * Backstop for a started media session that never produces adapted output. The SDK source owns the
@@ -78,7 +89,7 @@ const SOURCE_ACQUISITION_TIMEOUT = Symbol('source-acquisition-timeout');
  * from a transport that failed.
  */
 function sourceFailure(error: unknown): LiveSessionFailure {
-  if (error instanceof Error && error.name === 'StationBusyError') {
+  if (error instanceof StationBusyError) {
     return 'station-busy';
   }
   return error instanceof LiveStreamStartError && error.stage === 'audio-only' ? 'source-audio-only' : 'source-error';
@@ -263,6 +274,13 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
     }
 
     let source: LiveStreamConsumer | undefined;
+    /**
+     * Cancels the source acquisition in flight, and is held for exactly as long as one is.
+     *
+     * The station's one media channel is held for the whole of an uncancelled acquisition, so a session that
+     * ends during one cancels it rather than leaving it to the SDK's own wait.
+     */
+    let acquiring: AbortController | undefined;
     let videoProcess: MediaProcess | undefined;
     let audioProcess: MediaProcess | undefined;
     let returnAudioProcess: ReturnAudioProcess | undefined;
@@ -408,6 +426,7 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
         return;
       }
       stopped = true;
+      acquiring?.abort(new Error('live media session stopped'));
       clearTimeout(rtcpDeadline);
       clearTimeout(initialRtcpGrace);
       clearTimeout(videoStartBackstop);
@@ -416,7 +435,7 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
       stopProcess(audioProcess);
       if (source) {
         source.stop();
-        transport.onSessionReleased?.();
+        transport.onSessionReleased?.(videoFailed ? 'failed' : 'requested');
       }
       videoPort.close();
       audioPort?.close();
@@ -804,8 +823,10 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
         const returnAudioReady = startReturnAudio(camera, selection.audio);
         let sourcePromise: Promise<LiveStreamConsumer>;
         let acquisitionDeadline: ReturnType<typeof setTimeout> | undefined;
+        const acquisition = new AbortController();
+        acquiring = acquisition;
         try {
-          sourcePromise = camera.live();
+          sourcePromise = camera.live({ signal: acquisition.signal });
           void sourcePromise.then(
             (lateSource) => {
               if (stopped && source !== lateSource) {
@@ -822,10 +843,12 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
             }),
           ]);
         } catch (error) {
+          acquisition.abort(new Error('live media source acquisition was cancelled'));
           failVideo(error === SOURCE_ACQUISITION_TIMEOUT ? 'source-acquisition-timeout' : sourceFailure(error));
           throw error === SOURCE_ACQUISITION_TIMEOUT ? new Error('live media source acquisition timed out') : error;
         } finally {
           clearTimeout(acquisitionDeadline);
+          acquiring = undefined;
         }
         if (stopped) {
           source.stop();
@@ -936,12 +959,16 @@ function outputArguments(
  * whole session onto one instant; the constant-rate output then resolves the collision by discarding almost
  * every frame it was given.
  *
- * A negotiated frame rate is a CEILING, not a cadence, so the rate is bounded rather than pinned. Pinning it
- * makes the encoder duplicate frames the source never sent, and each duplicate costs a full encode and a share
- * of the negotiated bit rate for a picture carrying nothing new. Measured on a 1600x1200 doorbell delivering
- * about 15 fps against a 30 fps selection: 264 of 267 emitted frames were duplicates and the adaptation ran at
- * 0.32x real time, so it fell further behind every second and the session died on its backstop with nothing
- * watchable reaching the controller.
+ * A negotiated frame rate is a CEILING, not a cadence, and this output carries the cadence its source arrived
+ * at. A constant-rate output fills every gap in that arrival with a duplicate of the last picture, and each
+ * duplicate costs a full encode and a share of the negotiated bit rate for a frame carrying nothing new; a
+ * source over this transport gaps as its normal case, and an adaptation once behind real time does not recover
+ * inside one session. Measured on the bundled encoder against a 15 fps arrival stalled 1.5 seconds after every
+ * second of media: a constant rate emitted 266 frames of which 146 were duplicates at 0.90x real time, and the
+ * arrival timestamps passed through emitted 120 frames with no duplicate in the same wall time.
+ *
+ * `-fpsmax` states a ceiling for a constant-rate output only and FFmpeg refuses it beside any other frame-rate
+ * mode, so the rate of this output is the rate its source delivers.
  *
  * A negotiated selection states no refresh cadence, so the keyframe interval is plugin policy: `-g` and
  * `-keyint_min` are the negotiated rate doubled and scene-cut detection is off, which is a refresh every two
@@ -985,8 +1012,8 @@ function videoArguments(
     'yuv420p',
     '-vf',
     `scale=${selection.width}:${selection.height}:force_original_aspect_ratio=decrease,pad=${selection.width}:${selection.height}:(ow-iw)/2:(oh-ih)/2`,
-    '-fpsmax',
-    String(selection.fps),
+    '-fps_mode:v',
+    'passthrough',
     '-g',
     String(selection.fps * 2),
     '-keyint_min',

@@ -58,8 +58,13 @@ export interface RepresentationDiagnostic {
 export type HomeKitDiagnostic = RepresentationDiagnostic | AdapterDiagnostic;
 export type HomeKitDiagnosticSink = (diagnostic: HomeKitDiagnostic, affectedDeviceIds: readonly string[]) => void;
 
-/** Redacted debug evidence that an SDK event reached one self-hosted adapter. */
-export type HomeKitEventReport = { adapter: string } & AdapterTrace;
+/**
+ * Redacted debug evidence that an SDK event reached one self-hosted adapter, and the device it is about.
+ *
+ * One adapter serves every camera of a household, so the adapter alone does not identify what a report concerns.
+ * `serial` is an identity: the sink resolves it to a support-case alias and retains that.
+ */
+export type HomeKitEventReport = { adapter: string; serial: string } & AdapterTrace;
 
 export type HomeKitEventReportSink = (trace: HomeKitEventReport) => void;
 
@@ -207,7 +212,7 @@ export class HomeKitReconciler {
           availability: () => this.source.currentAvailability?.(serial),
           diagnose: (diagnostic) => this.setAdapterDiagnostic(serial, key, diagnostic),
           observed: (code) => this.clearAdapterDiagnostics(serial, code, key),
-          trace: (trace) => this.trace?.({ adapter: key, ...trace }),
+          trace: (trace) => this.trace?.({ adapter: key, serial, ...trace }),
           persist: () => this.store.update([accessory]),
         });
         if (handle) {
@@ -300,7 +305,7 @@ export class HomeKitReconciler {
     for (const [adapter, handle] of this.attachedAdapters.get(event.deviceSn) ?? []) {
       const result = handle.event?.(event);
       if (result) {
-        this.trace?.({ adapter, ...result });
+        this.trace?.({ adapter, serial: event.deviceSn, ...result });
       }
     }
   }

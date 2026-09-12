@@ -38,6 +38,7 @@ const ENVELOPE_FIELDS = new Set([
   'ciphertext',
 ]);
 const EVIDENCE_FILES = new Map([
+  ['reporter-statement', ['reporter-statement.json', 'application/json', 'diagnostic']],
   ['environment', ['environment.json', 'application/json', 'operational']],
   ['reproduction-markers', ['reproduction-markers.jsonl', 'application/x-ndjson', 'operational']],
   ['plugin-log', ['plugin-log.jsonl', 'application/x-ndjson', 'diagnostic']],

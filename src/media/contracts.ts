@@ -231,6 +231,16 @@ export interface StationLiveSessionRegistry {
   hold(stationSn: string, camera: string, claim: StationLiveClaim, abandon?: () => void): () => void;
 }
 
+/**
+ * Why a live session gave its source back.
+ *
+ * `requested` is a stop from outside the session: a controller closing the view, a switch to another camera, a
+ * host giving room back. `failed` is the session ending itself, and the failure that decided it carries its own
+ * reason and stage. One is a session that served for as long as it was wanted and the other is a fault, so a
+ * release states which.
+ */
+export type LiveSessionRelease = 'requested' | 'failed';
+
 export interface LiveMediaTransport {
   readonly addressVersion: 'ipv4' | 'ipv6';
   readonly targetAddress: string;
@@ -238,7 +248,7 @@ export interface LiveMediaTransport {
   readonly audio?: LiveMediaTarget;
   readonly onVideoFailure?: () => void;
   readonly onSessionOutcome?: (outcome: LiveSessionOutcome) => void;
-  readonly onSessionReleased?: () => void;
+  readonly onSessionReleased?: (release: LiveSessionRelease) => void;
   readonly onTalkbackOutcome?: (outcome: TalkbackOutcome) => void;
 }
 

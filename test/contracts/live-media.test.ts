@@ -273,7 +273,7 @@ async function talkbackSession(talkback: () => Promise<TalkbackHandle>) {
  * reported outcome. `audio` negotiates the second output so the audio adaptation contracts share this setup.
  */
 async function liveSession(
-  source?: { live(): Promise<LiveStreamConsumer> },
+  source?: { live(options?: { signal?: AbortSignal }): Promise<LiveStreamConsumer> },
   {
     audio,
     stalling,
@@ -451,7 +451,7 @@ describe('live media adaptation', () => {
     expect(session.onVideoFailure).not.toHaveBeenCalled();
     expect(session.outcomes).toEqual([{ outcome: 'streaming' }]);
     session.prepared.stop();
-    expect(session.released).toHaveBeenCalledOnce();
+    expect(session.released).toHaveBeenCalledExactlyOnceWith('requested');
     vi.useRealTimers();
   });
 
@@ -1147,7 +1147,10 @@ describe('live media adaptation', () => {
     ]);
     expect(session.onVideoFailure).toHaveBeenCalledOnce();
     expect(session.stream.stop).toHaveBeenCalledOnce();
-    expect(session.released).toHaveBeenCalledOnce();
+    expect(
+      session.released,
+      'a session that ended itself is not a session a controller closed, and a controller shows the same thing either way',
+    ).toHaveBeenCalledExactlyOnceWith('failed');
     expect(session.children.at(-1)!.kill).toHaveBeenCalledWith('SIGTERM');
   });
 
@@ -1215,8 +1218,8 @@ describe('live media adaptation', () => {
         'main',
         '-level:v',
         '3.1',
-        '-fpsmax',
-        '30',
+        '-fps_mode:v',
+        'passthrough',
         '-b:v',
         '288k',
         '-payload_type',
@@ -1298,8 +1301,8 @@ describe('live media adaptation', () => {
           'high',
           '-level:v',
           '4.0',
-          '-fpsmax',
-          '15',
+          '-fps_mode:v',
+          'passthrough',
           '-g',
           '30',
           '-b:v',
@@ -1364,7 +1367,7 @@ describe('live media adaptation', () => {
     );
     expect(spawned[1]).toContain('scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2');
     expect(spawned[1]).toEqual(
-      expect.arrayContaining(['-fpsmax', '15', '-g', '30', '-b:v', '144k', '-maxrate', '144k']),
+      expect.arrayContaining(['-fps_mode:v', 'passthrough', '-g', '30', '-b:v', '144k', '-maxrate', '144k']),
     );
     expect(spawned[1]).toEqual(
       expect.arrayContaining([
@@ -1477,7 +1480,9 @@ describe('live media adaptation', () => {
     expect(spawned.map((args) => args[args.indexOf('-f') + 1])).toEqual(['h264', 'hevc']);
     for (const args of spawned) {
       expect(args).toContain('scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2');
-      expect(args).toEqual(expect.arrayContaining(['-fpsmax', '30', '-b:v', '288k', '-payload_type', '99']));
+      expect(args).toEqual(
+        expect.arrayContaining(['-fps_mode:v', 'passthrough', '-b:v', '288k', '-payload_type', '99']),
+      );
       expect(args).not.toContain('-r');
     }
     expect(stream.stop).not.toHaveBeenCalled();
@@ -1684,15 +1689,32 @@ describe('live media adaptation', () => {
 
   it('bounds stalled source acquisition and no-RTCP sessions', async () => {
     vi.useFakeTimers();
-    const stalled = await liveSession({ live: () => new Promise<LiveStreamHandle>(() => undefined) });
+    let acquisitionSignal: AbortSignal | undefined;
+    const stalled = await liveSession({
+      live: (options) => {
+        acquisitionSignal = options?.signal;
+        return new Promise<LiveStreamHandle>(() => undefined);
+      },
+    });
     const start = expect(stalled.start()).rejects.toThrow('source acquisition timed out');
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(stalled.outcomes, 'the SDK owns waits longer than this, so the bound sits above reaching a station').toEqual(
+      [],
+    );
+    expect(acquisitionSignal?.aborted).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(5_000);
     await start;
 
     expect(stalled.onVideoFailure).toHaveBeenCalledOnce();
     expect(stalled.outcomes).toEqual([
       { outcome: 'failed', reason: 'source-acquisition-timeout', stage: 'sdk-source-acquisition' },
     ]);
+    expect(
+      acquisitionSignal?.aborted,
+      'an abandoned acquisition holds the station channel until the SDK stops waiting for it too',
+    ).toBe(true);
 
     const noRtcp = await liveSession();
     await noRtcp.start();
@@ -2081,25 +2103,27 @@ describe('adaptation binary identity', () => {
 });
 
 /**
- * A negotiated frame rate is a ceiling, not a cadence.
+ * A live adaptation carries the cadence its source arrived at.
  *
- * Pinning it with `-r` makes the encoder duplicate frames the source never sent, and each duplicate costs a
- * full encode and a share of the negotiated bit rate for a picture carrying nothing new. Measured on a
- * 1600x1200 doorbell delivering about 15 fps against a 30 fps selection: 264 of 267 emitted frames were
- * duplicates, and the adaptation ran at 0.32x real time — so it fell further behind every second and the
- * session died on its 30 s backstop with nothing watchable ever reaching the controller.
+ * A constant-rate output fills every gap in arrival with a duplicate of the last picture, and each duplicate
+ * costs a full encode and a share of the negotiated bit rate for a frame carrying nothing new. Measured on the
+ * bundled encoder against a 15 fps arrival stalled 1.5 seconds after every second of media: a constant rate
+ * emitted 266 frames of which 146 were duplicates at 0.90x real time, and the arrival timestamps passed through
+ * emitted 120 frames with no duplicate in the same wall time.
  *
- * The recording path already states this rule and bounds the rate; this is the same rule on the live path.
+ * `-fpsmax` states a ceiling for a constant-rate output only and FFmpeg refuses it beside any other frame-rate
+ * mode, so neither it nor `-r` may appear on this path.
  */
 describe('live output frame rate', () => {
-  it('bounds the rate instead of pinning it, so a slower source is not padded with duplicates', async () => {
+  it('passes the source cadence through instead of resampling it to a constant rate', async () => {
     const session = await liveSession();
     await session.start();
     session.stream.video(KEYFRAME);
 
     const args = session.spawned[0]!;
-    expect(args[args.indexOf('-fpsmax') + 1]).toBe('30');
+    expect(args[args.indexOf('-fps_mode:v') + 1]).toBe('passthrough');
     expect(args).not.toContain('-r');
+    expect(args).not.toContain('-fpsmax');
     session.prepared.stop();
   });
 });

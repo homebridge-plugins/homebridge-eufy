@@ -9,6 +9,7 @@ import type {
 import type {
   LiveMediaAdapter,
   LiveSessionOutcome,
+  LiveSessionRelease,
   MediaSessionBudget,
   StationLiveSessionRegistry,
   NegotiatedLiveVideo,
@@ -85,7 +86,13 @@ export type AdapterLiveVideoTrace = Pick<
 /** An identity-free live-session failure or release milestone. */
 export type AdapterLiveSessionTrace =
   | (Extract<LiveSessionOutcome, { outcome: 'failed' }> & { event: 'live-session-failed' })
-  | { event: 'live-session-released' }
+  /**
+   * A session gave its source back, and whether it was asked to or ended itself.
+   *
+   * Both look identical on a controller, which simply stops showing a picture, so the record is the only place
+   * the difference exists.
+   */
+  | { event: 'live-session-released'; release: LiveSessionRelease }
   /** The first adapted output reached the negotiated destination, which is when a picture can appear. */
   | { event: 'live-session-streaming' }
   /**

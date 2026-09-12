@@ -134,7 +134,7 @@ export function createEufyPlatform(
             accessoryStore,
             (diagnostic, affectedDeviceIds = []) => diagnostics.reportHomeKit(diagnostic, affectedDeviceIds),
             this.cachedAccessories,
-            (trace) => reportHomeKitEvent(diagnosticLog, trace),
+            (trace) => reportHomeKitEvent(diagnosticLog, trace, (serial) => diagnostics.aliasFor(serial)),
             configuredConfig.entityPreferences,
             liveMedia,
             snapshotMedia,

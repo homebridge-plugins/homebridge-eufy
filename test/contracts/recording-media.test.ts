@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { FragmentRecordingHandle, MediaFragment, StreamBudgetNotice } from '@mega-yfue/eufy-sdk';
+import { StationBusyError } from '@mega-yfue/eufy-sdk';
 
 import type {
   AdaptationNotice,
@@ -653,15 +654,24 @@ describe('recording media adaptation', () => {
    * A base serves one of its cameras at a time, and the SDK refuses a second rather than degrading both. A
    * recording that was simply outranked is not a camera that failed, and naming the two apart is what lets an
    * operator read the difference in a log.
+   *
+   * The refusal is recognised by the SDK's exported type, so an error that merely calls itself one is a source
+   * failure: a name is a string any thrower can write, and this distinction decides what an operator is told.
    */
   it('names a station serving another camera apart from a source that failed', async () => {
     const session = recordingSession();
     await settle();
-    const busy = new Error('the station is already serving channel 0 to a viewer');
-    busy.name = 'StationBusyError';
-    session.source.fail(busy);
+    session.source.fail(new StationBusyError(0));
     await session.consumed.iteration;
     expect(session.outcomes).toEqual([{ outcome: 'failed', reason: 'station-busy' }]);
+
+    const impostor = recordingSession();
+    await settle();
+    const named = new Error('the station is already serving channel 0 to a viewer');
+    named.name = 'StationBusyError';
+    impostor.source.fail(named);
+    await impostor.consumed.iteration;
+    expect(impostor.outcomes).toEqual([{ outcome: 'failed', reason: 'source-error' }]);
   });
 
   /**

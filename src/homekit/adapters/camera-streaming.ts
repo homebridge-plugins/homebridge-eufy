@@ -28,6 +28,7 @@ import type {
   LiveMediaAdapter,
   LiveMediaSource,
   LiveSessionOutcome,
+  LiveSessionRelease,
   MediaSessionBudget,
   StationLiveSessionRegistry,
   MediaSessionClaim,
@@ -356,7 +357,7 @@ function attachCameraStreaming(context: AdapterAttachmentContext): AttachedAdapt
     enablement,
     availability: availabilityObservation(context.device.sn, context.availability),
     reportSession: liveSessionReporter(context, reportAdmission),
-    reportRelease: () => context.trace?.({ event: 'live-session-released' }),
+    reportRelease: (release) => context.trace?.({ event: 'live-session-released', release }),
     reportTalkback: talkbackReporter(context),
     reportAdmission,
     reportCapacity,
@@ -1106,7 +1107,7 @@ interface LiveCameraBinding {
   readonly enablement: () => boolean | undefined;
   readonly availability: () => 'available' | 'unavailable' | undefined;
   readonly reportSession: (outcome: LiveSessionOutcome, switchedOff?: boolean) => void;
-  readonly reportRelease: () => void;
+  readonly reportRelease: (release: LiveSessionRelease) => void;
   readonly reportTalkback: (outcome: TalkbackOutcome) => void;
   readonly reportAdmission: (refusal?: LiveAdmissionRefusal) => void;
   readonly reportCapacity: (refusal?: MediaCapacityRefusal) => void;

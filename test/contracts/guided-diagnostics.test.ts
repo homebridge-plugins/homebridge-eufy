@@ -1548,7 +1548,6 @@ describe('guided diagnostics issue handoff', () => {
       const url = complete.issueUrl ?? '';
       const values = [...new URL(url).searchParams.values()].join('\n');
       const resolvable: Readonly<Record<string, string>> = {
-        affectedDevices: 'T8410P0000000000',
         supportCaseId: complete.supportCaseId ?? '',
         ffmpeg: ffmpegPath,
       };
@@ -1641,10 +1640,13 @@ describe('guided diagnostics issue handoff', () => {
 
   /**
    * The devices a reporter names are recorded once, with the session, so nobody has to ask again in the issue.
-   * They do not select what is collected — every log is read either way — and a serial is not operational data,
-   * so the manifest declares the field above that class and the archive is where it travels.
+   * They do not select what is collected — every log is read either way.
+   *
+   * A serial is a device identity, and no evidence class in an archive carries one. The answer therefore travels
+   * as its scope: every device, or how many were named. The serials stay on the host, where the owner's own
+   * session holds them.
    */
-  it('records the devices a reporter names, as evidence rather than as a filter', async () => {
+  it('records the scope a reporter named, without carrying the devices', async () => {
     const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-affected-'));
     const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-11T08:00:00.000Z'));
     const named = ['T8410P0000000000', 'T8010P0000000000'];
@@ -1656,10 +1658,13 @@ describe('guided diagnostics issue handoff', () => {
       const { manifest } = await diagnostics.reviewSupportArchive();
       const record = manifest.evidence.find((entry) => entry.evidence === 'reporter-statement');
 
-      expect(authorized.affectedDevices).toEqual(named);
+      expect(authorized.affectedDevices, 'the host keeps the answer it was given').toEqual(named);
       expect(record, 'the statement is an evidence class of its own').toBeDefined();
-      expect(record?.fields).toContainEqual({ field: 'affectedDevices', privacyClass: 'pseudonymous' });
+      expect(record?.fields).toContainEqual({ field: 'affectedDevices', privacyClass: 'operational' });
       expect(manifest.evidence.map((entry) => entry.evidence)).toContain('plugin-log');
+      expect(record?.bytes, 'the statement carries the scope and no serial, which its declared size is what pins').toBe(
+        Buffer.byteLength(`${JSON.stringify({ version: 2, affectedDevices: named.length })}\n`),
+      );
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

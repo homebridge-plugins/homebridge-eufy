@@ -61,10 +61,15 @@ export function unconfirmedWriteCondition(property: string): HomeKitCondition | 
     : { code: 'camera-control-operation-failed', ...named, active: true, reason: 'not-confirmed' };
 }
 
-export type HomeKitEventTrace =
-  | { adapter: string; event: string; observation: string; announcedBy?: string }
+/**
+ * One redacted fact about a HomeKit adapter, and the accessory it belongs to.
+ *
+ * `serial` is an identity and is never retained. {@link reportHomeKitEvent} resolves it to a support-case alias,
+ * which is what names one camera of a household in a record that names no device.
+ */
+export type HomeKitEventTrace = { adapter: string; serial?: string } & (
+  | { event: string; observation: string; announcedBy?: string }
   | {
-      adapter: string;
       event: 'live-video-selected';
       operation: 'start' | 'reconfigure';
       profile: 'baseline' | 'main' | 'high';
@@ -76,13 +81,17 @@ export type HomeKitEventTrace =
       addressVersion: 'ipv4' | 'ipv6';
     }
   | {
-      adapter: string;
       event: 'live-session-failed';
       outcome: 'failed';
       reason: string;
       stage: 'sdk-source-acquisition' | 'first-source-keyframe' | 'first-adapted-output' | 'controller-rtcp';
     }
-  | { adapter: string; event: 'live-session-released' }
+  /**
+   * A session gave its source back, stating whether it was asked to or ended itself.
+   *
+   * A controller stops showing a picture either way, so this record is the only place the two differ.
+   */
+  | { event: 'live-session-released'; release: string }
   /**
    * The first adapted output reached the negotiated destination.
    *
@@ -90,7 +99,7 @@ export type HomeKitEventTrace =
    * nothing from one whose output a controller did not display. Carries the fact alone: a session identity,
    * a port and a key all travel in the same neighbourhood.
    */
-  | { adapter: string; event: 'live-session-streaming' }
+  | { event: 'live-session-streaming' }
   /**
    * A started request reached neither a streaming outcome nor a failure.
    *
@@ -98,14 +107,18 @@ export type HomeKitEventTrace =
    * failure this log has no record of, and nobody can diagnose what was never written down. Carries how long
    * was waited and nothing else: the path that dropped the request left nothing else to carry.
    */
-  | { adapter: string; event: 'live-request-unaccounted'; afterMs: number }
+  | { event: 'live-request-unaccounted'; afterMs: number }
   /**
    * A stream request refused before it reached the source.
    *
    * Answered to a controller instantly, and badged by it instantly. Carries the bounded reason alone, which is
    * enough to tell a momentary switch collision from a camera that is genuinely off or a host genuinely full.
    */
-  | { adapter: string; event: 'live-request-refused'; reason: string };
+  | { event: 'live-request-refused'; reason: string }
+);
+
+/** Why a live session gave its source back: a stop from outside it, or the session ending itself. */
+const LIVE_SESSION_RELEASES = ['requested', 'failed'] as const;
 
 /** The bounded reasons a stream request is refused before it reaches the source. */
 const REFUSAL_REASONS = new Set(['disabled', 'at-capacity', 'cancelled', 'prepare-failed']);
@@ -122,6 +135,22 @@ const HOMEKIT_LIVE_REQUEST_EVENTS = new Set([
   'live-session-released',
   'live-session-streaming',
 ]);
+
+/**
+ * The error identities an SDK record may name, which is all a record carries of one.
+ *
+ * A message is never among them, so an identity absent here is recorded as `Error` and reads as any other
+ * failure. A station refusing a second camera is one of these identities, because a base serving another of its
+ * cameras is working correctly and must not read as a fault.
+ */
+const SDK_ERROR_TYPES = ['Error', 'RangeError', 'SessionExpiredError', 'StationBusyError', 'TypeError'] as const;
+
+/**
+ * The retained fields that stand for a device rather than describing one, which is the privacy class a manifest
+ * declares for them. Each holds a per-case alias: stable within one archive, and resolvable to a device only by
+ * the owner whose console paired it with a name.
+ */
+const PSEUDONYMOUS_FIELDS = new Set(['accessory', 'accessoryAliases']);
 
 const MAX_SDK_DETAILS = 16;
 const MAX_LOG_RECORD_BYTES = 64 * 1024;
@@ -253,6 +282,16 @@ export type DiagnosticsReproductionMode = 'now' | 'intermittent';
  * answer, so the question is asked once here rather than again in the issue.
  */
 export type AffectedDevices = 'all' | readonly string[];
+
+/**
+ * The reporter's answer as a support archive carries it: every device, or how many they named.
+ *
+ * The serials themselves stay on the host. They identify one household's hardware, and no evidence class in an
+ * archive carries a device identity.
+ */
+function countedAffectedDevices(affected: AffectedDevices): 'all' | number {
+  return affected === 'all' ? 'all' : new Set(affected).size;
+}
 
 /** The bounded UI events a support session may record, and the only vocabulary the sink accepts. */
 const DIAGNOSTICS_UI_EVENTS = [
@@ -878,15 +917,15 @@ export class GuidedDiagnostics {
               evidence: 'reporter-statement' as const,
               privacyClass: 'diagnostic' as const,
               contentType: 'application/json' as const,
-              content: `${JSON.stringify({ version: 1, affectedDevices: session.affectedDevices })}\n`,
+              content: `${JSON.stringify({ version: 2, affectedDevices: countedAffectedDevices(session.affectedDevices) })}\n`,
               /**
-               * What the reporter answered, not what the plugin observed. A serial identifies one household's
-               * hardware, so the record is classified above the environment it sits beside and stays inside
-               * the archive.
+               * What the reporter answered, not what the plugin observed. A serial is a device identity and no
+               * evidence class carries one, so the answer travels as its scope: every device, or how many were
+               * named. Which ones is the reporter's to say in their own words.
                */
               fields: [
                 { field: 'version', privacyClass: 'operational' as const },
-                { field: 'affectedDevices', privacyClass: 'pseudonymous' as const },
+                { field: 'affectedDevices', privacyClass: 'operational' as const },
               ],
             },
           ]),
@@ -954,8 +993,11 @@ export class GuidedDiagnostics {
         ...(carried.retainedFrom === undefined ? {} : { retainedFrom: carried.retainedFrom }),
         fields: [...new Set(carried.records.flatMap((record) => Object.keys(record)))].sort().map((field) => ({
           field,
-          privacyClass:
-            field === 'accessoryAliases' ? 'pseudonymous' : field === 'timestamp' ? 'operational' : 'diagnostic',
+          privacyClass: PSEUDONYMOUS_FIELDS.has(field)
+            ? 'pseudonymous'
+            : field === 'timestamp'
+              ? 'operational'
+              : 'diagnostic',
         })),
       });
     }
@@ -1576,6 +1618,19 @@ function opaquePullHandle(value: unknown): string | undefined {
 }
 
 /**
+ * One support-case accessory alias, or nothing where the value is not one.
+ *
+ * Matched against the shape an alias has rather than against what a serial looks like, on the same rule as
+ * {@link opaquePullHandle}: a record carries an alias or it carries no accessory at all.
+ */
+function opaqueAccessoryAlias(value: unknown): string | undefined {
+  return typeof value === 'string' &&
+    /^accessory-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)
+    ? value
+    : undefined;
+}
+
+/**
  * Adapts SDK protocol detail to bounded debug output without preserving supplied values.
  *
  * The SDK runs FFmpeg of its own for snapshot decoding and WebRTC containers and forwards that process's
@@ -1614,9 +1669,7 @@ export function createSdkLogger(target: Partial<PlatformLogger> | undefined): Lo
     const subsystem = SDK_SUBSYSTEMS.has(requestedSubsystem ?? '') ? requestedSubsystem : (aliasedSubsystem ?? 'sdk');
     const details = args.slice(0, MAX_SDK_DETAILS).map((value) => {
       if (value instanceof Error) {
-        const errorType = ['Error', 'RangeError', 'SessionExpiredError', 'TypeError'].includes(value.name)
-          ? value.name
-          : 'Error';
+        const errorType = (SDK_ERROR_TYPES as readonly string[]).includes(value.name) ? value.name : 'Error';
         return { errorType };
       }
       if (typeof value === 'string') {
@@ -2043,12 +2096,7 @@ function sanitizeStructuredEvent(message: string): Record<string, unknown> | und
     for (const detail of Array.isArray(value.details) ? value.details.slice(0, MAX_SDK_DETAILS) : []) {
       if (!detail || typeof detail !== 'object' || Array.isArray(detail)) continue;
       const candidate = detail as Record<string, unknown>;
-      const errorType = allowlistedLabel(candidate.errorType, [
-        'Error',
-        'RangeError',
-        'SessionExpiredError',
-        'TypeError',
-      ]);
+      const errorType = allowlistedLabel(candidate.errorType, SDK_ERROR_TYPES);
       if (errorType) {
         details.push({ errorType });
         continue;
@@ -2117,6 +2165,7 @@ function sanitizeStructuredEvent(message: string): Record<string, unknown> | und
     ) {
       return undefined;
     }
+    const alias = opaqueAccessoryAlias(value.accessory);
     return {
       scope: 'homekit',
       level: 'debug',
@@ -2126,6 +2175,7 @@ function sanitizeStructuredEvent(message: string): Record<string, unknown> | und
       ...(typeof value.announcedBy === 'string' && HOMEKIT_ANNOUNCEMENTS.has(value.announcedBy)
         ? { announcedBy: value.announcedBy }
         : {}),
+      ...(alias === undefined ? {} : { accessory: alias }),
     };
   }
 
@@ -2269,17 +2319,29 @@ export function reportInvalidSnapshotCache(
   target.debug?.(JSON.stringify({ scope: 'media-notice', level, code, messageKey }));
 }
 
-/** Emits one allowlisted HomeKit event trace only when host debug output is available. */
-export function reportHomeKitEvent(target: Pick<PlatformLogger, 'debug'>, trace: HomeKitEventTrace): void {
+/**
+ * Emits one allowlisted HomeKit event trace only when host debug output is available.
+ *
+ * `aliasFor` resolves the trace's device identity to the support-case alias the conditions about that accessory
+ * already carry. The identity itself never reaches the record: an unresolved one is recorded as no accessory.
+ */
+export function reportHomeKitEvent(
+  target: Pick<PlatformLogger, 'debug'>,
+  trace: HomeKitEventTrace,
+  aliasFor?: (serial: string) => string | undefined,
+): void {
+  const alias = typeof trace.serial === 'string' ? aliasFor?.(trace.serial) : undefined;
+  const offered = { ...(trace as unknown as Record<string, unknown>), accessory: alias };
+  const accessory = alias === undefined ? {} : { accessory: alias };
   if (trace.event === 'live-video-selected') {
-    const selection = sanitizeLiveVideoSelection(trace as unknown as Record<string, unknown>);
+    const selection = sanitizeLiveVideoSelection(offered);
     if (target.debug && selection) {
       target.debug(JSON.stringify({ scope: 'homekit', level: 'debug', ...selection }));
     }
     return;
   }
   if (HOMEKIT_LIVE_REQUEST_EVENTS.has(trace.event)) {
-    const lifecycle = sanitizeLiveSessionTrace(trace as unknown as Record<string, unknown>);
+    const lifecycle = sanitizeLiveSessionTrace(offered);
     if (target.debug && lifecycle) {
       target.debug(JSON.stringify({ scope: 'homekit', level: 'debug', ...lifecycle }));
     }
@@ -2304,6 +2366,7 @@ export function reportHomeKitEvent(target: Pick<PlatformLogger, 'debug'>, trace:
       ...(typeof trace.announcedBy === 'string' && HOMEKIT_ANNOUNCEMENTS.has(trace.announcedBy)
         ? { announcedBy: trace.announcedBy }
         : {}),
+      ...accessory,
     }),
   );
 }
@@ -2457,17 +2520,23 @@ function sanitizeLiveSessionTrace(value: Record<string, unknown>): Record<string
   if (value.adapter !== 'camera.streaming') {
     return undefined;
   }
-  if (value.event === 'live-session-released' || value.event === 'live-session-streaming') {
-    return { adapter: value.adapter, event: value.event };
+  const alias = opaqueAccessoryAlias(value.accessory);
+  const accessory = alias === undefined ? {} : { accessory: alias };
+  if (value.event === 'live-session-released') {
+    const release = allowlistedLabel(value.release, LIVE_SESSION_RELEASES);
+    return release ? { adapter: value.adapter, event: value.event, release, ...accessory } : undefined;
+  }
+  if (value.event === 'live-session-streaming') {
+    return { adapter: value.adapter, event: value.event, ...accessory };
   }
   if (value.event === 'live-request-refused') {
     return typeof value.reason === 'string' && REFUSAL_REASONS.has(value.reason)
-      ? { adapter: value.adapter, event: value.event, reason: value.reason }
+      ? { adapter: value.adapter, event: value.event, reason: value.reason, ...accessory }
       : undefined;
   }
   if (value.event === 'live-request-unaccounted') {
     return typeof value.afterMs === 'number' && Number.isFinite(value.afterMs)
-      ? { adapter: value.adapter, event: value.event, afterMs: Math.round(value.afterMs) }
+      ? { adapter: value.adapter, event: value.event, afterMs: Math.round(value.afterMs), ...accessory }
       : undefined;
   }
   if (
@@ -2486,6 +2555,7 @@ function sanitizeLiveSessionTrace(value: Record<string, unknown>): Record<string
     outcome: value.outcome,
     reason: value.reason,
     stage: value.stage,
+    ...accessory,
   };
 }
 
@@ -2515,6 +2585,7 @@ function sanitizeLiveVideoSelection(value: Record<string, unknown>): Record<stri
   ) {
     return undefined;
   }
+  const alias = opaqueAccessoryAlias(value.accessory);
   return {
     adapter: 'camera.streaming',
     event: 'live-video-selected',
@@ -2526,6 +2597,7 @@ function sanitizeLiveVideoSelection(value: Record<string, unknown>): Record<stri
     fps,
     mtu,
     addressVersion,
+    ...(alias === undefined ? {} : { accessory: alias }),
   };
 }
 
@@ -2594,7 +2666,7 @@ export class DiagnosticConditions {
     }
     const uniqueDeviceIds = condition.active ? [...new Set(affectedDeviceIds)].sort() : [];
     const accessoryAliases = uniqueDeviceIds
-      .map((identity) => this.accessoryAlias(identity))
+      .map((identity) => this.aliasFor(identity))
       .filter((alias): alias is string => alias !== undefined)
       .sort();
     this.write(
@@ -2622,7 +2694,13 @@ export class DiagnosticConditions {
     );
   }
 
-  private accessoryAlias(identity: string): string | undefined {
+  /**
+   * The support-case alias for one device identity, minted on first use.
+   *
+   * The one place an alias is decided, so every record about a device — a condition, a media trace — carries
+   * the same one, and the owner's console line is what resolves it to a name.
+   */
+  aliasFor(identity: string): string | undefined {
     let alias = this.aliases.get(identity);
     if (!alias && this.aliases.size < MAX_ACCESSORY_ALIASES) {
       alias = `accessory-${randomUUID()}`;

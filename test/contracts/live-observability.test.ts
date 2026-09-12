@@ -13,6 +13,78 @@ import {
 } from '../../src/diagnostics.js';
 
 /**
+ * Which camera a media record is about.
+ *
+ * One adapter serves every camera of a household, so a record naming only the adapter states that something
+ * happened to one of them. The alias is the one the conditions about that accessory already carry, which is what
+ * makes two records about one camera readable as one camera. The identity itself is never retained.
+ */
+describe('the accessory a media record names', () => {
+  it('carries the support-case alias for its device and never the device', () => {
+    const debug = vi.fn();
+    const alias = 'accessory-1a3abd19-1355-416e-a698-ed95767be1cb';
+    const serial = 'T8172P10254111FB';
+    const aliasFor = (identity: string) => (identity === serial ? alias : undefined);
+
+    reportHomeKitEvent({ debug }, { adapter: 'camera.streaming', event: 'live-session-streaming', serial }, aliasFor);
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-failed',
+        outcome: 'failed',
+        reason: 'source-acquisition-timeout',
+        stage: 'sdk-source-acquisition',
+        serial,
+      },
+      aliasFor,
+    );
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-video-selected',
+        operation: 'start',
+        profile: 'high',
+        level: '4.0',
+        width: 1280,
+        height: 720,
+        fps: 30,
+        mtu: 1378,
+        addressVersion: 'ipv4',
+        serial,
+      },
+      aliasFor,
+    );
+    reportHomeKitEvent(
+      { debug },
+      { adapter: 'motion.sensor', event: 'motion-detection', observation: 'valid', serial },
+      aliasFor,
+    );
+
+    expect(records(debug).map((record) => record.accessory)).toEqual([alias, alias, alias, alias]);
+    expect(JSON.stringify(records(debug))).not.toContain(serial);
+  });
+
+  it('carries no accessory where the caller resolves no alias, rather than an identity', () => {
+    const debug = vi.fn();
+    const serial = 'T8172P10254111FB';
+
+    reportHomeKitEvent({ debug }, { adapter: 'camera.streaming', event: 'live-session-streaming', serial });
+    reportHomeKitEvent(
+      { debug },
+      { adapter: 'camera.streaming', event: 'live-session-released', serial },
+      () => undefined,
+    );
+
+    for (const record of records(debug)) {
+      expect(record.accessory).toBeUndefined();
+    }
+    expect(JSON.stringify(records(debug))).not.toContain(serial);
+  });
+});
+
+/**
  * The two facts a stream nobody can see is diagnosed from.
  *
  * Everything before them was already traced: HomeKit's selection, the station's key, the warm-up window, the
