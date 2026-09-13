@@ -5,6 +5,7 @@ import {
   createDiagnosticLogger,
   DiagnosticConditions,
   recordFfmpegEnvironment,
+  recordFleet,
   reportAdaptationNotice,
   reportDiscardedV4Settings,
   reportHomeKitEvent,
@@ -14,6 +15,7 @@ import {
 } from './diagnostics.js';
 import { deviceSnapshotLabel } from './device/snapshot.js';
 import { HomeKitReconciler, type HomeKitAccessoryStore } from './homekit/reconciler.js';
+import { describeHomeKitRepresentation } from './homekit/representation.js';
 import type { AdaptationDiagnostics } from './media/contracts.js';
 import { FfmpegLiveMedia, resolveFfmpegIdentity } from './media/live-stream.js';
 import { FfmpegRecordingMedia } from './media/recording.js';
@@ -58,6 +60,7 @@ export function createEufyPlatform(
     private readonly cachedAccessories: PlatformAccessory[] = [];
     private reconciler?: HomeKitReconciler;
     private unconfirmedWrites?: () => void;
+    private fleet?: () => void;
 
     constructor(log: PlatformLogger, config: PlatformConfig, api: PlatformApi) {
       const configuredConfig = parseConfig(config);
@@ -99,6 +102,24 @@ export function createEufyPlatform(
         shutdownTimeoutMs,
       });
       this.runtime.subscribeState((state) => diagnostics.reportRuntimeState(state));
+      if (storageRoot) {
+        this.fleet ??= this.runtime.subscribeRegistry((view) =>
+          recordFleet(
+            storageRoot,
+            view.snapshot.devices.map((manifest) => {
+              const admission = describeHomeKitRepresentation(manifest);
+              const station = view.registry.get(manifest.sn)?.stationSn;
+              return {
+                accessory: diagnostics.aliasFor(manifest.sn) ?? 'accessory-unaliased',
+                ...(manifest.model === undefined ? {} : { model: manifest.model }),
+                represented: admission.represented,
+                attached: station !== undefined && station !== manifest.sn,
+                services: admission.services,
+              };
+            }),
+          ),
+        );
+      }
       const signals: PlatformSignal[] = ['SIGHUP', 'SIGINT', 'SIGTERM'];
       let listeningForSignals = Boolean(signalTarget);
       const stop = (): void => {

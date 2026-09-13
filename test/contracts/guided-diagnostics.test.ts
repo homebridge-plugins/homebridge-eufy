@@ -23,6 +23,7 @@ import {
   type DiagnosticsProfile,
   GuidedDiagnostics,
   recordFfmpegEnvironment,
+  recordFleet,
   reportAdaptationNotice,
   reportHomeKitEvent,
   reportInvalidSnapshotCache,
@@ -1665,6 +1666,78 @@ describe('guided diagnostics issue handoff', () => {
       expect(record?.bytes, 'the statement carries the scope and no serial, which its declared size is what pins').toBe(
         Buffer.byteLength(`${JSON.stringify({ version: 2, affectedDevices: named.length })}\n`),
       );
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /**
+   * A report about a camera nothing represents reads exactly like a report about one that fails to stream.
+   *
+   * Neither the reporter nor a reader can tell them apart without the fleet: an investigation was spent twice
+   * over on a device the plugin does not fully support, which its reporter found by chance in the interface.
+   * Each entry carries the alias every other record about that accessory carries, so a failing session is
+   * attributable to what the device actually is — and `attached` is what decides what a media failure means,
+   * because a camera behind a HomeBase reaches its media over that base and a standalone one does not.
+   *
+   * The entries are narrowed one by one: an entry that does not carry a support-case alias names a device
+   * rather than standing for one, so it is dropped while its siblings are kept.
+   */
+  it('states what each device is and becomes, against the alias its other records carry', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-fleet-'));
+    const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-13T08:00:00.000Z'));
+    const alias = 'accessory-1a3abd19-1355-416e-a698-ed95767be1cb';
+
+    try {
+      recordFleet(root, [
+        { accessory: alias, model: 'T8410', represented: true, attached: false, services: ['camera.streaming'] },
+        { accessory: 'T8410P0000000000', model: 'T8410', represented: true, attached: true, services: [] },
+      ]);
+      await diagnostics.authorize('live-media', 'now');
+      await diagnostics.startReproduction();
+      await diagnostics.endReproduction();
+      const record = (await diagnostics.reviewSupportArchive()).manifest.evidence.find(
+        (entry) => entry.evidence === 'fleet',
+      );
+
+      expect(record, 'the fleet is an evidence class of its own').toMatchObject({
+        privacyClass: 'operational',
+        status: 'included',
+        fields: [
+          { field: 'version', privacyClass: 'operational' },
+          { field: 'devices', privacyClass: 'pseudonymous' },
+        ],
+      });
+      expect(
+        record?.bytes,
+        'an entry naming a device rather than standing for one is dropped, and its siblings are kept',
+      ).toBe(
+        Buffer.byteLength(
+          `${JSON.stringify({
+            version: 1,
+            devices: [
+              { accessory: alias, model: 'T8410', represented: true, attached: false, services: ['camera.streaming'] },
+            ],
+          })}\n`,
+        ),
+      );
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /** An archive from a host that published no inventory declares no fleet, rather than an empty one. */
+  it('declares no fleet where none was recorded', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-fleetless-'));
+    const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-13T08:00:00.000Z'));
+
+    try {
+      await diagnostics.authorize('live-media', 'now');
+      await diagnostics.startReproduction();
+      await diagnostics.endReproduction();
+      const { manifest } = await diagnostics.reviewSupportArchive();
+
+      expect(manifest.evidence.map((entry) => entry.evidence)).not.toContain('fleet');
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

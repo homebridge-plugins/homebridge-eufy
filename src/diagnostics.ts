@@ -143,7 +143,15 @@ const HOMEKIT_LIVE_REQUEST_EVENTS = new Set([
  * failure. A station refusing a second camera is one of these identities, because a base serving another of its
  * cameras is working correctly and must not read as a fault.
  */
-const SDK_ERROR_TYPES = ['Error', 'RangeError', 'SessionExpiredError', 'StationBusyError', 'TypeError'] as const;
+const SDK_ERROR_TYPES = [
+  'Error',
+  'RangeError',
+  'SessionExpiredError',
+  'StationBusyError',
+  'StationKeyUnavailableError',
+  'StationUnreachableError',
+  'TypeError',
+] as const;
 
 /**
  * The retained fields that stand for a device rather than describing one, which is the privacy class a manifest
@@ -177,6 +185,11 @@ const GUIDED_SESSION_FILE = 'session.json';
 const REPRODUCTION_MARKERS_FILE = 'reproduction-markers.jsonl';
 const UI_EVENTS_FILE = 'ui-events.jsonl';
 const FFMPEG_ENVIRONMENT_FILE = 'ffmpeg.json';
+const FLEET_FILE = 'fleet.json';
+/** The longest device model or adapter key retained, which bounds values this plugin does not choose alone. */
+const MAX_DEVICE_MODEL_LENGTH = 64;
+/** How many HomeKit services one fleet entry names, which is above what any single device is represented by. */
+const MAX_FLEET_SERVICES = 12;
 /** How much of an FFmpeg path or version banner is kept, which is more than either needs. */
 const MAX_FFMPEG_IDENTITY_LENGTH = 256;
 const DEBUG_AUTHORIZATION_MS = 72 * 60 * 60 * 1_000;
@@ -320,7 +333,7 @@ export interface SupportArchiveManifest {
   reproductionStartedAt: string;
   reproductionEndedAt: string;
   evidence: readonly {
-    evidence: DiagnosticEvidence | 'environment' | 'reporter-statement' | 'reproduction-markers';
+    evidence: DiagnosticEvidence | 'environment' | 'fleet' | 'reporter-statement' | 'reproduction-markers';
     privacyClass: 'diagnostic' | 'operational';
     status: 'included' | 'missing';
     contentType?: 'application/json' | 'application/x-ndjson';
@@ -353,7 +366,7 @@ interface SupportArchiveKey {
 }
 
 interface SupportArchiveEvidence {
-  evidence: DiagnosticEvidence | 'environment' | 'reporter-statement' | 'reproduction-markers';
+  evidence: DiagnosticEvidence | 'environment' | 'fleet' | 'reporter-statement' | 'reproduction-markers';
   privacyClass: 'diagnostic' | 'operational';
   contentType: 'application/json' | 'application/x-ndjson';
   content: string;
@@ -566,6 +579,85 @@ interface PersistedFfmpegEnvironment {
   path: string;
   source: 'bundled' | 'configured';
   version?: string;
+}
+
+/**
+ * What this account's devices are, and what each one becomes in HomeKit.
+ *
+ * A report about a camera that nothing represents reads exactly like a report about one that fails to stream,
+ * and neither the reporter nor a reader can tell without this: two rounds of one investigation were spent on a
+ * device the plugin does not fully support, which the reporter found by chance in the interface. Each entry
+ * carries the support-case alias every other record about that accessory carries, so a failing session is
+ * attributable to what the device actually is.
+ *
+ * `attached` is what decides what a media failure means, because a camera behind a HomeBase reaches its media
+ * over that base and a standalone one does not. `services` is empty for a device nothing represents, and names
+ * what a partially represented one does become — which is the difference between unsupported and incomplete.
+ */
+interface PersistedFleetEntry {
+  readonly accessory: string;
+  readonly model?: string;
+  readonly represented: boolean;
+  readonly attached: boolean;
+  readonly services: readonly string[];
+}
+
+function fleetPath(storageRoot: string): string {
+  return join(storageRoot, DIAGNOSTICS_DIRECTORY, FLEET_FILE);
+}
+
+/**
+ * Records what the account's devices are and what each becomes, replacing the record whole.
+ *
+ * Written by the process that holds both the inventory and the accessory aliases, because an archive is
+ * assembled by another one. Rewritten on every complete inventory, so a device withdrawn or newly recognised
+ * cannot be reported as still present. A write that fails is dropped: an archive then declares no fleet, which
+ * is honest, whereas failing over a diagnostic file would cost the user their cameras.
+ */
+export function recordFleet(storageRoot: string, fleet: readonly PersistedFleetEntry[]): void {
+  try {
+    const path = fleetPath(storageRoot);
+    mkdirSync(dirname(path), { mode: 0o700, recursive: true });
+    writeFileSync(path, `${JSON.stringify({ version: 1, devices: fleet })}\n`, { mode: 0o600 });
+  } catch {}
+}
+
+/** Reads the recorded fleet, keeping each entry whose own fields narrow and dropping each that does not. */
+function readFleet(storageRoot: string): PersistedFleetEntry[] | undefined {
+  try {
+    const candidate = JSON.parse(readFileSync(fleetPath(storageRoot), 'utf8')) as Record<string, unknown>;
+    if (candidate.version !== 1 || !Array.isArray(candidate.devices)) {
+      return undefined;
+    }
+    const devices = candidate.devices.flatMap((entry: unknown) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+      const row = entry as Record<string, unknown>;
+      const accessory = opaqueAccessoryAlias(row.accessory);
+      if (accessory === undefined || typeof row.represented !== 'boolean' || typeof row.attached !== 'boolean') {
+        return [];
+      }
+      const model = typeof row.model === 'string' ? boundedText(row.model, MAX_DEVICE_MODEL_LENGTH) : undefined;
+      const services = (Array.isArray(row.services) ? row.services : [])
+        .filter((service): service is string => typeof service === 'string')
+        .slice(0, MAX_FLEET_SERVICES)
+        .flatMap((service) => {
+          const bounded = boundedText(service, MAX_DEVICE_MODEL_LENGTH);
+          return bounded === undefined ? [] : [bounded];
+        });
+      return [
+        {
+          accessory,
+          ...(model === undefined ? {} : { model }),
+          represented: row.represented,
+          attached: row.attached,
+          services,
+        } satisfies PersistedFleetEntry,
+      ];
+    });
+    return devices.length === 0 ? undefined : devices.slice(0, MAX_ACCESSORY_ALIASES);
+  } catch {
+    return undefined;
+  }
 }
 
 function ffmpegEnvironmentPath(storageRoot: string): string {
@@ -909,6 +1001,7 @@ export class GuidedDiagnostics {
 
   private async collectSupportEvidence(session: PersistedDiagnosticsSession): Promise<SupportArchiveEvidence[]> {
     const ffmpeg = readFfmpegEnvironment(this.storageRoot);
+    const fleet = readFleet(this.storageRoot);
     const evidence: SupportArchiveEvidence[] = [
       ...(session.affectedDevices === undefined
         ? []
@@ -926,6 +1019,25 @@ export class GuidedDiagnostics {
               fields: [
                 { field: 'version', privacyClass: 'operational' as const },
                 { field: 'affectedDevices', privacyClass: 'operational' as const },
+              ],
+            },
+          ]),
+      ...(fleet === undefined
+        ? []
+        : [
+            {
+              evidence: 'fleet' as const,
+              privacyClass: 'operational' as const,
+              contentType: 'application/json' as const,
+              content: `${JSON.stringify({ version: 1, devices: fleet })}\n`,
+              /**
+               * What each device is and becomes, against the alias every other record about it carries. A model
+               * and an admission outcome are product facts rather than device identity; the alias is what makes
+               * an entry resolvable to a device, and only by the owner whose console paired it with a name.
+               */
+              fields: [
+                { field: 'version', privacyClass: 'operational' as const },
+                { field: 'devices', privacyClass: 'pseudonymous' as const },
               ],
             },
           ]),
