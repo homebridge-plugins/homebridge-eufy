@@ -11,6 +11,7 @@ import {
   reportHomeKitEvent,
   unconfirmedWriteCondition,
   reportInvalidSnapshotCache,
+  reportStationClaim,
   type PlatformLogger,
 } from './diagnostics.js';
 import { deviceSnapshotLabel } from './device/snapshot.js';
@@ -86,7 +87,7 @@ export function createEufyPlatform(
         ? new FfmpegRecordingMedia(configuredConfig.ffmpegPath, adaptationDiagnostics)
         : undefined;
       const mediaBudget = new DeclaredMediaSessionBudget(configuredConfig.maxConcurrentMediaSessions);
-      const stationLiveSessions = new StationLiveSessions();
+      const stationLiveSessions = new StationLiveSessions((decision) => reportStationClaim(diagnosticLog, decision));
       const snapshotMedia = new SnapshotAcquisition(
         storageRoot
           ? new PersistedLastSuccessfulImages(storageRoot, () => reportInvalidSnapshotCache(diagnosticLog))

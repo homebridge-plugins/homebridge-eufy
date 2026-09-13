@@ -120,6 +120,10 @@ export type HomeKitEventTrace = { adapter: string; serial?: string } & (
 /** Why a live session gave its source back: a stop from outside it, or the session ending itself. */
 const LIVE_SESSION_RELEASES = ['requested', 'failed'] as const;
 
+/** The claims that contend for a station's one live channel, and the decisions taken over it. */
+const STATION_CLAIMS = ['live', 'recording', 'snapshot'] as const;
+const STATION_CLAIM_ACTIONS = ['held', 'yielded', 'refused'] as const;
+
 /** The bounded reasons a stream request is refused before it reaches the source. */
 const REFUSAL_REASONS = new Set(['disabled', 'at-capacity', 'cancelled', 'prepare-failed']);
 
@@ -2500,6 +2504,36 @@ export function reportInvalidSnapshotCache(
  * `aliasFor` resolves the trace's device identity to the support-case alias the conditions about that accessory
  * already carry. The identity itself never reaches the record: an unresolved one is recorded as no accessory.
  */
+/**
+ * Records one arbitration decision over a station's single live channel as `homekit-log` evidence.
+ *
+ * A station serves one camera at a time and the SDK refuses a second outright, so a refused live request is
+ * attributable either to this plugin's own policy or to the station, and the two are indistinguishable
+ * afterwards without this. The record carries the claims and the decision alone: a station identity is a
+ * serial, and the camera holding it is already named by the records about that camera.
+ */
+export function reportStationClaim(
+  target: Pick<PlatformLogger, 'debug'>,
+  decision: { action: string; claim: string; displaced?: string; to?: string; by?: string },
+): void {
+  const action = allowlistedLabel(decision.action, STATION_CLAIM_ACTIONS);
+  const claim = allowlistedLabel(decision.claim, STATION_CLAIMS);
+  if (!target.debug || !action || !claim) {
+    return;
+  }
+  const against = allowlistedLabel(decision.displaced ?? decision.to ?? decision.by, STATION_CLAIMS);
+  target.debug(
+    JSON.stringify({
+      scope: 'homekit',
+      level: 'debug',
+      event: 'station-claim',
+      action,
+      claim,
+      ...(against === undefined ? {} : { against }),
+    }),
+  );
+}
+
 export function reportHomeKitEvent(
   target: Pick<PlatformLogger, 'debug'>,
   trace: HomeKitEventTrace,

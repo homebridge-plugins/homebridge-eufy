@@ -188,3 +188,32 @@ describe('StationLiveSessions', () => {
     });
   });
 });
+/**
+ * Every decision over a station's one channel is stated, because a refused live request is otherwise
+ * attributable either to this policy or to the station itself with nothing to say which.
+ */
+describe('what the registry states about its own decisions', () => {
+  it('states a claim that took the station, what it displaced, and what it asked to yield', () => {
+    const decided: unknown[] = [];
+    const sessions = new StationLiveSessions((decision) => decided.push(decision));
+
+    sessions.hold(BASE, 'camera-a', 'snapshot', () => undefined);
+    sessions.hold(BASE, 'camera-b', 'live');
+
+    expect(decided).toEqual([
+      { action: 'held', claim: 'snapshot' },
+      { action: 'held', claim: 'live', displaced: 'snapshot' },
+      { action: 'yielded', claim: 'snapshot', to: 'live' },
+    ]);
+  });
+
+  it('states a claim that stood down, and which claim held the station against it', () => {
+    const decided: unknown[] = [];
+    const sessions = new StationLiveSessions((decision) => decided.push(decision));
+
+    sessions.hold(BASE, 'camera-a', 'live');
+    expect(sessions.admits(BASE, 'camera-b', 'snapshot')).toBe(false);
+
+    expect(decided).toContainEqual({ action: 'refused', claim: 'snapshot', by: 'live' });
+  });
+});

@@ -1,6 +1,22 @@
 import type { StationLiveClaim, StationLiveSessionRegistry } from './contracts.js';
 
 /**
+ * One decision this registry made about a station's single live channel.
+ *
+ * The three are the whole arbitration as it happened: `held` is a claim taking the station and what it found
+ * there, `yielded` is a weaker holder being asked to give it back, and `refused` is a claim standing down
+ * because something stronger holds it. A station serves one camera at a time and the SDK refuses a second, so
+ * a refusal a caller cannot explain is otherwise attributable either to this policy or to the station itself,
+ * with nothing to say which.
+ *
+ * Carries claims alone. A station identity is a serial, and no retained record holds one.
+ */
+export type StationClaimDecision =
+  | { readonly action: 'held'; readonly claim: StationLiveClaim; readonly displaced?: StationLiveClaim }
+  | { readonly action: 'yielded'; readonly claim: StationLiveClaim; readonly to: StationLiveClaim }
+  | { readonly action: 'refused'; readonly claim: StationLiveClaim; readonly by: StationLiveClaim };
+
+/**
  * Which claim holds each station's one live channel, and who yields to whom.
  *
  * A HomeBase fans several cameras over one session and serves them ONE at a time, and the SDK refuses a second
@@ -44,6 +60,8 @@ interface Session {
 export class StationLiveSessions implements StationLiveSessionRegistry {
   private readonly sessions = new Map<string, Set<Session>>();
 
+  constructor(private readonly decided: (decision: StationClaimDecision) => void = () => undefined) {}
+
   /** How many stations are currently holding at least one session. */
   get held(): number {
     return this.sessions.size;
@@ -76,7 +94,11 @@ export class StationLiveSessions implements StationLiveSessionRegistry {
         strongestElsewhere = session.claim;
       }
     }
-    return strongestElsewhere === undefined || CLAIM_RANK[claim] > CLAIM_RANK[strongestElsewhere];
+    if (strongestElsewhere === undefined || CLAIM_RANK[claim] > CLAIM_RANK[strongestElsewhere]) {
+      return true;
+    }
+    this.decided({ action: 'refused', claim, by: strongestElsewhere });
+    return false;
   }
 
   /**
@@ -91,15 +113,18 @@ export class StationLiveSessions implements StationLiveSessionRegistry {
       (session) => session.camera !== camera && CLAIM_RANK[claim] > CLAIM_RANK[session.claim],
     );
     const session: Session = abandon ? { camera, claim, abandon } : { camera, claim };
+    const displaced = this.heldFor(stationSn);
     const held = this.sessions.get(stationSn) ?? new Set<Session>();
     held.add(session);
     this.sessions.set(stationSn, held);
+    this.decided({ action: 'held', claim, ...(displaced === undefined ? {} : { displaced }) });
 
     for (const weaker of yielding) {
       if (weaker.asked) {
         continue;
       }
       weaker.asked = true;
+      this.decided({ action: 'yielded', claim: weaker.claim, to: claim });
       weaker.abandon?.();
     }
 
