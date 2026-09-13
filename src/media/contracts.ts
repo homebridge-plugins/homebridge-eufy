@@ -134,6 +134,16 @@ export type AdaptationEvent =
   | 'output';
 
 /**
+ * Why an adaptation process was started.
+ *
+ * `first` opens a session's output. The other two replace a process mid-session and are separated because
+ * they are asked for by different parties: `controller-selection` is a controller renegotiating what it wants
+ * received, and `source-configuration` is the source changing what it delivers, which a running encoder cannot
+ * code. A session that replaces its output repeatedly is diagnosed from which of the two kept asking.
+ */
+export type AdaptationCause = 'first' | 'controller-selection' | 'source-configuration';
+
+/**
  * One bounded FFmpeg fact a media session observed, in the terms a support archive may keep.
  *
  * `stderr` is the tail the process last wrote, which is the only place an encoder-level cause is stated
@@ -144,6 +154,14 @@ export type AdaptationEvent =
 export interface AdaptationNotice {
   readonly role: AdaptationRole;
   readonly event: AdaptationEvent;
+  /**
+   * Why this process exists, on the record that reports it starting.
+   *
+   * A replacement is indistinguishable from a first adaptation otherwise, and the two fail differently: a
+   * replacement inherits a controller already receiving on this stream's identity, so what it starts mid-flight
+   * is judged against what the previous process left, while a first one starts against nothing.
+   */
+  readonly cause?: AdaptationCause;
   readonly code?: number;
   readonly signal?: string;
   readonly stderr?: readonly string[];
@@ -245,6 +263,19 @@ export interface StationLiveSessionRegistry {
  */
 export type LiveSessionRelease = 'requested' | 'failed';
 
+/**
+ * What the controller was doing when a session ended, as its own acknowledgements state it.
+ *
+ * A constant-rate output keeps sending the last picture as duplicates, so a controller shown nothing new goes
+ * on acknowledging a stream that has stopped advancing and neither side reports a fault. These two facts are
+ * what separate that from a controller that stopped listening: `reports` is whether it ever acknowledged at
+ * all, and `sinceLastReportMs` is whether it still was at the end. Absent where it never sent one.
+ */
+export interface ControllerLiveness {
+  readonly reports: number;
+  readonly sinceLastReportMs?: number;
+}
+
 export interface LiveMediaTransport {
   readonly addressVersion: 'ipv4' | 'ipv6';
   readonly targetAddress: string;
@@ -252,7 +283,7 @@ export interface LiveMediaTransport {
   readonly audio?: LiveMediaTarget;
   readonly onVideoFailure?: () => void;
   readonly onSessionOutcome?: (outcome: LiveSessionOutcome) => void;
-  readonly onSessionReleased?: (release: LiveSessionRelease) => void;
+  readonly onSessionReleased?: (release: LiveSessionRelease, controller: ControllerLiveness) => void;
   readonly onTalkbackOutcome?: (outcome: TalkbackOutcome) => void;
 }
 

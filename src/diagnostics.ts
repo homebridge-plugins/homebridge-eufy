@@ -91,7 +91,7 @@ export type HomeKitEventTrace = { adapter: string; serial?: string } & (
    *
    * A controller stops showing a picture either way, so this record is the only place the two differ.
    */
-  | { event: 'live-session-released'; release: string }
+  | { event: 'live-session-released'; release: string; reports?: number; sinceLastReportMs?: number }
   /**
    * The first adapted output reached the negotiated destination.
    *
@@ -1738,6 +1738,19 @@ const LIVE_TRACE_PHASES = {
    * silence longer than that belongs to a session nothing is waiting on.
    */
   'path-stale': retainedInteger('silentMs', MAX_STARTUP_WINDOW_MS),
+  /**
+   * How long a camera's own channel delivered nothing, and whether the station was asked to serve it again.
+   *
+   * Both halves are the record: a station re-tasked to a sibling is repaired by the re-assert, and a pull
+   * nothing is attached to declines it so the station is left with the camera someone is watching. A picture
+   * that stopped advancing while no such record exists stopped for a reason the station's attention does not
+   * reach.
+   */
+  'channel-silent': (c) => {
+    const silentMs = boundedInteger(c.silentMs, MAX_STARTUP_WINDOW_MS);
+    const outcome = allowlistedLabel(c.outcome, ['declined', 'reasserted']);
+    return silentMs !== undefined && outcome ? { silentMs, outcome } : undefined;
+  },
   'media-command-unsent': (c) => {
     const reason = allowlistedLabel(c.reason, ['level2-key', 'address']);
     return reason ? { reason } : undefined;
@@ -2032,6 +2045,13 @@ const ADAPTATION_EVENTS = new Set([
   'exited-while-streaming',
   'output',
 ]);
+/**
+ * Why a process was started, on the record that reports it starting.
+ *
+ * A replacement carries the identity of the stream the previous process was already sending on, so what it
+ * started mid-flight is judged against what that one left. A first adaptation has nothing behind it.
+ */
+const ADAPTATION_CAUSES = ['first', 'controller-selection', 'source-configuration'] as const;
 /**
  * Which of those events is a failure, and so the ones a record is levelled `warn` for.
  *
@@ -2536,6 +2556,8 @@ export function reportHomeKitEvent(
 export interface AdaptationTrace {
   role: string;
   event: string;
+  /** Why this process was started, which separates a mid-session replacement from a session's first output. */
+  cause?: string;
   code?: number;
   signal?: string;
   /**
@@ -2659,11 +2681,13 @@ function sanitizeAdaptationNotice(value: Record<string, unknown>, level: string)
     .filter((line): line is string => line !== undefined)
     .slice(-MAX_ADAPTATION_STDERR_LINES);
   const sourceFragments = nonNegativeInteger(value.sourceFragments);
+  const cause = allowlistedLabel(value.cause, ADAPTATION_CAUSES);
   return {
     scope: 'ffmpeg',
     level,
     role: value.role,
     event: value.event,
+    ...(cause === undefined ? {} : { cause }),
     ...(code === undefined ? {} : { code }),
     ...(signal === undefined ? {} : { signal }),
     ...(sourceFragments === undefined ? {} : { sourceFragments }),
@@ -2679,7 +2703,19 @@ function sanitizeLiveSessionTrace(value: Record<string, unknown>): Record<string
   const accessory = alias === undefined ? {} : { accessory: alias };
   if (value.event === 'live-session-released') {
     const release = allowlistedLabel(value.release, LIVE_SESSION_RELEASES);
-    return release ? { adapter: value.adapter, event: value.event, release, ...accessory } : undefined;
+    if (!release) {
+      return undefined;
+    }
+    const reports = nonNegativeInteger(value.reports);
+    const sinceLastReportMs = boundedInteger(value.sinceLastReportMs, MAX_STARTUP_WINDOW_MS);
+    return {
+      adapter: value.adapter,
+      event: value.event,
+      release,
+      ...(reports === undefined ? {} : { reports }),
+      ...(sinceLastReportMs === undefined ? {} : { sinceLastReportMs }),
+      ...accessory,
+    };
   }
   if (value.event === 'live-session-streaming') {
     return { adapter: value.adapter, event: value.event, ...accessory };

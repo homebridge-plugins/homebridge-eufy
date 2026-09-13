@@ -170,6 +170,53 @@ describe('a session that reached the negotiated output', () => {
 });
 
 /**
+ * What the controller was doing when a session ended, which is what a frozen picture cannot be told from
+ * without.
+ *
+ * The output is constant-rate, so a controller shown nothing new keeps acknowledging a stream that stopped
+ * advancing: the count states whether it ever acknowledged at all, and the recency whether it still was at the
+ * end. A release carrying neither is a session nothing was ever received on.
+ */
+describe('the controller evidence a release carries', () => {
+  it('records how often the controller acknowledged, and how long before the release it last did', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-released',
+        release: 'requested',
+        reports: 14,
+        sinceLastReportMs: 240,
+      },
+    );
+    expect(records(debug)[0]).toMatchObject({
+      event: 'live-session-released',
+      release: 'requested',
+      reports: 14,
+      sinceLastReportMs: 240,
+    });
+  });
+
+  it('drops a recency no session could have measured, and keeps the release', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-released',
+        release: 'failed',
+        reports: 0,
+        sinceLastReportMs: 999_999,
+      },
+    );
+    const record = records(debug)[0]!;
+    expect(record).toMatchObject({ event: 'live-session-released', release: 'failed', reports: 0 });
+    expect(record).not.toHaveProperty('sinceLastReportMs');
+  });
+});
+
+/**
  * A station that refuses a second of its cameras is recorded as that, and not as a session with no reason.
  *
  * A base serving one camera at a time answers a request for another with a refusal, which is the station

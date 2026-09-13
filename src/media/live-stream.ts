@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { Readable, Writable } from 'node:stream';
 
 import type {
+  AdaptationCause,
   AdaptationDiagnostics,
   AdaptationEvent,
   AdaptationRole,
@@ -310,6 +311,11 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
     let videoStartBackstop: ReturnType<typeof setTimeout> | undefined;
     let videoFailed = false;
     let rtcpObserved = false;
+    /** How many receiver reports this session was acknowledged by, and when the last one arrived. */
+    /** Why the video adaptation now running was started, which the record reporting it carries. */
+    let videoCause: AdaptationCause = 'first';
+    let rtcpReports = 0;
+    let lastRtcpAt: number | undefined;
     let streaming = false;
     const stoppingProcesses = new WeakSet<object>();
     const congested = new Set<Writable>();
@@ -435,7 +441,10 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
       stopProcess(audioProcess);
       source?.stop();
       if (negotiated) {
-        transport.onSessionReleased?.(videoFailed ? 'failed' : 'requested');
+        transport.onSessionReleased?.(videoFailed ? 'failed' : 'requested', {
+          reports: rtcpReports,
+          ...(lastRtcpAt === undefined ? {} : { sinceLastReportMs: Date.now() - lastRtcpAt }),
+        });
       }
       videoPort.close();
       audioPort?.close();
@@ -465,6 +474,8 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
      */
     const resetRtcpDeadline = (): void => {
       rtcpObserved = true;
+      rtcpReports += 1;
+      lastRtcpAt = Date.now();
       clearTimeout(initialRtcpGrace);
       clearTimeout(rtcpDeadline);
       if (!streaming) {
@@ -545,6 +556,7 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
           failVideo('source-input-unstable');
           return;
         }
+        videoCause = inputChanged ? 'source-configuration' : 'controller-selection';
         reconfigurationPending = false;
         stopProcess(videoProcess);
         videoProcess = undefined;
@@ -556,7 +568,7 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
           videoArguments(videoConfig, negotiated.video, targetAddress, transport.video),
         );
         videoProcess = child;
-        adaptationDiagnostics?.report({ role: 'live-video', event: 'started' });
+        adaptationDiagnostics?.report({ role: 'live-video', event: 'started', cause: videoCause });
         const stderr = new AdaptationStderr();
         let producedOutput = false;
         child.stderr.on('data', (chunk: Buffer) => {
