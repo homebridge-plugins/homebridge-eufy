@@ -1538,16 +1538,23 @@ describe('camera streaming bundle adapter', () => {
     }
   });
 
-  it('drives negotiated prepare, start, reconfigure, and stop through the media seam and traces the identity-free video selection a controller starts and reconfigures', async () => {
+  /**
+   * A renegotiated selection is recorded and answered, and nothing about the running media changes.
+   *
+   * Applying it means replacing the adaptation, which can only begin on a source keyframe — seconds away on
+   * this transport, during which a controller that has renegotiated presents nothing it is still being sent.
+   * So the session serves the selection it started on, and a controller that wants another one renegotiates the
+   * session itself.
+   */
+  it('drives negotiated prepare, start and stop through the media seam, and answers a renegotiated selection without disturbing the media serving the first', async () => {
     const target = new Accessory(
       'Synthetic camera',
       uuid.generate('synthetic-camera-stream'),
     ) as unknown as PlatformAccessory;
     const configureController = vi.spyOn(target, 'configureController');
     const start = vi.fn(async () => undefined);
-    const reconfigure = vi.fn();
     const stop = vi.fn();
-    const prepared: PreparedLiveMedia = { videoPort: 41000, audioPort: 41001, start, reconfigure, stop };
+    const prepared: PreparedLiveMedia = { videoPort: 41000, audioPort: 41001, start, stop };
     const prepare = vi.fn(async () => prepared);
     const camera = { live: vi.fn() } as unknown as CameraActions;
     const trace = vi.fn();
@@ -1640,7 +1647,7 @@ describe('camera streaming bundle adapter', () => {
       type: StreamRequestTypes.RECONFIGURE,
       video: { width: 640, height: 360, fps: 15, max_bit_rate: 150, rtcp_interval: 0.5 },
     });
-    expect(reconfigure).toHaveBeenCalledWith(expect.objectContaining({ width: 640, height: 360, fps: 15 }));
+    expect(start, 'a renegotiated selection replaces no adaptation').toHaveBeenCalledOnce();
     expect(trace).toHaveBeenLastCalledWith({
       event: 'live-video-selected',
       operation: 'reconfigure',
@@ -1722,7 +1729,6 @@ describe('camera streaming bundle adapter', () => {
     expect(snapshotLive).toHaveBeenCalledOnce();
     expect(prepare).toHaveBeenCalledOnce();
     expect(start).toHaveBeenCalledOnce();
-    expect(reconfigure).not.toHaveBeenCalled();
     expect(stop).not.toHaveBeenCalled();
     expect(live).not.toHaveBeenCalled();
     expect(streamingStatus(management)).toBe(STREAMING_IN_USE);
@@ -1743,9 +1749,7 @@ describe('camera streaming bundle adapter', () => {
     const configureController = vi.spyOn(target, 'configureController');
     const start = vi.fn(async () => undefined);
     const stop = vi.fn();
-    const prepare = vi.fn(
-      async () => ({ videoPort: 41000, start, reconfigure: vi.fn(), stop }) satisfies PreparedLiveMedia,
-    );
+    const prepare = vi.fn(async () => ({ videoPort: 41000, start, stop }) satisfies PreparedLiveMedia);
     const retained = jpeg('synthetic retained still');
     const { snapshotLive } = pendingLiveSnapshot();
 
@@ -1791,7 +1795,6 @@ describe('camera streaming bundle adapter', () => {
     const sessions = [41000, 41002].map((videoPort) => ({
       videoPort,
       start: vi.fn(async () => undefined),
-      reconfigure: vi.fn(),
       stop: vi.fn(),
     }));
     const prepare = vi.fn(async () => sessions[prepare.mock.calls.length - 1] as PreparedLiveMedia);
@@ -1850,9 +1853,11 @@ describe('camera streaming bundle adapter', () => {
       type: StreamRequestTypes.RECONFIGURE,
       video: { width: 640, height: 360, fps: 15, max_bit_rate: 150, rtcp_interval: 0.5 },
     });
-    expect(sessions[1].reconfigure).toHaveBeenCalledWith(
-      expect.objectContaining({ width: 640, ssrc: second.video.ssrc }),
-    );
+    expect(
+      sessions[1].start,
+      'a renegotiated selection is answered without restarting its session',
+    ).toHaveBeenCalledOnce();
+    expect(sessions[0].start).toHaveBeenCalledOnce();
 
     attachment?.detach?.();
     expect(sessions[1].stop).toHaveBeenCalledOnce();
@@ -1869,7 +1874,6 @@ describe('camera streaming bundle adapter', () => {
     const prepared: PreparedLiveMedia = {
       videoPort: 41000,
       start: vi.fn(async () => undefined),
-      reconfigure: vi.fn(),
       stop,
     };
     let resolvePrepare!: (value: PreparedLiveMedia) => void;
@@ -1934,7 +1938,6 @@ describe('camera streaming bundle adapter', () => {
     const sessions = [41000, 41002].map((videoPort) => ({
       videoPort,
       start: vi.fn(async () => undefined),
-      reconfigure: vi.fn(),
       stop: vi.fn(),
     }));
     const prepare = vi.fn(async () => sessions[prepare.mock.calls.length - 1] as PreparedLiveMedia);
@@ -1999,7 +2002,7 @@ describe('camera streaming bundle adapter', () => {
     let failVideo: (() => void) | undefined;
     const prepare = vi.fn(async (transport: { onVideoFailure?(): void }) => {
       failVideo = () => transport.onVideoFailure?.();
-      return { videoPort: 41000, start, reconfigure: vi.fn(), stop } satisfies PreparedLiveMedia;
+      return { videoPort: 41000, start, stop } satisfies PreparedLiveMedia;
     });
 
     CAMERA_STREAMING_ADAPTER.attach({
@@ -2076,7 +2079,6 @@ describe('camera streaming bundle adapter', () => {
       return {
         videoPort: 41000 + reporters.length,
         start: vi.fn(async () => undefined),
-        reconfigure: vi.fn(),
         stop: vi.fn(),
       } satisfies PreparedLiveMedia;
     });
@@ -2146,7 +2148,6 @@ describe('camera streaming bundle adapter', () => {
     const prepared = {
       videoPort: 41000,
       start: vi.fn(async () => undefined),
-      reconfigure: vi.fn(),
       stop: vi.fn(),
     } satisfies PreparedLiveMedia;
     const prepare = vi.fn(async (transport: LiveMediaTransport) => {
@@ -2199,7 +2200,6 @@ describe('camera streaming bundle adapter', () => {
     const sessions = [41000, 41002, 41004].map((videoPort) => ({
       videoPort,
       start: vi.fn(async () => undefined),
-      reconfigure: vi.fn(),
       stop: vi.fn(),
     }));
     const prepare = vi.fn(async () => sessions[prepare.mock.calls.length - 1] as PreparedLiveMedia);
@@ -2263,7 +2263,6 @@ describe('camera streaming bundle adapter', () => {
     const sessions = [41000, 41002].map((videoPort) => ({
       videoPort,
       start: vi.fn(async () => undefined),
-      reconfigure: vi.fn(),
       stop: vi.fn(),
     }));
     const prepare = vi.fn(async () => sessions[prepare.mock.calls.length - 1] as PreparedLiveMedia);
@@ -2303,7 +2302,6 @@ describe('camera streaming bundle adapter', () => {
         ({
           videoPort: 41000,
           start: vi.fn(async () => undefined),
-          reconfigure: vi.fn(),
           stop: vi.fn(),
         }) satisfies PreparedLiveMedia,
     );
@@ -3049,9 +3047,7 @@ describe('camera streaming bundle adapter', () => {
     const configureController = vi.spyOn(target, 'configureController');
     const start = vi.fn(async () => undefined);
     const stop = vi.fn();
-    const prepare = vi.fn(
-      async () => ({ videoPort: 41000, start, reconfigure: vi.fn(), stop }) satisfies PreparedLiveMedia,
-    );
+    const prepare = vi.fn(async () => ({ videoPort: 41000, start, stop }) satisfies PreparedLiveMedia);
     const { state, camera } = observedCamera(true);
     const diagnose = vi.fn();
 
@@ -3114,7 +3110,6 @@ describe('camera streaming bundle adapter', () => {
         ({
           videoPort: 41000,
           start: vi.fn(async () => undefined),
-          reconfigure: vi.fn(),
           stop,
         }) satisfies PreparedLiveMedia,
     );
@@ -3252,7 +3247,6 @@ describe('camera streaming bundle adapter', () => {
         ({
           videoPort: 41000,
           start: vi.fn(async () => undefined),
-          reconfigure: vi.fn(),
           stop: vi.fn(),
         }) satisfies PreparedLiveMedia,
     );
@@ -3300,7 +3294,6 @@ describe('camera streaming bundle adapter', () => {
         return {
           videoPort: 41000,
           start: vi.fn(async () => undefined),
-          reconfigure: vi.fn(),
           stop: vi.fn(),
         } satisfies PreparedLiveMedia;
       });
@@ -3366,7 +3359,6 @@ describe('camera streaming bundle adapter', () => {
           ({
             videoPort: 41000,
             start: vi.fn(async () => undefined),
-            reconfigure: vi.fn(),
             stop: vi.fn(),
           }) satisfies PreparedLiveMedia,
       );
@@ -3407,9 +3399,7 @@ describe('camera streaming bundle adapter', () => {
     const configureController = vi.spyOn(target, 'configureController');
     const start = vi.fn(async () => undefined);
     const stop = vi.fn();
-    const prepare = vi.fn(
-      async () => ({ videoPort: 41000, start, reconfigure: vi.fn(), stop }) satisfies PreparedLiveMedia,
-    );
+    const prepare = vi.fn(async () => ({ videoPort: 41000, start, stop }) satisfies PreparedLiveMedia);
     const { state, camera } = observedCamera(true);
 
     CAMERA_STREAMING_ADAPTER.attach({
@@ -3447,9 +3437,7 @@ describe('camera streaming bundle adapter', () => {
     const configureController = vi.spyOn(target, 'configureController');
     const start = vi.fn(async () => undefined);
     const stop = vi.fn();
-    const prepare = vi.fn(
-      async () => ({ videoPort: 41000, start, reconfigure: vi.fn(), stop }) satisfies PreparedLiveMedia,
-    );
+    const prepare = vi.fn(async () => ({ videoPort: 41000, start, stop }) satisfies PreparedLiveMedia);
     const { state, camera } = observedCamera(true);
     const diagnose = vi.fn();
     const observed = vi.fn();
@@ -3753,7 +3741,6 @@ function liveMedia() {
         start: async (source: LiveMediaSource) => {
           started.push(source);
         },
-        reconfigure: vi.fn(),
         stop: vi.fn(),
       }) satisfies PreparedLiveMedia,
   );
@@ -3968,7 +3955,7 @@ describe('camera recording bundle adapter', () => {
       liveMedia: {
         prepare: vi.fn(async (preparedTransport) => {
           transport = preparedTransport;
-          return { videoPort: 41000, audioPort: 41001, start: vi.fn(), reconfigure: vi.fn(), stop: vi.fn() };
+          return { videoPort: 41000, audioPort: 41001, start: vi.fn(), stop: vi.fn() };
         }),
       },
     });

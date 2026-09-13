@@ -1419,16 +1419,28 @@ class LiveCameraDelegate implements CameraStreamingDelegate {
       callback(new Error('live media session was not prepared'));
       return;
     }
+    /**
+     * A renegotiated selection is recorded and answered, and the session goes on serving the one it started
+     * on.
+     *
+     * Applying it means replacing the adaptation, which can only begin on a source keyframe: this transport's
+     * interval is seconds, and a controller that has renegotiated stops presenting what it is still being sent
+     * meanwhile. Measured on a real controller, a request at 7.9s was serveable at 11.5s and the picture never
+     * advanced again in between, while sessions that renegotiated nothing ran to their end — so the deferral
+     * cost the whole session to honour one request. A controller that wants less asks again by renegotiating
+     * the session itself, which is a start this camera answers from scratch.
+     */
     if (request.type === 'reconfigure') {
       if (!session.selection) {
         this.release(request.sessionID);
         callback(new Error('live media session has not started'));
         return;
       }
-      const video = negotiatedVideo({ ...session.selection.video, ...request.video }, session.videoSsrc, this.hap);
-      session.prepared.reconfigure(video);
-      session.selection = { ...session.selection, video: { ...session.selection.video, ...request.video } };
-      this.traceSelection('reconfigure', video, session.addressVersion);
+      this.traceSelection(
+        'reconfigure',
+        negotiatedVideo({ ...session.selection.video, ...request.video }, session.videoSsrc, this.hap),
+        session.addressVersion,
+      );
       callback();
       return;
     }

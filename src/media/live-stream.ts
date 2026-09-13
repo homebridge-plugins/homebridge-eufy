@@ -306,7 +306,6 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
     let negotiated: NegotiatedLiveMedia | undefined;
     let stopped = false;
     let receivedVideoKeyframe = false;
-    let reconfigurationPending = false;
     /**
      * The coded configuration the source last announced, and the one the running adaptation was opened for.
      *
@@ -511,13 +510,9 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
      * Adaptation reached the negotiated output, so the session is bounded from here by RTCP liveness
      * rather than by the start backstop. The initial grace is armed from this point because media may
      * legitimately start well after the session does.
-     *
-     * A selection HomeKit has already replaced does not discharge the deadline for its replacement, however
-     * much it keeps reporting: FFmpeg reports progress on a timer whether or not new media reaches it, so
-     * only the adaptation that carries the current selection can say that selection is being served.
      */
-    const observeAdaptationProgress = (reporter: MediaProcess): void => {
-      if (stopped || (reconfigurationPending && reporter === videoProcess)) {
+    const observeAdaptationProgress = (): void => {
+      if (stopped) {
         return;
       }
       clearTimeout(videoStartBackstop);
@@ -547,13 +542,12 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
      * Writes one source access unit to the adaptation that is entitled to code it.
      *
      * A source configuration the running adaptation was not opened for cannot be coded by it at all, so those
-     * frames wait for the keyframe that lets a replacement start. A reconfigured HomeKit selection changes
-     * only the output, so the current process keeps coding and keeps the previous selection on the wire until
-     * that same keyframe arrives; a controller reconfigures precisely when it is unhappy with what it
-     * receives, and the source is then often the very thing not producing keyframes.
+     * frames wait for the keyframe that lets a replacement start.
      *
      * Source-driven replacement is bounded by {@link MAX_SOURCE_INPUT_REPLACEMENTS}, past which the session
-     * fails rather than spawn again. A controller-driven one is not: the controller bounds how often it asks.
+     * fails rather than spawn again. It is the only replacement a session makes: a source that changes what it
+     * delivers cannot be coded by the running process at all, whereas a controller's renegotiated selection is
+     * a request this session declines in favour of the one it started on.
      */
     const writeVideo = (frame: LiveVideoFrame): void => {
       if (stopped || !negotiated || !videoConfig) {
@@ -569,16 +563,13 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
       if (videoProcess && inputChanged && !frame.keyframe) {
         return;
       }
-      if (videoProcess && frame.keyframe && (inputChanged || reconfigurationPending)) {
-        if (inputChanged) {
-          sourceInputReplacements += 1;
-        }
+      if (videoProcess && frame.keyframe && inputChanged) {
+        sourceInputReplacements += 1;
         if (sourceInputReplacements > MAX_SOURCE_INPUT_REPLACEMENTS) {
           failVideo('source-input-unstable');
           return;
         }
-        videoCause = inputChanged ? 'source-configuration' : 'controller-selection';
-        reconfigurationPending = false;
+        videoCause = 'source-configuration';
         stopProcess(videoProcess);
         videoProcess = undefined;
       }
@@ -596,7 +587,7 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
         child.stderr.on('data', (chunk: Buffer) => {
           if (stderr.observe(chunk).some((line) => line.startsWith('progress='))) {
             producedOutput = true;
-            observeAdaptationProgress(child);
+            observeAdaptationProgress();
           }
         });
         child.stdin.on('error', () => {
@@ -904,24 +895,6 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
         source.on('error', (error) => failVideo(sourceFailure(error)));
         source.on('stop', () => failVideo('source-stopped'));
         await returnAudioReady;
-      },
-      /**
-       * Acknowledges a reconfigured selection and applies it at the next source keyframe.
-       *
-       * Nothing is torn down here: the current adaptation keeps the previous selection on the wire until the
-       * replacement has a keyframe to start from. The deferral is still bounded, because a session that never
-       * applies the selection HomeKit asked for must end and be renegotiated rather than silently serve the
-       * old one forever.
-       */
-      reconfigure(video): void {
-        if (!negotiated) {
-          return;
-        }
-        negotiated = { ...negotiated, video };
-        reconfigurationPending = videoProcess !== undefined;
-        clearTimeout(videoStartBackstop);
-        videoStartBackstop = setTimeout(() => failVideo('no-video-within-backstop'), SOURCE_START_BACKSTOP_MS);
-        videoStartBackstop.unref?.();
       },
       stop,
     };

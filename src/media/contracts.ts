@@ -303,7 +303,6 @@ export interface PreparedLiveMedia {
   readonly videoPort: number;
   readonly audioPort?: number;
   start(source: LiveMediaSource, negotiated: NegotiatedLiveMedia): Promise<void>;
-  reconfigure(video: NegotiatedLiveVideo): void;
   stop(): void;
 }
 

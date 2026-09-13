@@ -1339,105 +1339,6 @@ describe('live media adaptation', () => {
     }
   });
 
-  it('applies a reconfigured selection to adaptation while keeping the negotiated RTP identity', async () => {
-    const stream = new SyntheticLiveStream();
-    const spawned: string[][] = [];
-    const media = new FfmpegLiveMedia(
-      '/synthetic/ffmpeg',
-      undefined,
-      (_executable, args) => {
-        spawned.push([...args]);
-        return process();
-      },
-      async () => ({ port: 41000, onMessage: vi.fn(), close: vi.fn() }),
-    );
-    const prepared = await media.prepare({
-      addressVersion: 'ipv4',
-      targetAddress: '192.0.2.10',
-      video: {
-        port: 50100,
-        srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
-        srtpKey: Buffer.alloc(16, 5),
-        srtpSalt: Buffer.alloc(14, 6),
-      },
-    });
-    const video = {
-      width: 1280,
-      height: 720,
-      fps: 30,
-      maxBitRate: 300,
-      profile: 'main' as const,
-      level: '3.1' as const,
-      payloadType: 99,
-      ssrc: 1234,
-      mtu: 1200,
-      rtcpInterval: 0.5,
-    };
-    await prepared.start({ live: async () => stream }, { video });
-    const keyframe = { codec: 'h264' as const, width: 1280, height: 720, keyframe: true, data: Buffer.from([0x65]) };
-    stream.video(keyframe);
-
-    prepared.reconfigure({ ...video, width: 640, height: 360, fps: 15, maxBitRate: 150 });
-    stream.video({ ...keyframe, keyframe: false });
-    expect(spawned).toHaveLength(1);
-    stream.video(keyframe);
-
-    expect(spawned).toHaveLength(2);
-    expect(spawned[0]).toContain(
-      'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
-    );
-    expect(spawned[1]).toContain('scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2');
-    expect(spawned[1]).toEqual(
-      expect.arrayContaining(['-fpsmax', '15', '-g', '30', '-b:v', '144k', '-maxrate', '144k']),
-    );
-    expect(spawned[1]).toEqual(
-      expect.arrayContaining([
-        '-payload_type',
-        '99',
-        '-ssrc',
-        '1234',
-        '-srtp_out_params',
-        Buffer.concat([Buffer.alloc(16, 5), Buffer.alloc(14, 6)]).toString('base64'),
-        'srtp://192.0.2.10:50100?rtcpport=50100&pkt_size=1200',
-      ]),
-    );
-    expect(stream.stop).not.toHaveBeenCalled();
-    prepared.stop();
-  });
-
-  it('keeps the previous selection on the wire until a reconfigured one has a keyframe to start from', async () => {
-    const session = await liveSession();
-    await session.start();
-    session.stream.video(KEYFRAME);
-    expect(session.children).toHaveLength(1);
-    const coding = vi.spyOn(session.children[0]!.stdin, 'write');
-
-    session.prepared.reconfigure({ ...NEGOTIATED_VIDEO, width: 640, height: 360, maxBitRate: 132 });
-    session.stream.video({ ...KEYFRAME, keyframe: false });
-
-    expect(session.children).toHaveLength(1);
-    expect(session.children[0]!.kill).not.toHaveBeenCalled();
-    expect(coding).toHaveBeenCalledWith(KEYFRAME.data);
-
-    session.stream.video(KEYFRAME);
-
-    expect(session.children).toHaveLength(2);
-    expect(session.children[0]!.kill).toHaveBeenCalled();
-    expect(session.spawned[1]).toContain(
-      'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2',
-    );
-    session.prepared.stop();
-  });
-
-  /**
-   * A replacement adaptation continues the session's RTP numbering instead of restarting it.
-   *
-   * The SSRC and the SRTP key outlive the process, and the SRTP packet index is built from the sequence
-   * number, so a replacement starting at FFmpeg's own random base is read as replay by the controller and
-   * discarded under a key that still authenticates — while RTCP liveness holds, because the controller goes on
-   * acknowledging what it already received. Measured on a real controller as a session that kept sending for
-   * 27 seconds after a reconfiguration, acknowledged 92 times, with a picture that never advanced again.
-   */
   it('advances the RTP sequence for a replaced adaptation rather than restarting it', async () => {
     const session = await liveSession();
     await session.start();
@@ -1445,8 +1346,7 @@ describe('live media adaptation', () => {
     session.children[0]!.stderr.push('progress=continue\n');
     await settle();
 
-    session.prepared.reconfigure({ ...NEGOTIATED_VIDEO, width: 640, height: 360, maxBitRate: 132 });
-    session.stream.video(KEYFRAME);
+    session.stream.video({ ...KEYFRAME, codec: 'h265', data: Buffer.from([0x26]) });
     await settle();
 
     const sequences = session.spawned
@@ -1458,29 +1358,6 @@ describe('live media adaptation', () => {
       'a replacement that numbers below its predecessor is replay to the controller',
     ).toBeGreaterThan(sequences[0]!);
     session.prepared.stop();
-  });
-
-  it('bounds a deferred reconfiguration even while the superseded selection keeps reporting progress', async () => {
-    vi.useFakeTimers();
-    const session = await liveSession();
-    await session.start();
-    session.stream.video(KEYFRAME);
-    session.children[0]!.stderr.push('progress=continue\n');
-    await vi.advanceTimersByTimeAsync(0);
-    expect(session.outcomes).toEqual([{ outcome: 'streaming' }]);
-
-    session.prepared.reconfigure({ ...NEGOTIATED_VIDEO, width: 640, height: 360, maxBitRate: 132 });
-    for (let elapsed = 0; elapsed < 32_000; elapsed += 2_000) {
-      session.receiverReport();
-      session.children[0]!.stderr.push('progress=continue\n');
-      await vi.advanceTimersByTimeAsync(2_000);
-    }
-
-    expect(session.outcomes).toEqual([
-      { outcome: 'streaming' },
-      { outcome: 'failed', reason: 'no-video-within-backstop', stage: 'first-adapted-output' },
-    ]);
-    vi.useRealTimers();
   });
 
   it('readapts a changed source codec at its next keyframe without changing negotiated output', async () => {
@@ -1777,30 +1654,6 @@ describe('live media adaptation', () => {
     expect(noRtcp.outcomes).toEqual([
       { outcome: 'streaming' },
       { outcome: 'failed', reason: 'rtcp-timeout', stage: 'controller-rtcp' },
-    ]);
-    vi.useRealTimers();
-  });
-
-  it('restarts the keyframe deadline after an acknowledged reconfiguration', async () => {
-    vi.useFakeTimers();
-    const session = await liveSession();
-    await session.start();
-    session.stream.video(KEYFRAME);
-    session.children[0]!.stderr.push('prog');
-    session.children[0]!.stderr.push('ress=continue\n');
-    await vi.advanceTimersByTimeAsync(0);
-
-    session.prepared.reconfigure({ ...NEGOTIATED_VIDEO, width: 640, height: 360 });
-    for (let elapsed = 0; elapsed < 30_000; elapsed += 2_000) {
-      session.receiverReport();
-      await vi.advanceTimersByTimeAsync(2_000);
-    }
-
-    expect(session.onVideoFailure).toHaveBeenCalledOnce();
-    expect(session.stream.stop).toHaveBeenCalledOnce();
-    expect(session.outcomes).toEqual([
-      { outcome: 'streaming' },
-      { outcome: 'failed', reason: 'no-video-within-backstop', stage: 'first-adapted-output' },
     ]);
     vi.useRealTimers();
   });
