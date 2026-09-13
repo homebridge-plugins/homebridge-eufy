@@ -1951,6 +1951,7 @@ const REASONS = new Set([
   'source-input-unstable',
   'source-stopped',
   'source-unavailable',
+  'station-busy',
   'stored-download-failed',
   'stored-failed',
   'stored-invalid-image',

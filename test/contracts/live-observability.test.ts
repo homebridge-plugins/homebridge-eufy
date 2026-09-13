@@ -170,6 +170,36 @@ describe('a session that reached the negotiated output', () => {
 });
 
 /**
+ * A station that refuses a second of its cameras is recorded as that, and not as a session with no reason.
+ *
+ * A base serving one camera at a time answers a request for another with a refusal, which is the station
+ * working correctly rather than a fault. A reason the record vocabulary does not name is dropped whole, so the
+ * one refusal an operator meets most on a multi-camera base would leave a session that failed and no reason
+ * anywhere.
+ */
+describe('a session refused by the station', () => {
+  it('records why, rather than a failure with no reason', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-failed',
+        outcome: 'failed',
+        reason: 'station-busy',
+        stage: 'sdk-source-acquisition',
+      },
+    );
+    expect(records(debug)[0]).toMatchObject({
+      scope: 'homekit',
+      event: 'live-session-failed',
+      reason: 'station-busy',
+      stage: 'sdk-source-acquisition',
+    });
+  });
+});
+
+/**
  * How much source media a recording was given, which is what separates its two failure modes.
  *
  * A recording whose source delivered nothing closes an empty pipe, and FFmpeg reports that as
