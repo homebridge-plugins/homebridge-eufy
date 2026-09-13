@@ -176,7 +176,7 @@ const DIAGNOSTICS_DIRECTORY = 'diagnostics';
 const GUIDED_SESSION_FILE = 'session.json';
 const REPRODUCTION_MARKERS_FILE = 'reproduction-markers.jsonl';
 const UI_EVENTS_FILE = 'ui-events.jsonl';
-const FFMPEG_ENVIRONMENT_FILE = 'ffmpeg.json';
+const HOST_ENVIRONMENT_FILE = 'host.json';
 /** How much of an FFmpeg path or version banner is kept, which is more than either needs. */
 const MAX_FFMPEG_IDENTITY_LENGTH = 256;
 const DEBUG_AUTHORIZATION_MS = 72 * 60 * 60 * 1_000;
@@ -568,54 +568,92 @@ interface PersistedFfmpegEnvironment {
   version?: string;
 }
 
-function ffmpegEnvironmentPath(storageRoot: string): string {
-  return join(storageRoot, DIAGNOSTICS_DIRECTORY, FFMPEG_ENVIRONMENT_FILE);
+function hostEnvironmentPath(storageRoot: string): string {
+  return join(storageRoot, DIAGNOSTICS_DIRECTORY, HOST_ENVIRONMENT_FILE);
+}
+
+/** The longest host version string retained, which bounds a value this plugin does not choose. */
+const MAX_HOST_VERSION_LENGTH = 64;
+
+/**
+ * What the running host is, as only the process that has Homebridge's API can state it.
+ *
+ * The Homebridge version decides whether this plugin can run at all: V5 requires Homebridge 2, and a V1 host
+ * loads it and then fails in ways indistinguishable from a media fault. It is the host's own public version,
+ * so it carries no device or account material.
+ */
+interface PersistedHostEnvironment {
+  readonly homebridge?: string;
+  readonly ffmpeg?: PersistedFfmpegEnvironment;
 }
 
 /**
- * Records which FFmpeg this run resolved, so a support archive states the build a failure came from.
+ * Records what this run is hosted by, so a support archive states the host a failure came from.
  *
- * It is persisted rather than held in memory because the process that resolves it is not the one that
- * assembles an archive, and it is rewritten on every start so a path or binary that changed between runs
- * cannot be reported as the one in use. A write that fails is dropped: the archive then declares the
- * environment without an FFmpeg identity, which is honest, whereas failing startup over a diagnostic file
- * would cost the user their cameras.
+ * It is persisted rather than held in memory because the process that knows these facts is not the one that
+ * assembles an archive, and it is rewritten on every start so a host or binary that changed between runs
+ * cannot be reported as the one in use. Each call replaces the record whole, so a caller states everything it
+ * knows rather than accumulating into a file two writers would race for.
+ *
+ * A write that fails is dropped: the archive then declares the environment without these facts, which is
+ * honest, whereas failing startup over a diagnostic file would cost the user their cameras.
  */
-export function recordFfmpegEnvironment(storageRoot: string, ffmpeg: PersistedFfmpegEnvironment): void {
+export function recordHostEnvironment(storageRoot: string, host: PersistedHostEnvironment): void {
   try {
-    const path = ffmpegEnvironmentPath(storageRoot);
+    const path = hostEnvironmentPath(storageRoot);
     mkdirSync(dirname(path), { mode: 0o700, recursive: true });
-    writeFileSync(path, `${JSON.stringify({ version: 1, ffmpeg })}\n`, { mode: 0o600 });
+    writeFileSync(path, `${JSON.stringify({ version: 2, ...host })}\n`, { mode: 0o600 });
   } catch {}
 }
 
 /**
- * Reads the recorded adaptation binary, refusing a record whose own fields do not narrow.
+ * Reads what this run is hosted by, keeping each fact that narrows and dropping each that does not.
+ *
+ * The facts are independent, so a malformed binary identity does not withhold a host version, and a record
+ * stating neither is no record at all.
+ */
+function readHostEnvironment(storageRoot: string): PersistedHostEnvironment | undefined {
+  try {
+    const candidate = JSON.parse(readFileSync(hostEnvironmentPath(storageRoot), 'utf8')) as Record<string, unknown>;
+    if (candidate.version !== 2) {
+      return undefined;
+    }
+    const homebridge =
+      typeof candidate.homebridge === 'string' ? boundedText(candidate.homebridge, MAX_HOST_VERSION_LENGTH) : undefined;
+    const ffmpeg = readFfmpegIdentity(candidate.ffmpeg);
+    if (homebridge === undefined && ffmpeg === undefined) {
+      return undefined;
+    }
+    return {
+      ...(homebridge === undefined ? {} : { homebridge }),
+      ...(ffmpeg === undefined ? {} : { ffmpeg }),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The recorded adaptation binary, or nothing where the record's own fields do not narrow.
  *
  * The path and the banner are kept as written rather than pattern-replaced, because naming the binary is the
  * entire purpose of the record and a redacted one answers nothing. Neither is device or account material: the
  * path is this plugin's own setting or the binary it ships, and the banner is that build's public identity.
  */
-function readFfmpegEnvironment(storageRoot: string): PersistedFfmpegEnvironment | undefined {
-  try {
-    const candidate = JSON.parse(readFileSync(ffmpegEnvironmentPath(storageRoot), 'utf8')) as Record<string, unknown>;
-    const ffmpeg = candidate.ffmpeg;
-    if (candidate.version !== 1 || !ffmpeg || typeof ffmpeg !== 'object' || Array.isArray(ffmpeg)) {
-      return undefined;
-    }
-    const recorded = ffmpeg as Record<string, unknown>;
-    if (typeof recorded.path !== 'string' || (recorded.source !== 'bundled' && recorded.source !== 'configured')) {
-      return undefined;
-    }
-    const path = boundedText(recorded.path, MAX_FFMPEG_IDENTITY_LENGTH);
-    const version =
-      typeof recorded.version === 'string' ? boundedText(recorded.version, MAX_FFMPEG_IDENTITY_LENGTH) : undefined;
-    return path === undefined
-      ? undefined
-      : { path, source: recorded.source, ...(version === undefined ? {} : { version }) };
-  } catch {
+function readFfmpegIdentity(value: unknown): PersistedFfmpegEnvironment | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return undefined;
   }
+  const recorded = value as Record<string, unknown>;
+  if (recorded.source !== 'bundled' && recorded.source !== 'configured') {
+    return undefined;
+  }
+  const path = typeof recorded.path === 'string' ? boundedText(recorded.path, MAX_FFMPEG_IDENTITY_LENGTH) : undefined;
+  const version =
+    typeof recorded.version === 'string' ? boundedText(recorded.version, MAX_FFMPEG_IDENTITY_LENGTH) : undefined;
+  return path === undefined
+    ? undefined
+    : { path, source: recorded.source, ...(version === undefined ? {} : { version }) };
 }
 
 /**
@@ -908,7 +946,7 @@ export class GuidedDiagnostics {
   }
 
   private async collectSupportEvidence(session: PersistedDiagnosticsSession): Promise<SupportArchiveEvidence[]> {
-    const ffmpeg = readFfmpegEnvironment(this.storageRoot);
+    const host = readHostEnvironment(this.storageRoot);
     const evidence: SupportArchiveEvidence[] = [
       ...(session.affectedDevices === undefined
         ? []
@@ -933,18 +971,22 @@ export class GuidedDiagnostics {
         evidence: 'environment',
         privacyClass: 'operational',
         contentType: 'application/json',
-        content: `${JSON.stringify({ version: 2, plugin: PLUGIN_VERSION, sdk: SDK_VERSION, node: process.version, platform: process.platform, arch: process.arch, ...(ffmpeg ? { ffmpeg } : {}) })}\n`,
+        content: `${JSON.stringify({ version: 3, plugin: PLUGIN_VERSION, sdk: SDK_VERSION, node: process.version, ...(host?.homebridge ? { homebridge: host.homebridge } : {}), platform: process.platform, arch: process.arch, ...(host?.ffmpeg ? { ffmpeg: host.ffmpeg } : {}) })}\n`,
         /**
          * The record is operational and one field is classified above it: a resolved FFmpeg path is an
          * environment fact, but it can carry the home directory of the account Homebridge runs as, so it is
          * declared as diagnostic rather than presented alongside the host's own architecture.
+         *
+         * The Homebridge version is operational and load-bearing: this plugin requires Homebridge 2, and a
+         * host that predates it loads the plugin and then fails in ways a media fault cannot be told from.
          */
         fields: [
           ...['version', 'plugin', 'sdk', 'node', 'platform', 'arch'].map((field) => ({
             field,
             privacyClass: 'operational' as const,
           })),
-          ...(ffmpeg ? [{ field: 'ffmpeg', privacyClass: 'diagnostic' as const }] : []),
+          ...(host?.homebridge ? [{ field: 'homebridge', privacyClass: 'operational' as const }] : []),
+          ...(host?.ffmpeg ? [{ field: 'ffmpeg', privacyClass: 'diagnostic' as const }] : []),
         ],
       },
     ];
