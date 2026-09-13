@@ -1694,6 +1694,15 @@ function allowlistedLabel(value: unknown, allowed: readonly string[]): string | 
  */
 const MAX_STARTUP_WINDOW_MS = 60_000;
 
+/** Why a level-2 wait ended without a key, which is the whole of what such an ending states. */
+const LEVEL2_UNAVAILABLE_REASONS = [
+  'no-cipher-key',
+  'derivation-failed',
+  'not-negotiating',
+  'session-closed',
+  'grace-elapsed',
+] as const;
+
 /** The three phases whose only field is the action they report, which the union fixes at `start`. */
 const retainedStart = (candidate: Record<string, unknown>): Record<string, unknown> | undefined =>
   candidate.action === 'start' ? { action: 'start' } : undefined;
@@ -1744,7 +1753,49 @@ const LIVE_TRACE_PHASES = {
   'sequence-restart': retainedInteger('dataType', 3),
   'level2-wait': retainedInteger('waitMs', MAX_STARTUP_WINDOW_MS),
   'level2-ready': retainedInteger('cipherId', 65535),
-  'level2-absent': retainedInteger('waitedMs', MAX_STARTUP_WINDOW_MS),
+  'session-connect-wait': retainedInteger('waitMs', MAX_STARTUP_WINDOW_MS),
+  'session-connected': retainedInteger('waitedMs', MAX_STARTUP_WINDOW_MS),
+  'session-unreachable': retainedInteger('waitedMs', MAX_STARTUP_WINDOW_MS),
+  /**
+   * Why a level-2 wait ended without a key, and what it had to name.
+   *
+   * The reason is the record: a wait that ran out states how long it waited, and one answered without waiting
+   * states nothing more, because the negotiation is one-shot per connection. Only a reason reached under a
+   * negotiation has a cipher to name, so both durations are optional and each is retained where it is stated.
+   */
+  'level2-unavailable': (c) => {
+    const reason = allowlistedLabel(c.reason, LEVEL2_UNAVAILABLE_REASONS);
+    if (!reason) {
+      return undefined;
+    }
+    const cipherId = boundedInteger(c.cipherId, 65535);
+    const waitedMs = boundedInteger(c.waitedMs, MAX_STARTUP_WINDOW_MS);
+    return {
+      reason,
+      ...(cipherId === undefined ? {} : { cipherId }),
+      ...(waitedMs === undefined ? {} : { waitedMs }),
+    };
+  },
+  /** The cipher a station asked for, beside the one whose material answered it. */
+  'cipher-fallback': (c) => {
+    const cipherId = boundedInteger(c.cipherId, 65535);
+    const answeredCipherId = boundedInteger(c.answeredCipherId, 65535);
+    return cipherId === undefined || answeredCipherId === undefined ? undefined : { cipherId, answeredCipherId };
+  },
+  'level2-negotiating': retainedInteger('cipherId', 65535),
+  /**
+   * What a call resolved a station as, which decides what its failure means.
+   *
+   * An attached camera's media start has no unencrypted form, so the topology is what separates a key that
+   * never arrived from a start that had no form to be sent in. The channel is an index on a base and the
+   * administrator is a relation to the signed-in account: neither is an identity of its own.
+   */
+  'station-resolved': (c) => {
+    const topology = allowlistedLabel(c.topology, ['attached', 'own']);
+    const stationAdmin = allowlistedLabel(c.stationAdmin, ['self', 'other', 'unstated']);
+    const channel = boundedInteger(c.channel, MAX_STATION_CHANNEL);
+    return topology && stationAdmin && channel !== undefined ? { topology, channel, stationAdmin } : undefined;
+  },
   /**
    * How long a connection's path has answered nothing, which is the station stating the path is gone.
    *
