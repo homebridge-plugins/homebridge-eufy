@@ -338,10 +338,24 @@ function attachCameraStreaming(context: AdapterAttachmentContext): AttachedAdapt
   const reportCapacity = cameraCondition(context, CAMERA_MEDIA_AT_CAPACITY_CONDITION, 'live');
   const acquireLiveSnapshot = liveAvailable ? camera.snapshotLive!.bind(camera) : undefined;
   const openTalkback = talkbackConfigured ? camera.talkback!.bind(camera) : undefined;
+  /**
+   * The SDK egresses this camera offers, each given the pull options this adapter owns and the options its
+   * own caller passes.
+   *
+   * The caller's own are merged last because they belong to one call rather than to the pull: an abort signal
+   * is how a still is abandoned and how a cancelled live acquisition is given up, and an egress that drops it
+   * cannot be stopped at all — a station that serves one camera at a time then stays held by work nobody is
+   * waiting for, and refuses every other camera behind it meanwhile.
+   */
   const source: CameraMediaSource = {
-    live: () => openLiveSource(liveSourceOptions),
+    live: (options) => openLiveSource({ ...liveSourceOptions, ...options }),
     ...(storedAvailable ? { snapshotStored: camera.snapshotStored!.bind(camera) } : {}),
-    ...(acquireLiveSnapshot ? { snapshotLive: () => acquireLiveSnapshot(liveSourceOptions) } : {}),
+    ...(acquireLiveSnapshot
+      ? {
+          snapshotLive: (options: { signal?: AbortSignal } = {}) =>
+            acquireLiveSnapshot({ ...liveSourceOptions, ...options }),
+        }
+      : {}),
     ...(recordingAvailable ? { recordFragments: camera.recordFragments!.bind(camera) } : {}),
     ...(openTalkback ? { talkback: () => openTalkback(liveSourceOptions) } : {}),
   };

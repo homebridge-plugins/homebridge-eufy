@@ -4472,7 +4472,7 @@ describe('camera recording bundle adapter', () => {
 
     await startLiveSession((controller as { delegate: CameraStreamingDelegate }).delegate);
     await streaming.started[0].live();
-    expect(live).toHaveBeenCalledWith({ preBufferSeconds: 4 });
+    expect(live).toHaveBeenCalledWith(expect.objectContaining({ preBufferSeconds: 4 }));
 
     media.sessions[0].push({ data: Buffer.from('prebuffered'), last: true });
     await stream.iteration;
@@ -4494,7 +4494,7 @@ describe('camera recording bundle adapter', () => {
 
     await callSnapshot((controller as { delegate: CameraStreamingDelegate }).delegate);
 
-    expect(snapshotLive).toHaveBeenCalledWith({ preBufferSeconds: 4 });
+    expect(snapshotLive).toHaveBeenCalledWith(expect.objectContaining({ preBufferSeconds: 4 }));
   });
 
   it('never retains pre-event media for a battery or solar camera', async () => {
@@ -4523,7 +4523,7 @@ describe('camera recording bundle adapter', () => {
 
     await startLiveSession((controller as { delegate: CameraStreamingDelegate }).delegate);
     await streaming.started[0].live();
-    expect(live).toHaveBeenCalledWith(undefined);
+    expect(live).toHaveBeenCalledWith(expect.not.objectContaining({ preBufferSeconds: expect.anything() }));
 
     media.sessions[0].push({ data: Buffer.from('battery'), last: true });
     await stream.iteration;
@@ -4587,6 +4587,37 @@ describe('camera recording bundle adapter', () => {
     expect(live).toHaveBeenCalledWith(expect.objectContaining({ lingerMs: 30_000 }));
   });
 
+  /**
+   * An egress hands the SDK the signal its caller gave it, which is the only way work already in flight can be
+   * abandoned.
+   *
+   * A still asked to yield a station, and a live acquisition a stopped session cancels, are both abandoned by
+   * aborting the signal they were opened with. An egress that drops it holds the station until its own work
+   * finishes, and a station serving one camera at a time then refuses every other camera behind it — observed
+   * on a real base as a live request refused for a still that had been asked to yield 160ms earlier and let go
+   * a second later.
+   */
+  it('hands the SDK the abort signal its caller passed, beside the pull options it owns', async () => {
+    const live = vi.fn();
+    const snapshotLive = vi.fn(async () => ({ jpeg: jpeg('synthetic abandoned still'), width: 1280, height: 720 }));
+    const { controller } = attachRecordingCamera('Synthetic abandonable camera', {
+      device: {
+        sn: SNAPSHOT_SERIAL,
+        camera: () => ({ live, snapshotLive, recordFragments: vi.fn() }),
+      } as never,
+      evidence: recordingEvidence(snapshotEvidence('snapshotLive')),
+    });
+    const delegate = (controller as { delegate: CameraStreamingDelegate }).delegate;
+    const abandonment = new AbortController();
+
+    await callSnapshot(delegate);
+    const captured = snapshotLive.mock.calls.at(-1)![0] as { signal?: AbortSignal } | undefined;
+    expect(captured?.signal, 'a still cannot be abandoned by a signal it never received').toBeInstanceOf(AbortSignal);
+
+    void abandonment;
+    expect(snapshotLive).toHaveBeenLastCalledWith(expect.objectContaining({ preBufferSeconds: 4 }));
+  });
+
   it('opens a battery or solar live snapshot without a pre-event window', async () => {
     const snapshotLive = vi.fn(async () => ({ jpeg: jpeg('synthetic battery snapshot'), width: 1280, height: 720 }));
     const { controller } = attachRecordingCamera('Synthetic battery snapshot camera', {
@@ -4607,7 +4638,7 @@ describe('camera recording bundle adapter', () => {
 
     await callSnapshot((controller as { delegate: CameraStreamingDelegate }).delegate);
 
-    expect(snapshotLive).toHaveBeenCalledWith(undefined);
+    expect(snapshotLive).toHaveBeenCalledWith(expect.not.objectContaining({ preBufferSeconds: expect.anything() }));
   });
 
   it('retains no pre-event media for a camera with no recording to drain it', async () => {
@@ -4639,9 +4670,9 @@ describe('camera recording bundle adapter', () => {
     expect(controller.recordingManagement).toBeUndefined();
     await startLiveSession(controller.delegate, 'synthetic-unrecorded-prebuffer-session');
     await streaming.started[0].live();
-    expect(live).toHaveBeenCalledWith(undefined);
+    expect(live).toHaveBeenCalledWith(expect.not.objectContaining({ preBufferSeconds: expect.anything() }));
     await callSnapshot(controller.delegate);
-    expect(snapshotLive).toHaveBeenCalledWith(undefined);
+    expect(snapshotLive).toHaveBeenCalledWith(expect.not.objectContaining({ preBufferSeconds: expect.anything() }));
   });
 
   it('asks for no more pre-event media than the window the camera retains', async () => {
