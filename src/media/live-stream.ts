@@ -449,7 +449,7 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
       videoPort.close();
       audioPort?.close();
     };
-    const failVideo = (reason: LiveSessionFailure): void => {
+    const failVideo = (reason: LiveSessionFailure, servingChannel?: number): void => {
       if (stopped || videoFailed) {
         return;
       }
@@ -463,7 +463,12 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
             : !receivedVideoKeyframe
               ? 'first-source-keyframe'
               : 'first-adapted-output';
-      transport.onSessionOutcome?.({ outcome: 'failed', reason, stage });
+      transport.onSessionOutcome?.({
+        outcome: 'failed',
+        reason,
+        stage,
+        ...(servingChannel === undefined ? {} : { servingChannel }),
+      });
       transport.onVideoFailure?.();
     };
     /**
@@ -856,7 +861,10 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
           ]);
         } catch (error) {
           acquisition.abort(new Error('live media source acquisition was cancelled'));
-          failVideo(error === SOURCE_ACQUISITION_TIMEOUT ? 'source-acquisition-timeout' : sourceFailure(error));
+          failVideo(
+            error === SOURCE_ACQUISITION_TIMEOUT ? 'source-acquisition-timeout' : sourceFailure(error),
+            error instanceof StationBusyError ? error.servingChannel : undefined,
+          );
           throw error === SOURCE_ACQUISITION_TIMEOUT ? new Error('live media source acquisition timed out') : error;
         } finally {
           clearTimeout(acquisitionDeadline);

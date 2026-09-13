@@ -92,7 +92,19 @@ export type LiveSessionFailureStage =
 /** One live session lifecycle outcome, carrying no device identity, address, key, or media material. */
 export type LiveSessionOutcome =
   | { readonly outcome: 'streaming' }
-  | { readonly outcome: 'failed'; readonly reason: LiveSessionFailure; readonly stage: LiveSessionFailureStage };
+  | {
+      readonly outcome: 'failed';
+      readonly reason: LiveSessionFailure;
+      readonly stage: LiveSessionFailureStage;
+      /**
+       * The channel a station said it was already serving, where that is why this session got no source.
+       *
+       * A station serving one camera at a time names the channel it is busy with, which is the only statement
+       * of WHICH of its cameras holds it. An index on a base carries no identity of its own, and the camera it
+       * belongs to is already named by the records about that camera.
+       */
+      readonly servingChannel?: number;
+    };
 
 /** Why one return-audio lifecycle ended without usable device audio. */
 export type TalkbackFailure = 'source-unavailable' | 'unsupported-selection' | 'adaptation-failed' | 'device-audio-failed';

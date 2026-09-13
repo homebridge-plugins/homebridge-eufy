@@ -85,6 +85,8 @@ export type HomeKitEventTrace = { adapter: string; serial?: string } & (
       outcome: 'failed';
       reason: string;
       stage: 'sdk-source-acquisition' | 'first-source-keyframe' | 'first-adapted-output' | 'controller-rtcp';
+      /** The channel a station said it was already serving, which is which of its cameras holds it. */
+      servingChannel?: number;
     }
   /**
    * A session gave its source back, stating whether it was asked to or ended itself.
@@ -122,7 +124,15 @@ const LIVE_SESSION_RELEASES = ['requested', 'failed'] as const;
 
 /** The claims that contend for a station's one live channel, and the decisions taken over it. */
 const STATION_CLAIMS = ['live', 'recording', 'snapshot'] as const;
-const STATION_CLAIM_ACTIONS = ['held', 'yielded', 'refused'] as const;
+const STATION_CLAIM_ACTIONS = ['held', 'yielded', 'refused', 'released'] as const;
+/**
+ * The widest camera index a station may name as the one it is serving.
+ *
+ * A base fans a bounded number of cameras over one session, and an index beyond that is a value this plugin
+ * did not expect rather than a channel. The index carries no identity: which camera holds it is stated by the
+ * records about that camera.
+ */
+const MAX_STATION_CHANNEL = 63;
 
 /** The bounded reasons a stream request is refused before it reaches the source. */
 const REFUSAL_REASONS = new Set(['disabled', 'at-capacity', 'cancelled', 'prepare-failed']);
@@ -2783,11 +2793,13 @@ function sanitizeLiveSessionTrace(value: Record<string, unknown>): Record<string
   ) {
     return undefined;
   }
+  const servingChannel = boundedInteger(value.servingChannel, MAX_STATION_CHANNEL);
   return {
     adapter: value.adapter,
     event: value.event,
     outcome: value.outcome,
     reason: value.reason,
+    ...(servingChannel === undefined ? {} : { servingChannel }),
     stage: value.stage,
     ...accessory,
   };

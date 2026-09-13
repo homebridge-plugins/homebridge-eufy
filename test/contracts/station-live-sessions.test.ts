@@ -207,6 +207,20 @@ describe('what the registry states about its own decisions', () => {
     ]);
   });
 
+  it('states a hold ending, so an open hold is not read as one that finished', () => {
+    const decided: unknown[] = [];
+    const sessions = new StationLiveSessions((decision) => decided.push(decision));
+
+    const release = sessions.hold(BASE, 'camera-a', 'live');
+    release();
+    release();
+
+    expect(decided).toEqual([
+      { action: 'held', claim: 'live' },
+      { action: 'released', claim: 'live' },
+    ]);
+  });
+
   it('states a claim that stood down, and which claim held the station against it', () => {
     const decided: unknown[] = [];
     const sessions = new StationLiveSessions((decision) => decided.push(decision));

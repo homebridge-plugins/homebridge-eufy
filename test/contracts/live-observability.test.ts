@@ -253,6 +253,22 @@ describe('the controller evidence a release carries', () => {
  * anywhere.
  */
 describe('a session refused by the station', () => {
+  it('records the channel the station said it was serving, which is which camera holds it', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-failed',
+        outcome: 'failed',
+        reason: 'station-busy',
+        stage: 'sdk-source-acquisition',
+        servingChannel: 2,
+      },
+    );
+    expect(records(debug)[0]).toMatchObject({ reason: 'station-busy', servingChannel: 2 });
+  });
+
   it('records why, rather than a failure with no reason', () => {
     const debug = vi.fn();
     reportHomeKitEvent(

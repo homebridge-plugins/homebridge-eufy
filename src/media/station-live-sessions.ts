@@ -3,9 +3,11 @@ import type { StationLiveClaim, StationLiveSessionRegistry } from './contracts.j
 /**
  * One decision this registry made about a station's single live channel.
  *
- * The three are the whole arbitration as it happened: `held` is a claim taking the station and what it found
- * there, `yielded` is a weaker holder being asked to give it back, and `refused` is a claim standing down
- * because something stronger holds it. A station serves one camera at a time and the SDK refuses a second, so
+ * The four are the whole arbitration as it happened: `held` is a claim taking the station and what it found
+ * there, `released` is a claim giving it back, `yielded` is a weaker holder being asked to give it back early,
+ * and `refused` is a claim standing down because something stronger holds it. Without `released`, a hold that
+ * is still open cannot be told from one that ended, which is the difference between a station this plugin is
+ * holding and a station something outside it is. A station serves one camera at a time and the SDK refuses a second, so
  * a refusal a caller cannot explain is otherwise attributable either to this policy or to the station itself,
  * with nothing to say which.
  *
@@ -13,6 +15,7 @@ import type { StationLiveClaim, StationLiveSessionRegistry } from './contracts.j
  */
 export type StationClaimDecision =
   | { readonly action: 'held'; readonly claim: StationLiveClaim; readonly displaced?: StationLiveClaim }
+  | { readonly action: 'released'; readonly claim: StationLiveClaim }
   | { readonly action: 'yielded'; readonly claim: StationLiveClaim; readonly to: StationLiveClaim }
   | { readonly action: 'refused'; readonly claim: StationLiveClaim; readonly by: StationLiveClaim };
 
@@ -134,6 +137,7 @@ export class StationLiveSessions implements StationLiveSessionRegistry {
         return;
       }
       released = true;
+      this.decided({ action: 'released', claim });
       const remaining = this.sessions.get(stationSn);
       remaining?.delete(session);
       if (remaining && remaining.size === 0) {
