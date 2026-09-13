@@ -4529,6 +4529,29 @@ describe('camera recording bundle adapter', () => {
     await stream.iteration;
   });
 
+  /**
+   * A camera behind a HomeBase asks for a pull kept warm past the session that opened it, because a cold one
+   * costs the station's own warm-up before a first keyframe and a controller retrying does not wait for it.
+   */
+  it('keeps a HomeBase-attached camera pull warm past the session that opened it', async () => {
+    const streaming = liveMedia();
+    const live = vi.fn();
+    const { controller } = attachRecordingCamera('Synthetic attached live camera', {
+      liveMedia: streaming.adapter,
+      audioEnabled: false,
+      device: {
+        sn: SNAPSHOT_SERIAL,
+        stationSn: 'SYNTHETIC0000000009',
+        camera: () => ({ live, recordFragments: vi.fn() }),
+      } as never,
+    });
+
+    await startLiveSession((controller as { delegate: CameraStreamingDelegate }).delegate);
+    await streaming.started[0].live();
+
+    expect(live).toHaveBeenCalledWith(expect.objectContaining({ lingerMs: 30_000 }));
+  });
+
   it('opens a battery or solar live snapshot without a pre-event window', async () => {
     const snapshotLive = vi.fn(async () => ({ jpeg: jpeg('synthetic battery snapshot'), width: 1280, height: 720 }));
     const { controller } = attachRecordingCamera('Synthetic battery snapshot camera', {

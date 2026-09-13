@@ -433,8 +433,8 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
       stopTalkback();
       stopProcess(videoProcess);
       stopProcess(audioProcess);
-      if (source) {
-        source.stop();
+      source?.stop();
+      if (negotiated) {
         transport.onSessionReleased?.(videoFailed ? 'failed' : 'requested');
       }
       videoPort.close();

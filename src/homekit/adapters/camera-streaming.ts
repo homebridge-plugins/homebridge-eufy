@@ -107,6 +107,22 @@ const CAMERA_TALKBACK_FAILED_CONDITION = 'camera-talkback-failed';
  */
 const RECORDING_PREBUFFER_MS = 4_000;
 
+/**
+ * How long a HomeBase-attached camera's pull is kept warm after its last consumer leaves, in milliseconds.
+ *
+ * A cold pull on such a camera costs the level-2 handshake plus the base's own warm-up before a first
+ * keyframe, which a controller that has already given up does not wait for; a pull still warm answers the
+ * next attach from its retained keyframe instead. Measured on a real base: a reattach 1.8s after release
+ * reached the adaptation in 9ms and the negotiated output in 0.56s, while a controller retried 8.3s after
+ * the attempt it abandoned — past the source's own default, which is what leaves the retry paying for a
+ * second cold start.
+ *
+ * A standalone camera is its own station and pays none of that, so it keeps the source's default. The window
+ * is bounded by the source's battery budget rather than by this value, because nothing extends that budget
+ * once the session holding it has ended.
+ */
+const ATTACHED_PULL_LINGER_MS = 30_000;
+
 /** The fragment length this camera advertises, which is the value HomeKit Secure Video cameras use. */
 const RECORDING_FRAGMENT_LENGTH_MS = 4_000;
 
@@ -302,7 +318,14 @@ function attachCameraStreaming(context: AdapterAttachmentContext): AttachedAdapt
             : 'missing-trigger',
   });
   const prebufferLengthMs = recordingConfigured ? retainedPrebufferMs(context.evidence) : 0;
-  const liveSourceOptions = prebufferLengthMs > 0 ? { preBufferSeconds: prebufferLengthMs / 1_000 } : undefined;
+  const attachedToBase = context.device.stationSn !== undefined && context.device.stationSn !== context.device.sn;
+  const liveSourceOptions =
+    prebufferLengthMs > 0 || attachedToBase
+      ? {
+          ...(prebufferLengthMs > 0 ? { preBufferSeconds: prebufferLengthMs / 1_000 } : {}),
+          ...(attachedToBase ? { lingerMs: ATTACHED_PULL_LINGER_MS } : {}),
+        }
+      : undefined;
   const openLiveSource = camera.live.bind(camera);
   const observed = observesCameraEnablement(camera, context.evidence);
   const enablement = cameraEnablementReader(camera, context.evidence);

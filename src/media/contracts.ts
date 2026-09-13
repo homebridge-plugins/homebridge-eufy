@@ -238,6 +238,10 @@ export interface StationLiveSessionRegistry {
  * host giving room back. `failed` is the session ending itself, and the failure that decided it carries its own
  * reason and stage. One is a session that served for as long as it was wanted and the other is a fault, so a
  * release states which.
+ *
+ * Every session that negotiated a selection reports one, including a session stopped while its source was
+ * still being acquired: that session reaches no adaptation and no outcome, so its release is the only record
+ * that it existed at all.
  */
 export type LiveSessionRelease = 'requested' | 'failed';
 

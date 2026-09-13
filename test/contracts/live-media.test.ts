@@ -455,6 +455,27 @@ describe('live media adaptation', () => {
     vi.useRealTimers();
   });
 
+  /**
+   * A session stopped while its source was still being acquired reaches no adaptation and reports no outcome,
+   * so its release is the only record that it existed at all.
+   */
+  it('reports the release of a session stopped while its source was still being acquired', async () => {
+    const session = await liveSession({
+      live: (options) =>
+        new Promise<never>((_, reject) =>
+          options?.signal?.addEventListener('abort', () => reject(options.signal!.reason)),
+        ),
+    });
+    const starting = session.start();
+
+    session.prepared.stop();
+
+    await expect(starting).rejects.toThrow('live media session stopped');
+    expect(session.outcomes).toEqual([]);
+    expect(session.children).toHaveLength(0);
+    expect(session.released).toHaveBeenCalledExactlyOnceWith('requested');
+  });
+
   it('fails a session on the SDK warm-up error before the video backstop', async () => {
     vi.useFakeTimers();
     const session = await liveSession();
