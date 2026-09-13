@@ -1429,6 +1429,37 @@ describe('live media adaptation', () => {
     session.prepared.stop();
   });
 
+  /**
+   * A replacement adaptation continues the session's RTP numbering instead of restarting it.
+   *
+   * The SSRC and the SRTP key outlive the process, and the SRTP packet index is built from the sequence
+   * number, so a replacement starting at FFmpeg's own random base is read as replay by the controller and
+   * discarded under a key that still authenticates — while RTCP liveness holds, because the controller goes on
+   * acknowledging what it already received. Measured on a real controller as a session that kept sending for
+   * 27 seconds after a reconfiguration, acknowledged 92 times, with a picture that never advanced again.
+   */
+  it('advances the RTP sequence for a replaced adaptation rather than restarting it', async () => {
+    const session = await liveSession();
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.children[0]!.stderr.push('progress=continue\n');
+    await settle();
+
+    session.prepared.reconfigure({ ...NEGOTIATED_VIDEO, width: 640, height: 360, maxBitRate: 132 });
+    session.stream.video(KEYFRAME);
+    await settle();
+
+    const sequences = session.spawned
+      .filter((args) => args.includes('-seq'))
+      .map((args) => Number(args[args.indexOf('-seq') + 1]));
+    expect(sequences).toHaveLength(2);
+    expect(
+      sequences[1]!,
+      'a replacement that numbers below its predecessor is replay to the controller',
+    ).toBeGreaterThan(sequences[0]!);
+    session.prepared.stop();
+  });
+
   it('bounds a deferred reconfiguration even while the superseded selection keeps reporting progress', async () => {
     vi.useFakeTimers();
     const session = await liveSession();

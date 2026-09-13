@@ -78,6 +78,20 @@ const RETURN_AUDIO_BIND_GRACE_MS = 250;
  * reports nothing at all.
  */
 export const SOURCE_START_BACKSTOP_MS = 30_000;
+/**
+ * How far the RTP sequence space is advanced for each adaptation a session sends on, in packets.
+ *
+ * One session keeps one SSRC and one SRTP key across a replaced adaptation, and the SRTP packet index is built
+ * from the sequence number — so a replacement that started where FFmpeg would have, at a random base, is read
+ * by the controller as replay half the time and its packets are discarded under a key that still
+ * authenticates. Nothing reports it: the controller goes on acknowledging what it received before, so RTCP
+ * liveness holds while the picture never advances again.
+ *
+ * Advancing instead of restarting keeps the index monotonic. The step is well under half the sequence space,
+ * which is what keeps the receiver's own index estimate correct across the wrap it eventually crosses; a gap
+ * this size reads as loss, which a controller already tolerates.
+ */
+const OUTPUT_SEQUENCE_STEP = 4_096;
 const SOURCE_ACQUISITION_TIMEOUT = Symbol('source-acquisition-timeout');
 
 /**
@@ -314,6 +328,8 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
     /** How many receiver reports this session was acknowledged by, and when the last one arrived. */
     /** Why the video adaptation now running was started, which the record reporting it carries. */
     let videoCause: AdaptationCause = 'first';
+    /** Where the next adaptation this session sends on starts its RTP sequence, advanced for every one. */
+    let videoSequence = 0;
     let rtcpReports = 0;
     let lastRtcpAt: number | undefined;
     let streaming = false;
@@ -568,9 +584,10 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
       }
       if (!videoProcess) {
         adaptationConfig = videoConfig;
+        videoSequence = (videoSequence + OUTPUT_SEQUENCE_STEP) & 0xffff;
         const child = this.createProcess(
           this.executable,
-          videoArguments(videoConfig, negotiated.video, targetAddress, transport.video),
+          videoArguments(videoConfig, negotiated.video, targetAddress, transport.video, videoSequence),
         );
         videoProcess = child;
         adaptationDiagnostics?.report({ role: 'live-video', event: 'started', cause: videoCause });
@@ -949,18 +966,28 @@ function commonArguments(inputFormat: string, inputOptions: readonly string[] = 
   ];
 }
 
+/**
+ * The RTP output one adaptation sends on: the controller's endpoint, the identity the session negotiated for
+ * it, and where its sequence numbering starts.
+ *
+ * `sequence` is stated wherever a session may send on more than one adaptation, because the identity and the
+ * SRTP key outlive the process: see {@link OUTPUT_SEQUENCE_STEP} for what a restarted numbering costs. An
+ * output no replacement can follow omits it and keeps FFmpeg's own base.
+ */
 function outputArguments(
   targetAddress: string,
   target: LiveMediaTarget,
   payloadType: number,
   ssrc: number,
   packetSize: number,
+  sequence?: number,
 ): string[] {
   return [
     '-payload_type',
     String(payloadType),
     '-ssrc',
     String(ssrc),
+    ...(sequence === undefined ? [] : ['-seq', String(sequence)]),
     '-f',
     'rtp',
     '-srtp_out_suite',
@@ -1017,6 +1044,7 @@ function videoArguments(
   selection: NegotiatedLiveVideo,
   targetAddress: string,
   target: LiveMediaTarget,
+  sequence: number,
 ): string[] {
   const budget = videoBudgetInsideCeiling(selection);
   return [
@@ -1050,7 +1078,7 @@ function videoArguments(
     `${budget}k`,
     '-bufsize',
     `${budget}k`,
-    ...outputArguments(targetAddress, target, selection.payloadType, selection.ssrc, selection.mtu),
+    ...outputArguments(targetAddress, target, selection.payloadType, selection.ssrc, selection.mtu, sequence),
   ];
 }
 
