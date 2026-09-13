@@ -4533,6 +4533,41 @@ describe('camera recording bundle adapter', () => {
    * A camera behind a HomeBase asks for a pull kept warm past the session that opened it, because a cold one
    * costs the station's own warm-up before a first keyframe and a controller retrying does not wait for it.
    */
+  /**
+   * A camera behind a HomeBase takes that station's one live channel when it opens a live session.
+   *
+   * The station serves one camera at a time and the SDK refuses a second, so the registry is what decides who
+   * gets it — a live session that never records its claim leaves every weaker holder unaware it should yield,
+   * and the refusal then comes from the station instead of from a policy that could have prevented it.
+   */
+  it('claims its station for a live session, so weaker work on that station can be asked to yield', async () => {
+    const streaming = liveMedia();
+    const holds: unknown[] = [];
+    const stations = {
+      held: 0,
+      heldFor: () => undefined,
+      admits: () => true,
+      hold: (stationSn: string, camera: string, claim: string) => {
+        holds.push({ stationSn, camera, claim });
+        return () => undefined;
+      },
+    };
+    const { controller } = attachRecordingCamera('Synthetic station-claiming camera', {
+      liveMedia: streaming.adapter,
+      audioEnabled: false,
+      stationLiveSessions: stations as never,
+      device: {
+        sn: SNAPSHOT_SERIAL,
+        stationSn: 'SYNTHETIC0000000009',
+        camera: () => ({ live: vi.fn(), recordFragments: vi.fn() }),
+      } as never,
+    });
+
+    await startLiveSession((controller as { delegate: CameraStreamingDelegate }).delegate);
+
+    expect(holds).toEqual([{ stationSn: 'SYNTHETIC0000000009', camera: SNAPSHOT_SERIAL, claim: 'live' }]);
+  });
+
   it('keeps a HomeBase-attached camera pull warm past the session that opened it', async () => {
     const streaming = liveMedia();
     const live = vi.fn();

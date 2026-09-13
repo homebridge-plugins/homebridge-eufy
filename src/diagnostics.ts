@@ -2327,6 +2327,10 @@ function sanitizeStructuredEvent(message: string): Record<string, unknown> | und
   }
 
   if (value.scope === 'homekit') {
+    if (value.event === 'station-claim') {
+      const claim = sanitizeStationClaim(value);
+      return claim ? { scope: 'homekit', level: 'debug', ...claim } : undefined;
+    }
     if (value.adapter === 'camera.streaming' && value.event === 'live-video-selected') {
       const selection = sanitizeLiveVideoSelection(value);
       return selection ? { scope: 'homekit', level: 'debug', ...selection } : undefined;
@@ -2505,6 +2509,23 @@ export function reportInvalidSnapshotCache(
  * already carry. The identity itself never reaches the record: an unresolved one is recorded as no accessory.
  */
 /**
+ * Narrows one offered station arbitration decision, or nothing where its own labels do not narrow.
+ *
+ * Read by both halves of the path — {@link reportStationClaim} builds the record and the file sink rebuilds
+ * it — because a record only one of them recognises is written to a console nobody is reading and dropped
+ * before it reaches a support archive.
+ */
+function sanitizeStationClaim(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  const action = allowlistedLabel(value.action, STATION_CLAIM_ACTIONS);
+  const claim = allowlistedLabel(value.claim, STATION_CLAIMS);
+  if (!action || !claim) {
+    return undefined;
+  }
+  const against = allowlistedLabel(value.displaced ?? value.to ?? value.by ?? value.against, STATION_CLAIMS);
+  return { event: 'station-claim', action, claim, ...(against === undefined ? {} : { against }) };
+}
+
+/**
  * Records one arbitration decision over a station's single live channel as `homekit-log` evidence.
  *
  * A station serves one camera at a time and the SDK refuses a second outright, so a refused live request is
@@ -2516,22 +2537,10 @@ export function reportStationClaim(
   target: Pick<PlatformLogger, 'debug'>,
   decision: { action: string; claim: string; displaced?: string; to?: string; by?: string },
 ): void {
-  const action = allowlistedLabel(decision.action, STATION_CLAIM_ACTIONS);
-  const claim = allowlistedLabel(decision.claim, STATION_CLAIMS);
-  if (!target.debug || !action || !claim) {
-    return;
+  const claim = sanitizeStationClaim(decision as unknown as Record<string, unknown>);
+  if (target.debug && claim) {
+    target.debug(JSON.stringify({ scope: 'homekit', level: 'debug', ...claim }));
   }
-  const against = allowlistedLabel(decision.displaced ?? decision.to ?? decision.by, STATION_CLAIMS);
-  target.debug(
-    JSON.stringify({
-      scope: 'homekit',
-      level: 'debug',
-      event: 'station-claim',
-      action,
-      claim,
-      ...(against === undefined ? {} : { against }),
-    }),
-  );
 }
 
 export function reportHomeKitEvent(

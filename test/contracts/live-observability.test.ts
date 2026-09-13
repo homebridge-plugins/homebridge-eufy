@@ -10,6 +10,7 @@ import {
   GuidedDiagnostics,
   reportAdaptationNotice,
   reportHomeKitEvent,
+  reportStationClaim,
 } from '../../src/diagnostics.js';
 
 /**
@@ -166,6 +167,33 @@ describe('a session that reached the negotiated output', () => {
     } as never);
     const record = records(debug)[0]!;
     expect(Object.keys(record).sort()).toEqual(['adapter', 'event', 'level', 'scope']);
+  });
+});
+
+/**
+ * An arbitration decision survives the file sink, not only the reporter.
+ *
+ * The retained record is rebuilt from what was written rather than trusted, so a decision the sink does not
+ * recognise reaches a console nobody reads and is dropped before any support archive — which is how the two
+ * candidate defects behind a refused live request stayed indistinguishable.
+ */
+describe('an arbitration decision over a station', () => {
+  it('states the claims it was taken between', () => {
+    const debug = vi.fn();
+    reportStationClaim({ debug }, { action: 'held', claim: 'live', displaced: 'snapshot' });
+    expect(records(debug)[0]).toMatchObject({
+      scope: 'homekit',
+      event: 'station-claim',
+      action: 'held',
+      claim: 'live',
+      against: 'snapshot',
+    });
+  });
+
+  it('drops a decision naming a claim this plugin does not arbitrate', () => {
+    const debug = vi.fn();
+    reportStationClaim({ debug }, { action: 'held', claim: 'talkback' });
+    expect(debug).not.toHaveBeenCalled();
   });
 });
 
@@ -427,6 +455,28 @@ describe('a live record that reached the support archive', () => {
         return rest;
       });
   };
+
+  it('keeps an arbitration decision over a station, which a refused request is otherwise unattributable', async () => {
+    await expect(
+      retained({
+        scope: 'homekit',
+        level: 'debug',
+        event: 'station-claim',
+        action: 'yielded',
+        claim: 'snapshot',
+        against: 'live',
+      }),
+    ).resolves.toEqual([
+      {
+        scope: 'homekit',
+        level: 'debug',
+        event: 'station-claim',
+        action: 'yielded',
+        claim: 'snapshot',
+        against: 'live',
+      },
+    ]);
+  });
 
   it('keeps a request refused before the source, the badge an operator saw having no other counterpart', async () => {
     await expect(
