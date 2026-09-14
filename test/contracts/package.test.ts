@@ -135,7 +135,7 @@ async function renderUi(
       return selector === '[data-serial]' ? this.children.filter((child) => child.dataset?.serial) : [];
     },
   };
-  const diagnosticsDevicesEvery = interactiveElement({});
+  const diagnosticsDevicesEvery = interactiveElement({ textContent: '' });
   const diagnosticsDevicesChosen = interactiveElement({ disabled: true });
   const diagnosticsQuestionText = {
     focused: false,
@@ -405,13 +405,16 @@ async function renderUi(
         return selector === '[data-i18n]' ? translatedNodes : translatedLabels;
       },
       createElement() {
-        const element = {
+        const element = interactiveElement({
           children: [] as unknown[],
           attributes: {} as Record<string, string>,
+          dataset: {} as Record<string, string>,
           append(...children: unknown[]) {
             this.children.push(...children);
           },
-          addEventListener() {},
+          getAttribute(name: string) {
+            return this.attributes[name];
+          },
           setAttribute(name: string, value: string) {
             this.attributes[name] = value;
           },
@@ -419,8 +422,8 @@ async function renderUi(
           hidden: false,
           textContent: '',
           type: '',
-        };
-        createdElements.push(element as Record<string, unknown>);
+        });
+        createdElements.push(element as unknown as Record<string, unknown>);
         return element;
       },
       body: { appendChild() {}, removeChild() {} },
@@ -1114,6 +1117,7 @@ describe('packed plugin', () => {
         'diagnosticsDashboardSummary',
         'diagnosticsDevicesAction',
         'diagnosticsDevicesBefore',
+        'diagnosticsDevicesNone',
         'diagnosticsDevicesSummary',
         'diagnosticsEndReproduction',
         'diagnosticsExpired',
@@ -1485,6 +1489,117 @@ describe('packed plugin', () => {
           textContent: catalogs['i18n/en.json'].diagnosticsIntermittentIssueHappened,
         },
       });
+
+      /**
+       * The devices offered as the answer are the ones the chosen area's fault could be about, and the escape
+       * beside them selects or clears whichever is left to do.
+       */
+      const liveMediaUi = await renderUi(
+        script,
+        [{ platform: 'HomebridgeEufy', username: 'guest@example.invalid' }],
+        catalogs,
+        'en',
+        [],
+        undefined,
+        {
+          state: 'ready',
+          devices: [
+            {
+              serial: 'synthetic-camera',
+              name: 'Entry camera',
+              modelName: 'Synthetic camera',
+              category: 'security',
+              deviceClass: 'camera',
+              recognized: true,
+              represented: true,
+              controllable: true,
+              diagnosticOnly: false,
+              preferences: ['represented'],
+              representation: ['camera.streaming', 'motion.sensor'],
+            },
+            {
+              serial: 'synthetic-station',
+              name: 'Hallway base',
+              modelName: 'Synthetic station',
+              category: 'security',
+              deviceClass: 'homebase',
+              recognized: true,
+              represented: true,
+              controllable: true,
+              diagnosticOnly: false,
+              preferences: ['represented'],
+              representation: ['arming.security-system', 'siren.test'],
+            },
+          ],
+        },
+      );
+      await liveMediaUi.menuDiagnostics.dispatch('click');
+      await liveMediaUi.diagnosticsTiles
+        .find((tile) => (tile as { dataset: { diagnosticsTile: string } }).dataset.diagnosticsTile === 'live-media')!
+        .dispatch('click');
+      const offered = () => liveMediaUi.diagnosticsDeviceList.children.map((tile) => tile.dataset.serial);
+      const pressed = () =>
+        liveMediaUi.diagnosticsDeviceList.children
+          .filter((tile) => tile.attributes['aria-pressed'] === 'true')
+          .map((tile) => tile.dataset.serial);
+
+      expect(offered(), 'a station never had a stream, so it is not an answer to a live media fault').toEqual([
+        'synthetic-camera',
+      ]);
+      expect(liveMediaUi).toMatchObject({
+        diagnosticsDevices: { hidden: false },
+        diagnosticsDevicesChosen: { disabled: true },
+        diagnosticsDevicesEvery: { textContent: catalogs['i18n/en.json'].diagnosticsDevicesEvery },
+      });
+
+      await liveMediaUi.diagnosticsDevicesEvery.dispatch('click');
+
+      expect(pressed()).toEqual(['synthetic-camera']);
+      expect(liveMediaUi, 'with every tile pressed the escape is the way back out of that').toMatchObject({
+        diagnosticsDevices: { hidden: false },
+        diagnosticsDevicesChosen: { disabled: false },
+        diagnosticsDevicesEvery: { textContent: catalogs['i18n/en.json'].diagnosticsDevicesNone },
+      });
+
+      await liveMediaUi.diagnosticsDevicesEvery.dispatch('click');
+
+      expect(pressed()).toEqual([]);
+      expect(liveMediaUi).toMatchObject({
+        diagnosticsDevicesChosen: { disabled: true },
+        diagnosticsDevicesEvery: { textContent: catalogs['i18n/en.json'].diagnosticsDevicesEvery },
+      });
+
+      /**
+       * Opened while the sign-in screen is up, the wizard presumes the area rather than asking, and lands on
+       * the one question that still has an answer. The presumption is not a lock: the way back off frequency
+       * reaches the opening screen like any other.
+       */
+      const signingInUi = await renderUi(
+        script,
+        [{ platform: 'HomebridgeEufy', username: 'guest@example.invalid' }],
+        catalogs,
+        'en',
+        [],
+        undefined,
+        { state: 'authentication-required', devices: [] },
+      );
+      expect(signingInUi.setupContent.hidden, 'a dashboard that needs a sign-in shows the sign-in').toBe(false);
+
+      await signingInUi.menuDiagnostics.dispatch('click');
+
+      expect(signingInUi).toMatchObject({
+        diagnosticsQuestion: { hidden: true },
+        diagnosticsDevices: { hidden: true },
+        diagnosticsFrequency: { hidden: false },
+      });
+
+      await signingInUi.diagnosticsFrequencyNow.dispatch('click');
+
+      expect(signingInUi.diagnosticsGuidanceTitle.textContent).toBe(catalogs['i18n/en.json'].diagnosticsProfileStartup);
+
+      await signingInUi.diagnosticsReject.dispatch('click');
+
+      expect(signingInUi.diagnosticsQuestion.hidden, 'the presumed area is still open to being changed').toBe(false);
 
       const dashboardBackgroundUi = await renderUi(
         script,

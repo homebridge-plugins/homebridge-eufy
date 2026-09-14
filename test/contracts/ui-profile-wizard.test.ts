@@ -11,6 +11,10 @@ interface WizardState {
 }
 
 interface DiagnosticsWizard {
+  affectable(
+    profile: string,
+    devices: ReadonlyArray<{ serial: string; controllable: boolean; representation: readonly string[] }>,
+  ): ReadonlyArray<{ serial: string }>;
   backFromFrequency(state: WizardState): WizardState;
   backgroundActive(session: { profile?: string; status: string }): boolean;
   chooseDevices(state: WizardState, devices: 'all' | readonly string[]): WizardState;
@@ -67,6 +71,28 @@ describe('diagnostics profile wizard', () => {
     });
     expect(wizard.select(wizard.start(), 'dashboard-ui')).toMatchObject({ mode: 'frequency' });
     expect(wizard.select(wizard.start(), 'other')).toMatchObject({ mode: 'frequency' });
+  });
+
+  /**
+   * The devices offered as the answer are the ones the chosen area's fault could be about. A device that never
+   * streams cannot be the subject of a live media fault, and one nothing controls cannot be the subject of a
+   * control fault. A missing device is the exception: a device with no representation at all is exactly what
+   * that area is reported for, so nothing is filtered out of it.
+   */
+  it('offers only the devices the chosen area could be about', () => {
+    const wizard = loadWizard();
+    const devices = [
+      { serial: 'T8010P0000000001', controllable: true, representation: ['camera.streaming', 'motion.sensor'] },
+      { serial: 'T8030P0000000002', controllable: true, representation: ['arming.security-system', 'siren.test'] },
+      { serial: 'T8900P0000000003', controllable: false, representation: ['contact.sensor'] },
+      { serial: 'T8410P0000000004', controllable: false, representation: [] },
+    ];
+    const offered = (profile: string) => wizard.affectable(profile, devices).map(({ serial }) => serial);
+
+    expect(offered('live-media')).toEqual(['T8010P0000000001']);
+    expect(offered('hksv-recording')).toEqual(['T8010P0000000001']);
+    expect(offered('control-state')).toEqual(['T8010P0000000001', 'T8030P0000000002']);
+    expect(offered('device-representation')).toEqual(devices.map(({ serial }) => serial));
   });
 
   /**

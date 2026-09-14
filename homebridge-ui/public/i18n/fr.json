@@ -106,6 +106,7 @@
   "diagnosticsDevicesEvery": "Tout sélectionner",
   "diagnosticsDevicesHeading": "Quels appareils sont concernés ?",
   "diagnosticsDevicesHint": "Touchez ceux qui sont concernés. Tous les journaux sont collectés dans les deux cas — les nommer indique où regarder, et évite qu’on vous repose la question.",
+  "diagnosticsDevicesNone": "Tout désélectionner",
   "diagnosticsDevicesSummary": "Vérifie pourquoi un accessoire HomeKit est absent, dupliqué ou affiché avec le mauvais type.",
   "diagnosticsEndReproduction": "Le problème est survenu : terminer la reproduction",
   "diagnosticsEvidenceReady": "Collecte terminée.",

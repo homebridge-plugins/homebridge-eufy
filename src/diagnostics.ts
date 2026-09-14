@@ -2030,6 +2030,8 @@ const REASONS = new Set([
   'source-stopped',
   'source-unavailable',
   'station-busy',
+  'station-key-unavailable',
+  'station-unreachable',
   'stored-download-failed',
   'stored-failed',
   'stored-invalid-image',

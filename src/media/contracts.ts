@@ -70,6 +70,21 @@ export type LiveSessionFailure =
    * was merely waiting its turn read as a camera that failed, and left no way to tell the two apart in a log.
    */
   | 'station-busy'
+  /**
+   * The station's session did not connect, so nothing could be sent to it.
+   *
+   * Names the station rather than the camera: every camera behind an unreachable base fails together, and the
+   * next step is that base or the network to it, not the camera a viewer happened to open.
+   */
+  | 'station-unreachable'
+  /**
+   * The station did not provide the session key its media start has to be sealed with.
+   *
+   * A camera reached over a HomeBase has no unencrypted start form, so this is a refusal rather than a
+   * timeout, and it does not resolve by retrying the same camera. What the key was missing FOR is the SDK's
+   * own trace vocabulary; this states which of its outcomes the session ended on.
+   */
+  | 'station-key-unavailable'
   | 'source-acquisition-timeout'
   | 'no-video-within-backstop'
   | 'source-audio-only'
@@ -352,7 +367,11 @@ export type RecordingFailure =
    * so this says the recording could not have the station, not that anything is broken. HomeKit tries again on
    * the next trigger.
    */
-  | 'station-busy';
+  | 'station-busy'
+  /** The station's session did not connect, so the recording could not be asked for. */
+  | 'station-unreachable'
+  /** The station did not provide the session key a recording of an attached camera has to be sealed with. */
+  | 'station-key-unavailable';
 
 /** One recording lifecycle outcome, carrying no device identity, address, key, or media material. */
 export type RecordingOutcome =

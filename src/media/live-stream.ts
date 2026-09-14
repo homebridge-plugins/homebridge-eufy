@@ -1,5 +1,10 @@
 import type { LiveAudioFrame, LiveStreamConsumer, LiveVideoConfig, LiveVideoFrame, TalkbackHandle } from '@mega-yfue/eufy-sdk';
-import { LiveStreamStartError, StationBusyError } from '@mega-yfue/eufy-sdk';
+import {
+  LiveStreamStartError,
+  StationBusyError,
+  StationKeyUnavailableError,
+  StationUnreachableError,
+} from '@mega-yfue/eufy-sdk';
 import { createSocket } from 'node:dgram';
 import { execFile, spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -106,6 +111,12 @@ const SOURCE_ACQUISITION_TIMEOUT = Symbol('source-acquisition-timeout');
 function sourceFailure(error: unknown): LiveSessionFailure {
   if (error instanceof StationBusyError) {
     return 'station-busy';
+  }
+  if (error instanceof StationUnreachableError) {
+    return 'station-unreachable';
+  }
+  if (error instanceof StationKeyUnavailableError) {
+    return 'station-key-unavailable';
   }
   return error instanceof LiveStreamStartError && error.stage === 'audio-only' ? 'source-audio-only' : 'source-error';
 }

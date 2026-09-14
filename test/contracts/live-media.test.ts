@@ -10,6 +10,7 @@ import type {
   TalkbackHandle,
 } from '@mega-yfue/eufy-sdk';
 import { LiveStreamStartError } from '@mega-yfue/eufy-sdk';
+import { StationKeyUnavailableError, StationUnreachableError } from '@mega-yfue/eufy-sdk';
 import bundledFfmpegPath from 'ffmpeg-for-homebridge';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -1612,6 +1613,28 @@ describe('live media adaptation', () => {
       { outcome: 'failed', reason: 'no-video-within-backstop', stage: 'first-source-keyframe' },
     ]);
     vi.useRealTimers();
+  });
+
+  /**
+   * A station that could not be reached, and one that withheld the key its media start is sealed with, are not
+   * a source that failed.
+   *
+   * Every camera behind an unreachable base fails together, so the next step is that base rather than the
+   * camera a viewer opened; a missing session key is a refusal that retrying the same camera does not resolve.
+   * Reported as `source-error`, both read as the camera's fault. The stage stays `sdk-source-acquisition`,
+   * because that is where the session ended.
+   */
+  it('names a station that could not be reached, and one that withheld its key', async () => {
+    for (const [error, reason] of [
+      [new StationUnreachableError(20_000), 'station-unreachable'],
+      [new StationKeyUnavailableError(), 'station-key-unavailable'],
+    ] as const) {
+      const session = await liveSession({ live: () => Promise.reject(error) });
+      await expect(session.start()).rejects.toThrow();
+
+      expect(session.outcomes).toEqual([{ outcome: 'failed', reason, stage: 'sdk-source-acquisition' }]);
+      expect(session.onVideoFailure).toHaveBeenCalledOnce();
+    }
   });
 
   it('bounds stalled source acquisition and no-RTCP sessions', async () => {
