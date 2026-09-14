@@ -41,7 +41,60 @@ jobs:
               return;
             }
 
-            const body = issue.body || '';
+            const request = { owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number };
+            let body = issue.body || '';
+            let comments = await github.paginate(github.rest.issues.listComments, { ...request, per_page: 100 });
+
+            // A file upload, optionally as the markdown link GitHub writes, with its name. A pasted or
+            // dragged image normally lands under `assets/` and is never matched here, but a client that
+            // uploads one as a file lands it under `files/`, so an image name is kept either way.
+            const UPLOAD = /(?:\[[^\]]*\]\()?https:\/\/github\.com\/user-attachments\/files\/\d+\/([^\s)]+)\)?/g;
+            const KEEP = /\.(?:eufysupport\.gz|png|jpe?g|gif|webp|heic|svg)$/i;
+            const ATTACHED_ARCHIVE = /github\.com\/user-attachments\/files\/\d+\/[^\s)]+\.eufysupport\.gz/;
+
+            // The one file this project asks for is the encrypted archive. Everything else a reporter reaches
+            // for instead — a Homebridge backup, a config, a raw log — carries their account passwords and
+            // tokens in the clear on a public page, so it goes now rather than whenever a maintainer next
+            // reads the thread. This runs before the report is judged at all, because a device-support request
+            // leaks exactly as badly as a bug report.
+            const strip = (text) =>
+              (text || '').replace(UPLOAD, (match, name) =>
+                KEEP.test(name) ? match : '_(attachment removed: not a diagnostics archive)_',
+              );
+
+            const WARNING = [
+              '**The file attached here has been removed, because it was not a diagnostics archive.**',
+              '',
+              'The archive the plugin creates is encrypted and stripped of anything personal. Anything else — a Homebridge backup, a config file, a raw log — carries your logins, tokens and pairing code in plain text, and this page is public.',
+              '',
+              'If you attached one of those, treat what was in it as seen: change the password of the eufy account the plugin uses, the passwords of your other connected accounts, and your Homebridge interface password. Removing it here does not unsend the notification emails or take the uploaded file off GitHub, so changing the passwords is the part that protects you.',
+              '',
+              'To produce the right file: open the plugin settings, select the device that is misbehaving, click **Run diagnostics**, and follow it through. Screenshots are welcome as always.',
+            ].join('\n');
+
+            for (const comment of comments) {
+              // A maintainer attaching a capture knows what is in it.
+              if (['OWNER', 'MEMBER', 'COLLABORATOR'].includes(comment.author_association)) {
+                continue;
+              }
+              if (strip(comment.body) === (comment.body || '')) {
+                continue;
+              }
+              await github.rest.issues.deleteComment({ ...request, comment_id: comment.id });
+              await github.rest.issues.createComment({ ...request, body: WARNING });
+              core.warning(`#${issue.number}: removed comment ${comment.id}, unsafe attachment`);
+            }
+
+            // The body cannot be deleted, so the link is taken out of it. Both passes are idempotent by
+            // removal: what they matched is gone, so a later event finds nothing to act on.
+            if (strip(body) !== body) {
+              body = strip(body);
+              await github.rest.issues.update({ ...request, body });
+              await github.rest.issues.createComment({ ...request, body: WARNING });
+              core.warning(`#${issue.number}: stripped an unsafe attachment from the report body`);
+            }
+
+            comments = await github.paginate(github.rest.issues.listComments, { ...request, per_page: 100 });
 
             // Only a report whose form asked for the archive is judged on whether one arrived, which keeps
             // this off device-support requests and off issues opened without a template. Both labels are
@@ -51,18 +104,11 @@ jobs:
               return;
             }
 
-            // A GitHub upload of a file, which is where a diagnostics archive lands whatever it is called;
-            // an image or a pasted screenshot lands under `assets/` instead. Matching the upload rather than
-            // an extension covers both the v4 `.tar.gz` and the v5 `.eufysupport.gz`.
-            const ATTACHED_FILE = /github\.com\/user-attachments\/files\/\d+\//;
-
             // The version line, read only where it states a bare 4.x. A blank, a range or anything
             // unparseable says nothing, and a guess here would tell a V5 reporter to upgrade.
             const V4_VERSION = /^\s*-\s*\*\*Plugin Version\*\*:\s*v?4\.\d+/im;
 
-            const request = { owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number };
-            const comments = await github.paginate(github.rest.issues.listComments, { ...request, per_page: 100 });
-            const attached = ATTACHED_FILE.test(body) || comments.some((comment) => ATTACHED_FILE.test(comment.body || ''));
+            const attached = ATTACHED_ARCHIVE.test(body) || comments.some((comment) => ATTACHED_ARCHIVE.test(comment.body || ''));
 
             // This workflow's own voice, so every path is idempotent without a label standing in for one.
             const MARKER = '<!-- report-completeness -->';
