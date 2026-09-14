@@ -269,6 +269,9 @@ function renderDiagnosticsGuidance(profile) {
  * view uses for a device where it does not. The image is capped at half the tile: it is there to be recognised
  * at a glance, and a picture that fills the tile leaves the name it belongs to competing with it.
  *
+ * Only the devices the chosen area's fault could be about are offered, so the answer cannot name a device that
+ * never had the thing being reported.
+ *
  * The list is asked for when it is empty rather than relying on the devices view having been opened first, and
  * a request that goes unanswered leaves the step able to say every device, which is a complete answer.
  */
@@ -282,7 +285,7 @@ async function renderDiagnosticsDeviceList() {
     }
   }
   diagnosticsDeviceList.replaceChildren();
-  for (const device of dashboardDevices) {
+  for (const device of diagnosticsWizard.affectable(diagnosticsWizardState.profile, dashboardDevices)) {
     const tile = document.createElement('button');
     tile.type = 'button';
     tile.dataset.serial = device.serial;
@@ -301,11 +304,25 @@ async function renderDiagnosticsDeviceList() {
     tile.append(art, name);
     tile.addEventListener('click', () => {
       tile.setAttribute('aria-pressed', tile.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
-      diagnosticsDevicesChosen.disabled = chosenDiagnosticsDevices().length === 0;
+      renderDiagnosticsDeviceChoice();
     });
     diagnosticsDeviceList.append(tile);
   }
-  diagnosticsDevicesChosen.disabled = true;
+  renderDiagnosticsDeviceChoice();
+}
+
+/**
+ * The two controls that follow the pressed tiles: whether continuing is possible, and what the escape does.
+ *
+ * With every tile pressed there is nothing left for a select-all to select, so the same control clears instead —
+ * otherwise the only way back from a full grid is pressing each tile again.
+ */
+function renderDiagnosticsDeviceChoice() {
+  const tiles = diagnosticsDeviceList.querySelectorAll('[data-serial]').length;
+  const chosen = chosenDiagnosticsDevices().length;
+  diagnosticsDevicesChosen.disabled = chosen === 0;
+  diagnosticsDevicesEvery.textContent =
+    messages[chosen > 0 && chosen === tiles ? 'diagnosticsDevicesNone' : 'diagnosticsDevicesEvery'] ?? '';
 }
 
 /** The serials pressed in the device step, in the order the grid drew them. */
@@ -578,13 +595,15 @@ for (const tile of diagnosticsTiles) {
 
 diagnosticsDevicesEvery.addEventListener('click', () => {
   const tiles = [...diagnosticsDeviceList.querySelectorAll('[data-serial]')];
-  for (const tile of tiles) tile.setAttribute('aria-pressed', 'true');
-  diagnosticsDevicesChosen.disabled = tiles.length === 0;
   if (tiles.length === 0) {
     diagnosticsWizardState = diagnosticsWizard.chooseDevices(diagnosticsWizardState, 'all');
     renderDiagnosticsWizard();
     diagnosticsFrequencyHeading.focus?.();
+    return;
   }
+  const clearing = chosenDiagnosticsDevices().length === tiles.length;
+  for (const tile of tiles) tile.setAttribute('aria-pressed', clearing ? 'false' : 'true');
+  renderDiagnosticsDeviceChoice();
 });
 
 diagnosticsDevicesChosen.addEventListener('click', () => {
@@ -713,7 +732,15 @@ mastheadDiagnostics.addEventListener('click', () => menuDiagnostics.click());
 dashboardDiagnose.addEventListener('click', () => menuDiagnostics.click());
 
 menuDiagnostics.addEventListener('click', async () => {
+  /*
+   * Opened from the sign-in screen, the area is not in question: what is going wrong is getting signed in. The
+   * answer is presumed rather than fixed, so the frequency step's way back still reaches the other six.
+   */
+  const signingIn = !setupContent.hidden;
   openDashboardPanel(diagnosticsPanel, menuDiagnostics);
+  if (signingIn) {
+    diagnosticsWizardState = diagnosticsWizard.select(diagnosticsWizard.start(), 'startup-authentication');
+  }
   // Drawn on opening, because the wizard's first question is only ever put on the page by this call.
   renderDiagnosticsWizard();
   try {
