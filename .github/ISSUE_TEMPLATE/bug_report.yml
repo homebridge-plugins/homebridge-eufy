@@ -86,7 +86,7 @@ body:
     id: description
     attributes:
       label: What happened?
-      description: Describe the bug, what you expected, and how to reproduce it. Attach logs or screenshots if possible.
+      description: Describe the bug, what you expected, and how to reproduce it. Screenshots help. Do not attach logs, config files or Homebridge backups — they hold your passwords, and they are removed on sight.
       placeholder: |
         **What happened:**
         Describe the issue...
