@@ -1,5 +1,5 @@
 import type { FragmentRecordingHandle, MediaFragment } from '@mega-yfue/eufy-sdk';
-import { StationBusyError } from '@mega-yfue/eufy-sdk';
+import { StationBusyError, StationKeyUnavailableError, StationUnreachableError } from '@mega-yfue/eufy-sdk';
 import { spawn } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 
@@ -30,7 +30,13 @@ import {
  * recording that was simply outranked from looking like a camera that failed.
  */
 function sourceFailure(error: unknown): RecordingFailure {
-  return error instanceof StationBusyError ? 'station-busy' : 'source-error';
+  if (error instanceof StationBusyError) {
+    return 'station-busy';
+  }
+  if (error instanceof StationUnreachableError) {
+    return 'station-unreachable';
+  }
+  return error instanceof StationKeyUnavailableError ? 'station-key-unavailable' : 'source-error';
 }
 
 /**

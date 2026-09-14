@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { FragmentRecordingHandle, MediaFragment, StreamBudgetNotice } from '@mega-yfue/eufy-sdk';
-import { StationBusyError } from '@mega-yfue/eufy-sdk';
+import { StationBusyError, StationKeyUnavailableError, StationUnreachableError } from '@mega-yfue/eufy-sdk';
 
 import type {
   AdaptationNotice,
@@ -672,6 +672,28 @@ describe('recording media adaptation', () => {
     impostor.source.fail(named);
     await impostor.consumed.iteration;
     expect(impostor.outcomes).toEqual([{ outcome: 'failed', reason: 'source-error' }]);
+  });
+
+  /**
+   * A station that could not be reached, and one that would not seal what it was sent, are not a source that
+   * failed.
+   *
+   * Every camera behind an unreachable base fails together and the next step is that base; a missing session
+   * key is a refusal that retrying the same camera does not resolve. Reported as `source-error`, both read as
+   * the camera's fault, which is where an investigation then goes.
+   */
+  it('names a station that could not be reached, and one that withheld its key', async () => {
+    const unreachable = recordingSession();
+    await settle();
+    unreachable.source.fail(new StationUnreachableError(20_000));
+    await unreachable.consumed.iteration;
+    expect(unreachable.outcomes).toEqual([{ outcome: 'failed', reason: 'station-unreachable' }]);
+
+    const keyless = recordingSession();
+    await settle();
+    keyless.source.fail(new StationKeyUnavailableError());
+    await keyless.consumed.iteration;
+    expect(keyless.outcomes).toEqual([{ outcome: 'failed', reason: 'station-key-unavailable' }]);
   });
 
   /**
