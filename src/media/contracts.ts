@@ -63,14 +63,6 @@ export interface NegotiatedLiveMedia {
  */
 export type LiveSessionFailure =
   /**
-   * The station was serving another of its cameras and did not free it in time.
-   *
-   * Distinct from every other failure here because nothing is broken: a base serves one camera at a time and
-   * the SDK refuses a second rather than degrading both. Collapsing it into `source-error` made a camera that
-   * was merely waiting its turn read as a camera that failed, and left no way to tell the two apart in a log.
-   */
-  | 'station-busy'
-  /**
    * The station's session did not connect, so nothing could be sent to it.
    *
    * Names the station rather than the camera: every camera behind an unreachable base fails together, and the
@@ -111,14 +103,6 @@ export type LiveSessionOutcome =
       readonly outcome: 'failed';
       readonly reason: LiveSessionFailure;
       readonly stage: LiveSessionFailureStage;
-      /**
-       * The channel a station said it was already serving, where that is why this session got no source.
-       *
-       * A station serving one camera at a time names the channel it is busy with, which is the only statement
-       * of WHICH of its cameras holds it. An index on a base carries no identity of its own, and the camera it
-       * belongs to is already named by the records about that camera.
-       */
-      readonly servingChannel?: number;
     };
 
 /** Why one return-audio lifecycle ended without usable device audio. */
@@ -235,20 +219,18 @@ export interface MediaSessionBudget {
 }
 
 /**
- * What a caller holds a station's one live channel for.
+ * What a caller holds a station's own session for.
  *
- * The order between them is this plugin's product policy and lives with the registry that applies it. The SDK
- * reports only that a station serves one camera at a time; it does not rank the callers, because the ranking
- * depends on what a host shows at once.
+ * A continuous pull — `live` or `recording` — is served over a connection of its own, so two of them on one
+ * station cost each other nothing. A `snapshot` opens no connection: it rides the station's own session, and
+ * takes it from whatever that session is carrying for as long as the capture lasts.
  */
 export type StationLiveClaim = 'live' | 'recording' | 'snapshot';
 
 /**
- * Which stations are serving a live session, asked before opportunistic live work is started elsewhere on one.
+ * Which stations are carrying work on their own session, asked before a still is started elsewhere on one.
  *
- * A HomeBase fans several cameras over one session and serves them one at a time, so a live burst opened on
- * one of its cameras contends with a live view running on another. A standalone camera is its own station and
- * contends with nobody.
+ * A standalone camera is its own station and contends with nobody.
  *
  * Distinct from {@link MediaSessionBudget}, which counts concurrent work against a ceiling an operator
  * declared and refuses what exceeds it. This answers where the work would land, and it refuses nothing: a
@@ -258,20 +240,20 @@ export interface StationLiveSessionRegistry {
   /**
    * Whether `camera` may take `stationSn` for `claim` now.
    *
-   * A camera the station is already serving is always admitted, whatever the claim: work on one camera shares
-   * a single pull, so a recording and a live view of the same camera cost the station nothing extra. This is
-   * the shape a motion notification produces, and it is the common one.
+   * A continuous pull is always admitted: it is served over a connection of its own. A camera the station is
+   * already serving is admitted whatever the claim, because work on one camera shares a single pull.
    *
-   * Between DIFFERENT cameras of one station the claim decides, and equal claims do not displace: a second
-   * live view does not evict the first.
+   * A still is admitted only while nothing else holds the station, including another still: a capture rides
+   * the station's own session, and one session serves one camera at a time.
    */
   admits(stationSn: string, camera: string, claim: StationLiveClaim): boolean;
   /**
-   * Record one session on `stationSn` for `camera`, asking anything weaker on another camera to yield first,
-   * and answer the release that ends it.
+   * Record one session on `stationSn` for `camera`, asking any still on another camera to yield first, and
+   * answer the release that ends it.
    *
    * `abandon` is how this session gives the station back early; a session that cannot be stopped cleanly omits
-   * it and is never asked. A session is never asked to yield for another claim on its own camera.
+   * it and is never asked. A continuous pull is never asked, and no session is asked for another claim on its
+   * own camera.
    */
   hold(stationSn: string, camera: string, claim: StationLiveClaim, abandon?: () => void): () => void;
 }
@@ -360,14 +342,6 @@ export type RecordingFailure =
   | 'source-error'
   | 'no-output-within-backstop'
   | 'adaptation-failed'
-  /**
-   * The station was serving another of its cameras to something this recording does not outrank.
-   *
-   * Not a fault. A base serves one camera at a time and the SDK refuses a second rather than degrading both,
-   * so this says the recording could not have the station, not that anything is broken. HomeKit tries again on
-   * the next trigger.
-   */
-  | 'station-busy'
   /** The station's session did not connect, so the recording could not be asked for. */
   | 'station-unreachable'
   /** The station did not provide the session key a recording of an attached camera has to be sealed with. */

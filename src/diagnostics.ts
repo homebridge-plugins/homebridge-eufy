@@ -85,8 +85,6 @@ export type HomeKitEventTrace = { adapter: string; serial?: string } & (
       outcome: 'failed';
       reason: string;
       stage: 'sdk-source-acquisition' | 'first-source-keyframe' | 'first-adapted-output' | 'controller-rtcp';
-      /** The channel a station said it was already serving, which is which of its cameras holds it. */
-      servingChannel?: number;
     }
   /**
    * A session gave its source back, stating whether it was asked to or ended itself.
@@ -154,14 +152,12 @@ const HOMEKIT_LIVE_REQUEST_EVENTS = new Set([
  * The error identities an SDK record may name, which is all a record carries of one.
  *
  * A message is never among them, so an identity absent here is recorded as `Error` and reads as any other
- * failure. A station refusing a second camera is one of these identities, because a base serving another of its
- * cameras is working correctly and must not read as a fault.
+ * failure.
  */
 const SDK_ERROR_TYPES = [
   'Error',
   'RangeError',
   'SessionExpiredError',
-  'StationBusyError',
   'StationKeyUnavailableError',
   'StationUnreachableError',
   'TypeError',
@@ -2029,7 +2025,6 @@ const REASONS = new Set([
   'source-input-unstable',
   'source-stopped',
   'source-unavailable',
-  'station-busy',
   'station-key-unavailable',
   'station-unreachable',
   'stored-download-failed',
@@ -2584,21 +2579,21 @@ function sanitizeStationClaim(value: Record<string, unknown>): Record<string, un
   if (!action || !claim) {
     return undefined;
   }
-  const against = allowlistedLabel(value.displaced ?? value.to ?? value.by ?? value.against, STATION_CLAIMS);
+  const against = allowlistedLabel(value.to ?? value.by ?? value.against, STATION_CLAIMS);
   return { event: 'station-claim', action, claim, ...(against === undefined ? {} : { against }) };
 }
 
 /**
- * Records one arbitration decision over a station's single live channel as `homekit-log` evidence.
+ * Records one arbitration decision over a station's own session as `homekit-log` evidence.
  *
- * A station serves one camera at a time and the SDK refuses a second outright, so a refused live request is
- * attributable either to this plugin's own policy or to the station, and the two are indistinguishable
- * afterwards without this. The record carries the claims and the decision alone: a station identity is a
- * serial, and the camera holding it is already named by the records about that camera.
+ * A still that stood aside produced no picture of its own and no failure, so without this the deferral is
+ * indistinguishable afterwards from a capture that was never asked for. The record carries the claims and the
+ * decision alone: a station identity is a serial, and the camera holding it is already named by the records
+ * about that camera.
  */
 export function reportStationClaim(
   target: Pick<PlatformLogger, 'debug'>,
-  decision: { action: string; claim: string; displaced?: string; to?: string; by?: string },
+  decision: { action: string; claim: string; to?: string; by?: string },
 ): void {
   const claim = sanitizeStationClaim(decision as unknown as Record<string, unknown>);
   if (target.debug && claim) {
@@ -2846,13 +2841,11 @@ function sanitizeLiveSessionTrace(value: Record<string, unknown>): Record<string
   ) {
     return undefined;
   }
-  const servingChannel = boundedInteger(value.servingChannel, MAX_STATION_CHANNEL);
   return {
     adapter: value.adapter,
     event: value.event,
     outcome: value.outcome,
     reason: value.reason,
-    ...(servingChannel === undefined ? {} : { servingChannel }),
     stage: value.stage,
     ...accessory,
   };

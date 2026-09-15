@@ -381,10 +381,10 @@ export class SnapshotAcquisition implements SnapshotMediaAdapter {
     }
     const generation = this.retentionGeneration(scope.serial);
     /**
-     * A still holds the station while it captures, so a live view opened on a sibling can ask it to yield.
-     * Yielding aborts the acquisition rather than waiting it out: an abandoned burst that keeps asking for the
-     * channel is exactly the contention the hold exists to remove, and the last good image answers the request
-     * in its place.
+     * A still holds the station while it captures, so a live view or a recording opened on a sibling can ask it
+     * to yield. Yielding aborts the acquisition rather than waiting it out: a capture rides the station's own
+     * session, which is exactly the contention the hold exists to remove, and the last good image answers the
+     * request in its place.
      */
     const abandonment = new AbortController();
     const releaseStation =

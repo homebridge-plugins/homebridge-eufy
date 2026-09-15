@@ -1,64 +1,52 @@
 import type { StationLiveClaim, StationLiveSessionRegistry } from './contracts.js';
 
 /**
- * One decision this registry made about a station's single live channel.
+ * One decision this registry made about a station's own session.
  *
- * The four are the whole arbitration as it happened: `held` is a claim taking the station and what it found
- * there, `released` is a claim giving it back, `yielded` is a weaker holder being asked to give it back early,
- * and `refused` is a claim standing down because something stronger holds it. Without `released`, a hold that
- * is still open cannot be told from one that ended, which is the difference between a station this plugin is
- * holding and a station something outside it is. A station serves one camera at a time and the SDK refuses a second, so
- * a refusal a caller cannot explain is otherwise attributable either to this policy or to the station itself,
- * with nothing to say which.
+ * The four are the whole arbitration as it happened: `held` is a claim taking the station, `released` is a
+ * claim giving it back, `yielded` is a still being asked to give it back early, and `refused` is a still
+ * standing down because something else holds it. Without `released`, a hold that is still open cannot be told
+ * from one that ended, which is the difference between a station this plugin is holding and a station
+ * something outside it is.
  *
  * Carries claims alone. A station identity is a serial, and no retained record holds one.
  */
 export type StationClaimDecision =
-  | { readonly action: 'held'; readonly claim: StationLiveClaim; readonly displaced?: StationLiveClaim }
+  | { readonly action: 'held'; readonly claim: StationLiveClaim }
   | { readonly action: 'released'; readonly claim: StationLiveClaim }
   | { readonly action: 'yielded'; readonly claim: StationLiveClaim; readonly to: StationLiveClaim }
   | { readonly action: 'refused'; readonly claim: StationLiveClaim; readonly by: StationLiveClaim };
 
 /**
- * Which claim holds each station's one live channel, and who yields to whom.
+ * The claims served over a connection of their own, which therefore contend with nothing on the station.
  *
- * A HomeBase fans several cameras over one session and serves them ONE at a time, and the SDK refuses a second
- * camera rather than admitting it and degrading both. Deciding which camera deserves the station is this
- * plugin's, because it depends on what HomeKit shows at once and on what the operator is looking at, neither of
- * which the SDK can know. A standalone camera is its own station and contends with nobody.
- *
- * The order is `live`, then `recording`, then `snapshot`:
- *
- *  - A live view is on a screen now. Jitter there is the one degradation nobody can absorb, and an operator
- *    who opened a camera is telling us which one matters.
- *  - A recording writes to a file, so it survives being interrupted less well than being jittery, but it is
- *    not free to abandon the way a still is: a missed event cannot be re-taken.
- *  - A still fills a tile that is off screen exactly while a live view is on it, and re-running it costs
- *    nobody anything. Where it cannot run, the last good image stands in.
- *
- * A stronger claim ASKS the weaker holders to yield rather than seizing the station: each holder registered how
- * to abandon its own work, and abandoning is what frees the channel the SDK will otherwise refuse. A holder
- * that registered no way to yield is left alone, so nothing is dropped that cannot be stopped cleanly.
- *
- * None of it applies WITHIN one camera. Every egress on a camera shares one pull, so a recording and a live
- * view of the same camera are served together and neither yields to the other. That is what a motion
- * notification produces once the operator taps the tile, and it is the common shape rather than the exception.
+ * A live view and a recording each get their own connection to the station, so both run at full rate together.
+ * A still opens none: it rides the station's own session and takes it from whatever that session carries, so it
+ * is the one claim that stands aside and the one claim that is asked to.
  */
-const CLAIM_RANK: Readonly<Record<StationLiveClaim, number>> = { live: 3, recording: 2, snapshot: 1 };
+const CONTINUOUS: ReadonlySet<StationLiveClaim> = new Set<StationLiveClaim>(['live', 'recording']);
 
 interface Session {
   readonly camera: string;
   readonly claim: StationLiveClaim;
   readonly abandon?: () => void;
-  /** Whether this session has already been asked to yield, so a second stronger claim does not ask twice. */
+  /** Whether this session has already been asked to yield, so a second continuous claim does not ask twice. */
   asked?: boolean;
 }
 
 /**
- * The one registry of live sessions a station is serving, keyed by station serial.
+ * The one registry of the work each station's own session is carrying, keyed by station serial.
  *
- * Both sides of the question read it: HomeKit records a live session on its camera's station, and snapshot
- * acquisition asks whether a station is already serving one before opening a burst on it.
+ * Both sides of the question read it: HomeKit records a live view and a recording on their camera's station,
+ * and snapshot acquisition asks whether a station is carrying anything before opening a burst on it.
+ *
+ * A still fills a tile that is off screen exactly while continuous work is running, re-running it costs nobody
+ * anything, and the last good image stands in where it cannot run — so it defers and nothing defers to it. A
+ * still asks a holder to yield rather than seizing the station: each holder registered how to abandon its own
+ * work, and a holder that registered none is left alone.
+ *
+ * None of it applies WITHIN one camera. Every egress on a camera shares one pull, so a recording and a live
+ * view of the same camera are served together and neither yields to the other.
  */
 export class StationLiveSessions implements StationLiveSessionRegistry {
   private readonly sessions = new Map<string, Set<Session>>();
@@ -70,65 +58,67 @@ export class StationLiveSessions implements StationLiveSessionRegistry {
     return this.sessions.size;
   }
 
-  /** The strongest claim currently held on `stationSn`, or `undefined` where nothing holds it. */
+  /** The claim currently held on `stationSn`, preferring a continuous one, or `undefined` where nothing does. */
   heldFor(stationSn: string): StationLiveClaim | undefined {
-    let strongest: StationLiveClaim | undefined;
+    let holder: StationLiveClaim | undefined;
     for (const session of this.sessions.get(stationSn) ?? []) {
-      if (strongest === undefined || CLAIM_RANK[session.claim] > CLAIM_RANK[strongest]) {
-        strongest = session.claim;
+      if (CONTINUOUS.has(session.claim)) {
+        return session.claim;
       }
+      holder ??= session.claim;
     }
-    return strongest;
+    return holder;
   }
 
   /**
    * Whether `claim` may take this station now.
    *
-   * Equal claims do not displace each other: a second live view does not evict the first, and the SDK refuses
-   * it, which is the honest answer for a station that cannot serve both.
+   * A continuous pull is never refused: it opens a connection of its own. A still is refused while any other
+   * camera holds the station, including for another still, because a capture rides the station's own session.
    */
   admits(stationSn: string, camera: string, claim: StationLiveClaim): boolean {
-    let strongestElsewhere: StationLiveClaim | undefined;
+    let holderElsewhere: StationLiveClaim | undefined;
     for (const session of this.sessions.get(stationSn) ?? []) {
       if (session.camera === camera) {
         return true;
       }
-      if (strongestElsewhere === undefined || CLAIM_RANK[session.claim] > CLAIM_RANK[strongestElsewhere]) {
-        strongestElsewhere = session.claim;
+      if (holderElsewhere === undefined || CONTINUOUS.has(session.claim)) {
+        holderElsewhere = session.claim;
       }
     }
-    if (strongestElsewhere === undefined || CLAIM_RANK[claim] > CLAIM_RANK[strongestElsewhere]) {
+    if (CONTINUOUS.has(claim) || holderElsewhere === undefined) {
       return true;
     }
-    this.decided({ action: 'refused', claim, by: strongestElsewhere });
+    this.decided({ action: 'refused', claim, by: holderElsewhere });
     return false;
   }
 
   /**
-   * Record one session on `stationSn`, asking anything weaker to yield first, and answer the release that ends
-   * it.
+   * Record one session on `stationSn`, asking any still on another camera to yield first, and answer the
+   * release that ends it.
    *
    * `abandon` is how this session gives the station back before it would have finished. It is called at most
    * once, and never on the session that is taking the station.
    */
   hold(stationSn: string, camera: string, claim: StationLiveClaim, abandon?: () => void): () => void {
-    const yielding = [...(this.sessions.get(stationSn) ?? [])].filter(
-      (session) => session.camera !== camera && CLAIM_RANK[claim] > CLAIM_RANK[session.claim],
-    );
+    const yielding = CONTINUOUS.has(claim)
+      ? [...(this.sessions.get(stationSn) ?? [])].filter(
+          (session) => session.camera !== camera && !CONTINUOUS.has(session.claim),
+        )
+      : [];
     const session: Session = abandon ? { camera, claim, abandon } : { camera, claim };
-    const displaced = this.heldFor(stationSn);
     const held = this.sessions.get(stationSn) ?? new Set<Session>();
     held.add(session);
     this.sessions.set(stationSn, held);
-    this.decided({ action: 'held', claim, ...(displaced === undefined ? {} : { displaced }) });
+    this.decided({ action: 'held', claim });
 
-    for (const weaker of yielding) {
-      if (weaker.asked) {
+    for (const standing of yielding) {
+      if (standing.asked) {
         continue;
       }
-      weaker.asked = true;
-      this.decided({ action: 'yielded', claim: weaker.claim, to: claim });
-      weaker.abandon?.();
+      standing.asked = true;
+      this.decided({ action: 'yielded', claim: standing.claim, to: claim });
+      standing.abandon?.();
     }
 
     let released = false;

@@ -3,18 +3,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { StationLiveSessions } from '../../src/media/station-live-sessions.js';
 
 /**
- * Which claim holds each station's one live channel, and who yields to whom.
+ * What each station's own session is carrying, and which claim stands aside for which.
  *
- * A HomeBase serves one of its cameras at a time, and the SDK refuses a second rather than degrading both. It
- * reports the constraint and does not rank the callers, because the ranking depends on what HomeKit shows at
- * once. So the order lives here: a live view is on a screen now, a recording writes to a file and cannot be
- * re-taken, a still fills a tile that is off screen while a live view is on it.
+ * A live view and a recording are each served over a connection of their own, so two of them on one base cost
+ * each other nothing and neither is refused. A still opens no connection: it rides the station's own session and
+ * takes it from whatever that session carries, so it is the one claim that defers, and the one asked to.
  *
  * A standalone camera is its own station and contends with nobody.
  */
 const BASE = 'T8010P0000000000';
 const STANDALONE = 'T8410P0000000002';
-/** Two cameras of one base: the pair that contends. */
+/** Two cameras of one base: the pair whose stills contend. */
 const CAM_A = 'T8114P0000000000';
 const CAM_B = 'T8210P0000000001';
 
@@ -29,11 +28,10 @@ describe('StationLiveSessions', () => {
     expect(sessions.heldFor(BASE)).toBe('recording');
   });
 
-  it('reports the strongest claim while several hold one station', () => {
+  it('reports a continuous claim ahead of a still while several hold one station', () => {
     const sessions = new StationLiveSessions();
     sessions.hold(BASE, CAM_A, 'snapshot');
     sessions.hold(BASE, CAM_B, 'live');
-    sessions.hold(BASE, CAM_A, 'recording');
     expect(sessions.heldFor(BASE)).toBe('live');
   });
 
@@ -49,9 +47,16 @@ describe('StationLiveSessions', () => {
       expect(sessions.admits(BASE, CAM_B, 'snapshot')).toBe(true);
     });
 
-    it('admits a live view over a recording and a still', () => {
+    /** The case a HomeKit Secure Video trigger produces while an operator is watching a sibling. */
+    it('admits a recording while a sibling camera is being watched', () => {
       const sessions = new StationLiveSessions();
-      sessions.hold(BASE, CAM_A, 'recording');
+      sessions.hold(BASE, CAM_A, 'live');
+      expect(sessions.admits(BASE, CAM_B, 'recording')).toBe(true);
+    });
+
+    it('admits a second live view, each served over a connection of its own', () => {
+      const sessions = new StationLiveSessions();
+      sessions.hold(BASE, CAM_A, 'live');
       expect(sessions.admits(BASE, CAM_B, 'live')).toBe(true);
     });
 
@@ -61,16 +66,16 @@ describe('StationLiveSessions', () => {
       expect(sessions.admits(BASE, CAM_B, 'snapshot')).toBe(false);
     });
 
-    /** Equal claims do not displace each other, and the SDK refuses the second, which is the honest answer. */
-    it('refuses a second live view rather than evicting the first', () => {
+    /** Two stills on one base take turns: a capture rides the station's own session, which serves one camera. */
+    it('refuses a still while another camera is capturing one', () => {
       const sessions = new StationLiveSessions();
-      sessions.hold(BASE, CAM_A, 'live');
-      expect(sessions.admits(BASE, CAM_B, 'live')).toBe(false);
+      sessions.hold(BASE, CAM_A, 'snapshot');
+      expect(sessions.admits(BASE, CAM_B, 'snapshot')).toBe(false);
     });
   });
 
   describe('yielding', () => {
-    it('asks a weaker holder to abandon, which is what frees the channel', () => {
+    it('asks a still to abandon, which is what frees the station', () => {
       const sessions = new StationLiveSessions();
       const abandon = vi.fn();
       sessions.hold(BASE, CAM_A, 'snapshot', abandon);
@@ -80,28 +85,37 @@ describe('StationLiveSessions', () => {
       expect(abandon).toHaveBeenCalledOnce();
     });
 
-    it('asks every weaker holder, not merely the strongest of them', () => {
+    it('asks every still on the station, not merely one of them', () => {
       const sessions = new StationLiveSessions();
-      const still = vi.fn();
+      const first = vi.fn();
+      const second = vi.fn();
+      sessions.hold(BASE, CAM_A, 'snapshot', first);
+      sessions.hold(BASE, CAM_B, 'snapshot', second);
+
+      sessions.hold(BASE, 'T8210P0000000003', 'recording');
+
+      expect(first).toHaveBeenCalledOnce();
+      expect(second).toHaveBeenCalledOnce();
+    });
+
+    it('never asks a continuous pull to abandon, because it holds a connection of its own', () => {
+      const sessions = new StationLiveSessions();
       const recording = vi.fn();
-      sessions.hold(BASE, CAM_A, 'snapshot', still);
       sessions.hold(BASE, CAM_A, 'recording', recording);
 
       sessions.hold(BASE, CAM_B, 'live');
 
-      expect(still).toHaveBeenCalledOnce();
-      expect(recording).toHaveBeenCalledOnce();
+      expect(recording).not.toHaveBeenCalled();
     });
 
-    it('never asks an equal or stronger holder to abandon', () => {
+    it('asks nothing on behalf of a still, which is the claim that defers', () => {
       const sessions = new StationLiveSessions();
-      const live = vi.fn();
-      sessions.hold(BASE, CAM_A, 'live', live);
+      const abandon = vi.fn();
+      sessions.hold(BASE, CAM_A, 'snapshot', abandon);
 
-      sessions.hold(BASE, CAM_A, 'recording');
-      sessions.hold(BASE, CAM_A, 'live');
+      sessions.hold(BASE, CAM_B, 'snapshot');
 
-      expect(live).not.toHaveBeenCalled();
+      expect(abandon).not.toHaveBeenCalled();
     });
 
     it('leaves a holder alone when it stated no way to be stopped cleanly', () => {
@@ -112,7 +126,7 @@ describe('StationLiveSessions', () => {
       expect(sessions.heldFor(BASE)).toBe('live');
     });
 
-    it('leaves a weaker holder on ANOTHER station untouched', () => {
+    it('leaves a still on ANOTHER station untouched', () => {
       const sessions = new StationLiveSessions();
       const elsewhere = vi.fn();
       sessions.hold(STANDALONE, CAM_B, 'snapshot', elsewhere);
@@ -148,12 +162,12 @@ describe('StationLiveSessions', () => {
       expect(sessions.heldFor(BASE)).toBe('live');
     });
 
-    it('reports the weaker claim once the stronger one has gone', () => {
+    it('reports the still once every continuous pull has gone', () => {
       const sessions = new StationLiveSessions();
-      sessions.hold(BASE, CAM_A, 'recording');
+      sessions.hold(BASE, CAM_A, 'snapshot');
       const live = sessions.hold(BASE, CAM_B, 'live');
       live();
-      expect(sessions.heldFor(BASE)).toBe('recording');
+      expect(sessions.heldFor(BASE)).toBe('snapshot');
     });
 
     it('forgets a station once its last session has gone, so nothing accumulates', () => {
@@ -179,21 +193,21 @@ describe('StationLiveSessions', () => {
 
     it('never asks a camera to yield to other work on itself', () => {
       const sessions = new StationLiveSessions();
-      const recording = vi.fn();
-      sessions.hold(BASE, CAM_A, 'recording', recording);
+      const still = vi.fn();
+      sessions.hold(BASE, CAM_A, 'snapshot', still);
 
       sessions.hold(BASE, CAM_A, 'live');
 
-      expect(recording).not.toHaveBeenCalled();
+      expect(still).not.toHaveBeenCalled();
     });
   });
 });
 /**
- * Every decision over a station's one channel is stated, because a refused live request is otherwise
- * attributable either to this policy or to the station itself with nothing to say which.
+ * Every decision over a station's own session is stated, because a still that stood aside produced no picture
+ * and no failure, and is otherwise indistinguishable afterwards from one nobody asked for.
  */
 describe('what the registry states about its own decisions', () => {
-  it('states a claim that took the station, what it displaced, and what it asked to yield', () => {
+  it('states a claim that took the station, and what it asked to yield', () => {
     const decided: unknown[] = [];
     const sessions = new StationLiveSessions((decision) => decided.push(decision));
 
@@ -202,7 +216,7 @@ describe('what the registry states about its own decisions', () => {
 
     expect(decided).toEqual([
       { action: 'held', claim: 'snapshot' },
-      { action: 'held', claim: 'live', displaced: 'snapshot' },
+      { action: 'held', claim: 'live' },
       { action: 'yielded', claim: 'snapshot', to: 'live' },
     ]);
   });

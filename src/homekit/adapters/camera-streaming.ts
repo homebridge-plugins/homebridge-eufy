@@ -1767,19 +1767,6 @@ class RecordingCameraDelegate implements CameraRecordingDelegate {
       this.refused = false;
       binding.reportAdmission();
     }
-    /**
-     * A station already serving another of its cameras to something this recording does not outrank cannot
-     * serve this one, and the SDK refuses it. Reporting that here spares a round trip whose only outcome is
-     * the refusal, and states it as the bounded reason rather than letting it arrive as a source error.
-     */
-    if (
-      binding.stationSn &&
-      binding.stations &&
-      !binding.stations.admits(binding.stationSn, binding.serial, 'recording')
-    ) {
-      binding.reportRecording({ outcome: 'failed', reason: 'station-busy' });
-      throw new this.hap.HDSProtocolError(this.hap.HDSProtocolSpecificErrorReason.NOT_ALLOWED);
-    }
     const recording = binding.media.record(binding.source, this.negotiated(binding, configuration), {
       onOutcome: (outcome) => binding.reportRecording(outcome),
     });
@@ -1787,16 +1774,13 @@ class RecordingCameraDelegate implements CameraRecordingDelegate {
     const abort = (): void => this.closeRecordingStream(streamId);
     signal?.addEventListener('abort', abort, { once: true });
     /**
-     * A recording holds the station its camera belongs to, so a still elsewhere on that base stands aside and a
-     * live view opened on a sibling takes it. Yielding stops this recording rather than letting it run on a
-     * station that has been re-tasked, because a recording of a camera the base is no longer serving produces
-     * nothing and would keep asking for the channel the viewer needs.
-     *
-     * Work on this camera never yields to work on this camera: they share one pull.
+     * A recording holds the station its camera belongs to, so a still elsewhere on that base stands aside for
+     * as long as it runs. It is served over a connection of its own, so it is never asked to yield and needs no
+     * way to abandon.
      */
     const releaseStation =
       binding.stationSn && binding.stations
-        ? binding.stations.hold(binding.stationSn, binding.serial, 'recording', () => recording.stop())
+        ? binding.stations.hold(binding.stationSn, binding.serial, 'recording')
         : undefined;
     try {
       for await (const fragment of recording) {

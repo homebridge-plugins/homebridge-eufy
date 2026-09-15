@@ -180,13 +180,13 @@ describe('a session that reached the negotiated output', () => {
 describe('an arbitration decision over a station', () => {
   it('states the claims it was taken between', () => {
     const debug = vi.fn();
-    reportStationClaim({ debug }, { action: 'held', claim: 'live', displaced: 'snapshot' });
+    reportStationClaim({ debug }, { action: 'yielded', claim: 'snapshot', to: 'live' });
     expect(records(debug)[0]).toMatchObject({
       scope: 'homekit',
       event: 'station-claim',
-      action: 'held',
-      claim: 'live',
-      against: 'snapshot',
+      action: 'yielded',
+      claim: 'snapshot',
+      against: 'live',
     });
   });
 
@@ -245,30 +245,13 @@ describe('the controller evidence a release carries', () => {
 });
 
 /**
- * A station that refuses a second of its cameras is recorded as that, and not as a session with no reason.
+ * A session that never got a source names what withheld it, and not merely that it failed.
  *
- * A base serving one camera at a time answers a request for another with a refusal, which is the station
- * working correctly rather than a fault. A reason the record vocabulary does not name is dropped whole, so the
- * one refusal an operator meets most on a multi-camera base would leave a session that failed and no reason
- * anywhere.
+ * A reason the record vocabulary does not name is dropped whole, so a station that did not connect would
+ * otherwise leave a failed session with no reason anywhere, and nothing to separate it from the camera's own
+ * faults.
  */
-describe('a session refused by the station', () => {
-  it('records the channel the station said it was serving, which is which camera holds it', () => {
-    const debug = vi.fn();
-    reportHomeKitEvent(
-      { debug },
-      {
-        adapter: 'camera.streaming',
-        event: 'live-session-failed',
-        outcome: 'failed',
-        reason: 'station-busy',
-        stage: 'sdk-source-acquisition',
-        servingChannel: 2,
-      },
-    );
-    expect(records(debug)[0]).toMatchObject({ reason: 'station-busy', servingChannel: 2 });
-  });
-
+describe('a session that got no source', () => {
   it('records why, rather than a failure with no reason', () => {
     const debug = vi.fn();
     reportHomeKitEvent(
@@ -277,14 +260,14 @@ describe('a session refused by the station', () => {
         adapter: 'camera.streaming',
         event: 'live-session-failed',
         outcome: 'failed',
-        reason: 'station-busy',
+        reason: 'station-unreachable',
         stage: 'sdk-source-acquisition',
       },
     );
     expect(records(debug)[0]).toMatchObject({
       scope: 'homekit',
       event: 'live-session-failed',
-      reason: 'station-busy',
+      reason: 'station-unreachable',
       stage: 'sdk-source-acquisition',
     });
   });

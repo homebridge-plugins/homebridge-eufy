@@ -4521,13 +4521,13 @@ describe('camera recording bundle adapter', () => {
    * costs the station's own warm-up before a first keyframe and a controller retrying does not wait for it.
    */
   /**
-   * A camera behind a HomeBase takes that station's one live channel when it opens a live session.
+   * A camera behind a HomeBase records its live session on that station.
    *
-   * The station serves one camera at a time and the SDK refuses a second, so the registry is what decides who
-   * gets it — a live session that never records its claim leaves every weaker holder unaware it should yield,
-   * and the refusal then comes from the station instead of from a policy that could have prevented it.
+   * A still rides the station's own session, so it defers to a live view and is asked to abandon one it already
+   * started — and a live session that never records its claim leaves every still on that base unaware of it,
+   * capturing into the session the viewer is being served over.
    */
-  it('claims its station for a live session, so weaker work on that station can be asked to yield', async () => {
+  it('claims its station for a live session, so a still on that station can be asked to yield', async () => {
     const streaming = liveMedia();
     const holds: unknown[] = [];
     const stations = {

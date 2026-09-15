@@ -1,5 +1,5 @@
 import type { FragmentRecordingHandle, MediaFragment } from '@mega-yfue/eufy-sdk';
-import { StationBusyError, StationKeyUnavailableError, StationUnreachableError } from '@mega-yfue/eufy-sdk';
+import { StationKeyUnavailableError, StationUnreachableError } from '@mega-yfue/eufy-sdk';
 import { spawn } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 
@@ -24,15 +24,10 @@ import {
 /**
  * Why a source stopped producing, as this domain's bounded vocabulary.
  *
- * A station serving another of its cameras is not a fault: a base serves one at a time and the SDK refuses a
- * second rather than degrading both, so the recording could not have the station and nothing is broken.
- * Naming it apart from a real source error is what lets an operator read the difference, and what stops a
- * recording that was simply outranked from looking like a camera that failed.
+ * A station names its own failures apart from the camera's: every camera behind a base that did not connect
+ * fails together, and a sealed start the station gave no key for does not resolve by retrying.
  */
 function sourceFailure(error: unknown): RecordingFailure {
-  if (error instanceof StationBusyError) {
-    return 'station-busy';
-  }
   if (error instanceof StationUnreachableError) {
     return 'station-unreachable';
   }
