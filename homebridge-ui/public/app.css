@@ -1368,7 +1368,82 @@ button.diagnostics-quiet-action {
   font-weight: 700;
 }
 
-.preference-grid .preference-changed .snapshot-description {
+.preference-grid .preference-changed /*
+ * The guard-mode map: four HomeKit states against nine station modes, one pairing per row.
+ *
+ * A table because the content is one, which also gives each select its own row label without a second element
+ * beside it. Row rules and no box: the panel's own surface encloses it, and the one control in the row is the
+ * select, which carries the only border here.
+ */
+.arming-setting {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.arming-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.arming-table thead th {
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.arming-table tbody tr + tr th,
+.arming-table tbody tr + tr td {
+  border-top: 1px solid var(--line);
+}
+
+.arming-table th[scope='row'] {
+  width: 38%;
+  padding: 6px 10px 6px 0;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.arming-table th[scope='row'] label {
+  cursor: pointer;
+}
+
+.arming-table td {
+  padding: 6px 0;
+}
+
+.arming-table select {
+  width: 100%;
+  min-height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+/* The changed row carries the weight, so a pending map reads as which pairing moved rather than as a heavier table. */
+.arming-table select.preference-control-changed {
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+@media (pointer: coarse) {
+  .arming-table select {
+    min-height: 44px;
+  }
+}
+
+.snapshot-description {
   font-weight: 400;
 }
 

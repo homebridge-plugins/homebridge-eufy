@@ -20,27 +20,31 @@
     { value: 'disarmed', label: 'Disarmed' },
   ];
   const ARMING_SLOTS = [
-    { slot: 'home', label: 'Home' },
-    { slot: 'away', label: 'Away' },
-    { slot: 'night', label: 'Night' },
-    { slot: 'off', label: 'Off' },
+    { slot: 'home', label: 'armingSlotHome' },
+    { slot: 'away', label: 'armingSlotAway' },
+    { slot: 'night', label: 'armingSlotNight' },
+    { slot: 'off', label: 'armingSlotOff' },
   ];
 
   /**
-   * One select per HomeKit state, because the station has nine modes and HomeKit four, and only the household
-   * knows which of its postures each state should mean. An unassigned state carries no value, which is what
-   * leaves Night out of HomeKit's own controls until it is given one.
+   * The guard-mode map as a table, because that is what it is: four states HomeKit names against the nine a
+   * station reports, one pairing per row.
+   *
+   * A row is the whole control — the state names itself and the select beside it says what it means — so the
+   * panel carries four rows instead of four stacked settings. An unassigned state shows a dash, which is what
+   * keeps Night out of HomeKit until it is given a mode.
    */
   function armingModeControl(device, assigned, messages) {
     const rows = ARMING_SLOTS.map(({ slot, label }) => {
       const value = assigned[slot] ?? '';
+      const id = `arming-${escapeHtml(device.serial)}-${slot}`;
       const options = EUFY_MODES.map(
         (mode) =>
           `<option value="${mode.value}"${value === mode.value ? ' selected' : ''}>${escapeHtml(mode.label)}</option>`,
       ).join('');
-      return `<label class="arming-row"><span>${escapeHtml(label)}</span><select data-preference="armingModes" data-slot="${slot}" data-serial="${escapeHtml(device.serial)}" data-original="${escapeHtml(value)}"><option value=""${value === '' ? ' selected' : ''}>—</option>${options}</select></label>`;
+      return `<tr><th scope="row"><label for="${id}">${escapeHtml(messages[label])}</label></th><td><select id="${id}" data-preference="armingModes" data-slot="${slot}" data-serial="${escapeHtml(device.serial)}" data-original="${escapeHtml(value)}"><option value=""${value === '' ? ' selected' : ''}>—</option>${options}</select></td></tr>`;
     }).join('');
-    return `<div class="arming-setting" data-setting data-requires-representation${device.represented ? '' : ' hidden'}><span class="setting-label">${escapeHtml(messages.preferenceArmingModes)}</span><div class="arming-grid">${rows}</div><p class="snapshot-help">${escapeHtml(messages.armingModesHelp)}</p></div>`;
+    return `<div class="arming-setting" data-setting data-requires-representation${device.represented ? '' : ' hidden'}><span class="setting-label">${escapeHtml(messages.preferenceArmingModes)}</span><table class="arming-table"><thead><tr><th scope="col">HomeKit</th><th scope="col">eufy</th></tr></thead><tbody>${rows}</tbody></table><p class="snapshot-help">${escapeHtml(messages.armingModesHelp)}</p></div>`;
   }
 
   function preferenceControl(device, key, preference, messages) {
