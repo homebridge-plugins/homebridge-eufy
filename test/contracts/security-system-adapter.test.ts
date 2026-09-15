@@ -78,38 +78,111 @@ describe('security-system capability adapter', () => {
     await expect(current.handleGetRequest()).resolves.toBe(Characteristic.SecuritySystemCurrentState.DISARMED);
   });
 
-  it('faults unsupported observed modes while admitted controls remain available', async () => {
+  /**
+   * A station reports nine modes and HomeKit names four, so the five armed postures HomeKit cannot name read
+   * as night and hold `StatusFault`. Answering the read is what keeps the accessory alive: a read that errors
+   * takes the whole station to "No Response", which names the bridge instead of the mode.
+   */
+  it.each([
+    [2, 'schedule'],
+    [3, 'custom 1'],
+    [4, 'custom 2'],
+    [5, 'custom 3'],
+    [47, 'geofencing'],
+  ])('reads eufy mode %i (%s) as night and faults, rather than failing the read', async (mode) => {
     const target = accessory();
     const diagnostics: SecuritySystemDiagnostic[] = [];
     const setMode = vi.fn(async () => undefined);
-    const actions = { mode: 2, setMode };
-    const adapter = attach(armingDevice(actions), target, (diagnostic) => diagnostics.push(diagnostic))!;
+    const adapter = attach(armingDevice({ mode, setMode }), target, (diagnostic) => diagnostics.push(diagnostic))!;
     const service = target.getServiceById(Service.SecuritySystem, SECURITY_SYSTEM_ADAPTER_KEY)!;
     const current = service.getCharacteristic(Characteristic.SecuritySystemCurrentState);
     const desired = service.getCharacteristic(Characteristic.SecuritySystemTargetState);
+
+    await expect(current.handleGetRequest()).resolves.toBe(Characteristic.SecuritySystemCurrentState.NIGHT_ARM);
+    await expect(desired.handleGetRequest()).resolves.toBe(Characteristic.SecuritySystemTargetState.DISARM);
+    expect(desired.props.validValues).not.toContain(Characteristic.SecuritySystemCurrentState.NIGHT_ARM);
+    expect(service.getCharacteristic(Characteristic.StatusFault).value).toBe(Characteristic.StatusFault.GENERAL_FAULT);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'unsupported-arming-mode', member: 'mode', active: true, reason: 'unsupported' }),
+    );
+    expect(adapter.event?.({ eventName: 'armingModeChanged' } as AnyDeviceEvent)).toMatchObject({
+      event: 'arming-mode-changed',
+      observation: 'malformed',
+    });
+  });
+
+  it('reads a station whose alarm system is switched off as disarmed', async () => {
+    const target = accessory();
+    const diagnostics: SecuritySystemDiagnostic[] = [];
+    attach(armingDevice({ mode: 6, setMode: vi.fn(async () => undefined) }), target, (diagnostic) =>
+      diagnostics.push(diagnostic),
+    );
+    const service = target.getServiceById(Service.SecuritySystem, SECURITY_SYSTEM_ADAPTER_KEY)!;
+
+    await expect(service.getCharacteristic(Characteristic.SecuritySystemCurrentState).handleGetRequest()).resolves.toBe(
+      Characteristic.SecuritySystemCurrentState.DISARMED,
+    );
+    expect(service.getCharacteristic(Characteristic.StatusFault).value).toBe(Characteristic.StatusFault.NO_FAULT);
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({ code: 'unsupported-arming-mode', active: true }));
+  });
+
+  /**
+   * A mode nothing can be read from answers with the last state read exactly, and disarmed where the station
+   * has reported none, because HomeKit has no way to show that a state is unknown other than not answering —
+   * which costs the accessory.
+   */
+  it('answers an unreadable mode with the last exact state, and faults until one is read', async () => {
+    const target = accessory();
+    const diagnostics: SecuritySystemDiagnostic[] = [];
+    const setMode = vi.fn(async () => undefined);
+    const actions = { mode: undefined as unknown as number, setMode };
+    const adapter = attach(armingDevice(actions), target, (diagnostic) => diagnostics.push(diagnostic))!;
+    const service = target.getServiceById(Service.SecuritySystem, SECURITY_SYSTEM_ADAPTER_KEY)!;
+    const current = service.getCharacteristic(Characteristic.SecuritySystemCurrentState);
     const fault = service.getCharacteristic(Characteristic.StatusFault);
 
-    await expect(current.handleGetRequest()).rejects.toBe(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    await expect(desired.handleGetRequest()).rejects.toBe(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    await expect(current.handleGetRequest()).resolves.toBe(Characteristic.SecuritySystemCurrentState.DISARMED);
     expect(fault.value).toBe(Characteristic.StatusFault.GENERAL_FAULT);
     expect(diagnostics).toContainEqual(
-      expect.objectContaining({ code: 'unsupported-arming-mode', member: 'mode', active: true }),
+      expect.objectContaining({ code: 'unsupported-arming-mode', member: 'mode', active: true, reason: 'missing' }),
     );
+
+    actions.mode = 0;
+    expect(adapter.event?.({ eventName: 'armingModeChanged' } as AnyDeviceEvent)).toMatchObject({
+      event: 'arming-mode-changed',
+      observation: 'valid',
+    });
+    await expect(current.handleGetRequest()).resolves.toBe(Characteristic.SecuritySystemCurrentState.AWAY_ARM);
+    expect(fault.value).toBe(Characteristic.StatusFault.NO_FAULT);
+
+    actions.mode = 'nonsense' as unknown as number;
+    await expect(current.handleGetRequest()).resolves.toBe(Characteristic.SecuritySystemCurrentState.AWAY_ARM);
+    expect(fault.value).toBe(Characteristic.StatusFault.GENERAL_FAULT);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'unsupported-arming-mode', member: 'mode', active: true, reason: 'malformed' }),
+    );
+  });
+
+  it('keeps admitted controls available while a mode reads inexactly', async () => {
+    const target = accessory();
+    const setMode = vi.fn(async () => undefined);
+    const actions = { mode: 2, setMode };
+    const adapter = attach(armingDevice(actions), target)!;
+    const service = target.getServiceById(Service.SecuritySystem, SECURITY_SYSTEM_ADAPTER_KEY)!;
+    const desired = service.getCharacteristic(Characteristic.SecuritySystemTargetState);
 
     await desired.handleSetRequest(Characteristic.SecuritySystemTargetState.DISARM);
     expect(setMode).toHaveBeenCalledExactlyOnceWith(ArmingMode.disarmed);
-    await expect(desired.handleGetRequest()).rejects.toBe(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
 
     actions.mode = 63;
     expect(adapter.event?.({ eventName: 'armingModeChanged' } as AnyDeviceEvent)).toMatchObject({
       event: 'arming-mode-changed',
       observation: 'valid',
     });
-    await expect(current.handleGetRequest()).resolves.toBe(Characteristic.SecuritySystemCurrentState.DISARMED);
-    expect(fault.value).toBe(Characteristic.StatusFault.NO_FAULT);
-    expect(diagnostics).toContainEqual(
-      expect.objectContaining({ code: 'unsupported-arming-mode', member: 'mode', active: false }),
+    await expect(service.getCharacteristic(Characteristic.SecuritySystemCurrentState).handleGetRequest()).resolves.toBe(
+      Characteristic.SecuritySystemCurrentState.DISARMED,
     );
+    expect(service.getCharacteristic(Characteristic.StatusFault).value).toBe(Characteristic.StatusFault.NO_FAULT);
   });
 
   it.each(['delayed', 'triggered'] as const)(

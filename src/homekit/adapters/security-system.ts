@@ -17,6 +17,8 @@ interface SecuritySystemState {
   unsupportedFault: boolean;
   operationFault: boolean;
   reconciliationFault: boolean;
+  /** The last state read exactly, which is what a mode nothing can be read from answers with. */
+  lastExact?: number;
   writes?: SecurityModeWrites;
 }
 
@@ -302,7 +304,24 @@ export const SECURITY_SYSTEM_ADAPTER = {
   attach: attachSecuritySystem,
 } as const satisfies HomeKitAdapter;
 
-/** Attaches authoritative arming state to one official Security System service. */
+/**
+ * Attaches authoritative arming state to one official Security System service.
+ *
+ * A station reports nine guard modes and HomeKit names four states. `away` and `home` are exact, `off` and
+ * `disarmed` both read as disarmed because HomeKit has one unarmed state, and `schedule`, `custom1` to
+ * `custom3` and `geo` read as night: they are armed postures HomeKit cannot name, and night is the one state
+ * left to carry them. An approximated mode holds `StatusFault`, which is the only place a state HomeKit shows
+ * inexactly says so.
+ *
+ * A read never fails. A characteristic whose read errors takes the whole accessory to "No Response" in
+ * HomeKit, which names the bridge rather than the mode and leaves the station indistinguishable from one that
+ * is unreachable — so a mode that cannot be read at all answers with the last state read exactly, disarmed
+ * where there is none, and faults.
+ *
+ * Only an exact mode reaches the target state, whose valid values are the three modes this adapter can write.
+ * Night is a state the station reports and nothing here sets, so the target keeps the last mode written or
+ * read exactly, and HomeKit offers no control that would have to be refused.
+ */
 function attachSecuritySystem(context: AdapterAttachmentContext): AttachedAdapter | undefined {
   const { accessory, hap } = context;
   const device = context.device as SecuritySystemSdkDevice;
@@ -367,15 +386,18 @@ function attachSecuritySystem(context: AdapterAttachmentContext): AttachedAdapte
     ],
   });
 
-  const homeKitMode = (value: unknown): number | undefined => {
+  const homeKitMode = (value: unknown): { state: number; exact: boolean } | undefined => {
     if (value === 1) {
-      return hap.Characteristic.SecuritySystemCurrentState.STAY_ARM;
+      return { state: hap.Characteristic.SecuritySystemCurrentState.STAY_ARM, exact: true };
     }
     if (value === 0) {
-      return hap.Characteristic.SecuritySystemCurrentState.AWAY_ARM;
+      return { state: hap.Characteristic.SecuritySystemCurrentState.AWAY_ARM, exact: true };
     }
-    if (value === 63) {
-      return hap.Characteristic.SecuritySystemCurrentState.DISARMED;
+    if (value === 6 || value === 63) {
+      return { state: hap.Characteristic.SecuritySystemCurrentState.DISARMED, exact: true };
+    }
+    if (value === 2 || value === 3 || value === 4 || value === 5 || value === 47) {
+      return { state: hap.Characteristic.SecuritySystemCurrentState.NIGHT_ARM, exact: false };
     }
     return undefined;
   };
@@ -416,34 +438,37 @@ function attachSecuritySystem(context: AdapterAttachmentContext): AttachedAdapte
       context.observed('unsupported-arming-mode');
     }
   };
-  const readMode = (): number => {
+  const readMode = (): { state: number; exact: boolean } => {
     let value: unknown;
     try {
       value = state.arming.mode;
     } catch {
       diagnoseMode(true, 'sdk-fault');
-      throw new hap.HapStatusError(hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      return { state: state.lastExact ?? hap.Characteristic.SecuritySystemCurrentState.DISARMED, exact: false };
     }
     const mapped = homeKitMode(value);
     if (mapped === undefined) {
-      diagnoseMode(true, value === undefined ? 'missing' : typeof value === 'number' ? 'unsupported' : 'malformed');
-      throw new hap.HapStatusError(hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      diagnoseMode(true, value === undefined ? 'missing' : 'malformed');
+      return { state: state.lastExact ?? hap.Characteristic.SecuritySystemCurrentState.DISARMED, exact: false };
+    }
+    if (!mapped.exact) {
+      diagnoseMode(true, 'unsupported');
+      return mapped;
     }
     diagnoseMode(false, 'recovered');
+    state.lastExact = mapped.state;
     return mapped;
   };
   const observeMode = (): AdapterEventTrace => {
-    try {
-      const value = readMode();
-      state.alarmTriggered = false;
-      state.writes?.observe();
-      current.updateValue(value);
-      target.updateValue(value);
-      alarmType.updateValue(hap.Characteristic.SecuritySystemAlarmType.NO_ALARM);
-      return { event: 'arming-mode-changed', observation: 'valid' };
-    } catch {
-      return { event: 'arming-mode-changed', observation: 'malformed' };
+    const mode = readMode();
+    state.alarmTriggered = false;
+    state.writes?.observe();
+    current.updateValue(mode.state);
+    if (mode.exact) {
+      target.updateValue(mode.state);
     }
+    alarmType.updateValue(hap.Characteristic.SecuritySystemAlarmType.NO_ALARM);
+    return { event: 'arming-mode-changed', observation: mode.exact ? 'valid' : 'malformed' };
   };
 
   state.writes ??= new SecurityModeWrites(
@@ -470,19 +495,23 @@ function attachSecuritySystem(context: AdapterAttachmentContext): AttachedAdapte
       }
     },
     () => {
-      try {
-        target.updateValue(readMode());
-      } catch {}
+      const mode = readMode();
+      if (mode.exact) {
+        target.updateValue(mode.state);
+      }
     },
   );
   updateStatusFault();
   observeMode();
   current.onGet(() =>
-    state.alarmTriggered ? hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : readMode(),
+    state.alarmTriggered ? hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED : readMode().state,
   );
   target.onGet(() => {
-    const observed = readMode();
-    return state.writes!.read() ?? observed;
+    const mode = readMode();
+    return (
+      state.writes!.read() ??
+      (mode.exact ? mode.state : (state.lastExact ?? hap.Characteristic.SecuritySystemTargetState.DISARM))
+    );
   });
   target.onSet((value) => {
     sdkMode(value);
