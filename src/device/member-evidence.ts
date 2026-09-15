@@ -17,6 +17,14 @@ export interface DeviceMemberEvidence {
    * follow an announcement for a member it already declares without matching on a guessed name.
    */
   readonly property?: string;
+  /**
+   * The SDK's own labels for an enumerated read, keyed by the wire value it answers with.
+   *
+   * Retained because the wire integers of an enum are the SDK's protocol facts: an adapter that has to name
+   * the value it read — a guard mode a user mapped onto a HomeKit state, say — reads that name here instead of
+   * carrying a second copy of the table it came from.
+   */
+  readonly labels?: Readonly<Record<string, string>>;
 }
 
 /** Exact SDK evidence an adapter requires before it may attach. */
@@ -60,7 +68,14 @@ export function indexDeviceMemberEvidence(manifest: DeviceManifest): ReadonlyMap
   for (const detail of manifest.details) {
     for (const read of detail.reads) {
       const id = `${detail.capability}.${read.accessor}.read`;
-      addEvidence(evidence, { id, kind: 'read', type: read.type, writable: read.writable, property: read.property });
+      addEvidence(evidence, {
+        id,
+        kind: 'read',
+        type: read.type,
+        writable: read.writable,
+        property: read.property,
+        ...(read.labels === undefined ? {} : { labels: { ...read.labels } }),
+      });
     }
     for (const action of detail.actions) {
       let kind: 'persistent-operation' | 'momentary-action';

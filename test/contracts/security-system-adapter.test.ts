@@ -11,7 +11,30 @@ import {
 } from '../../src/homekit/adapters/security-system.js';
 
 const HAP = { Service, Characteristic, HAPStatus, HapStatusError };
-const ARMING_EVIDENCE = new Map(SECURITY_SYSTEM_ADAPTER.requires.map((requirement) => [requirement.id, requirement]));
+/**
+ * The SDK's own guard-mode labels, which is where the adapter reads what a wire value means.
+ *
+ * Keyed by the value the `mode` read answers with, exactly as the manifest carries it. Written out here rather
+ * than derived, so a change to the vendor's vocabulary fails this contract instead of passing silently.
+ */
+const ARMING_MODE_LABELS = {
+  '0': 'away',
+  '1': 'home',
+  '2': 'schedule',
+  '3': 'custom1',
+  '4': 'custom2',
+  '5': 'custom3',
+  '6': 'off',
+  '47': 'geo',
+  '63': 'disarmed',
+} as const;
+
+const ARMING_EVIDENCE = new Map(
+  SECURITY_SYSTEM_ADAPTER.requires.map((requirement) => [
+    requirement.id,
+    requirement.id === 'arming.mode.read' ? { ...requirement, labels: ARMING_MODE_LABELS } : requirement,
+  ]),
+);
 
 function accessory(): PlatformAccessory {
   return new Accessory(
@@ -28,12 +51,14 @@ function attach(
   device: SecuritySystemSdkDevice,
   target: PlatformAccessory,
   diagnose: (diagnostic: SecuritySystemDiagnostic) => void = vi.fn(),
+  armingModes?: Partial<Record<'home' | 'away' | 'night' | 'off', ArmingMode>>,
 ) {
   return SECURITY_SYSTEM_ADAPTER.attach({
     device: device as never,
     evidence: ARMING_EVIDENCE,
     accessory: target,
     hap: HAP,
+    ...(armingModes === undefined ? {} : { armingModes }),
     diagnose,
     observed: vi.fn(),
     persist: vi.fn(),
@@ -160,6 +185,76 @@ describe('security-system capability adapter', () => {
     expect(fault.value).toBe(Characteristic.StatusFault.GENERAL_FAULT);
     expect(diagnostics).toContainEqual(
       expect.objectContaining({ code: 'unsupported-arming-mode', member: 'mode', active: true, reason: 'malformed' }),
+    );
+  });
+
+  /**
+   * HomeKit names four states and a station reports nine, so a user assigns the pairing. An assignment makes the
+   * mode read exactly and makes its HomeKit state writable, which is the only way night becomes a control at all.
+   */
+  it('reads and writes the modes a user assigned to HomeKit states', async () => {
+    const target = accessory();
+    const setMode = vi.fn(async () => undefined);
+    const actions = { mode: 2, setMode };
+    attach(armingDevice(actions), target, vi.fn(), { night: ArmingMode.schedule, off: ArmingMode.off });
+    const service = target.getServiceById(Service.SecuritySystem, SECURITY_SYSTEM_ADAPTER_KEY)!;
+    const current = service.getCharacteristic(Characteristic.SecuritySystemCurrentState);
+    const desired = service.getCharacteristic(Characteristic.SecuritySystemTargetState);
+
+    await expect(current.handleGetRequest()).resolves.toBe(Characteristic.SecuritySystemCurrentState.NIGHT_ARM);
+    await expect(desired.handleGetRequest()).resolves.toBe(Characteristic.SecuritySystemTargetState.NIGHT_ARM);
+    expect(service.getCharacteristic(Characteristic.StatusFault).value).toBe(Characteristic.StatusFault.NO_FAULT);
+    expect(desired.props.validValues).toEqual([
+      Characteristic.SecuritySystemTargetState.STAY_ARM,
+      Characteristic.SecuritySystemTargetState.AWAY_ARM,
+      Characteristic.SecuritySystemTargetState.NIGHT_ARM,
+      Characteristic.SecuritySystemTargetState.DISARM,
+    ]);
+
+    await desired.handleSetRequest(Characteristic.SecuritySystemTargetState.NIGHT_ARM);
+    expect(setMode).toHaveBeenCalledExactlyOnceWith(ArmingMode.schedule);
+
+    await desired.handleSetRequest(Characteristic.SecuritySystemTargetState.DISARM);
+    expect(setMode).toHaveBeenLastCalledWith(ArmingMode.off);
+  });
+
+  /** Two states may name one mode, and the first assignment in HomeKit's own order is what the station reads as. */
+  it('reads a mode two HomeKit states name as the first of them', async () => {
+    const target = accessory();
+    attach(armingDevice({ mode: 1, setMode: vi.fn(async () => undefined) }), target, vi.fn(), {
+      night: ArmingMode.home,
+    });
+    const service = target.getServiceById(Service.SecuritySystem, SECURITY_SYSTEM_ADAPTER_KEY)!;
+
+    await expect(service.getCharacteristic(Characteristic.SecuritySystemCurrentState).handleGetRequest()).resolves.toBe(
+      Characteristic.SecuritySystemCurrentState.STAY_ARM,
+    );
+  });
+
+  /**
+   * The wire values of a guard mode are the SDK's protocol facts, carried as the labels of its enumerated read.
+   * Without them nothing here can say that a value means away, and guessing is what a support case cannot undo.
+   */
+  it('reports a fault rather than guessing when the SDK named no modes', async () => {
+    const target = accessory();
+    const diagnostics: SecuritySystemDiagnostic[] = [];
+    SECURITY_SYSTEM_ADAPTER.attach({
+      device: armingDevice({ mode: 0, setMode: vi.fn(async () => undefined) }) as never,
+      evidence: new Map(SECURITY_SYSTEM_ADAPTER.requires.map((requirement) => [requirement.id, requirement])),
+      accessory: target,
+      hap: HAP,
+      diagnose: (diagnostic) => diagnostics.push(diagnostic as SecuritySystemDiagnostic),
+      observed: vi.fn(),
+      persist: vi.fn(),
+    } as never);
+    const service = target.getServiceById(Service.SecuritySystem, SECURITY_SYSTEM_ADAPTER_KEY)!;
+
+    await expect(service.getCharacteristic(Characteristic.SecuritySystemCurrentState).handleGetRequest()).resolves.toBe(
+      Characteristic.SecuritySystemCurrentState.DISARMED,
+    );
+    expect(service.getCharacteristic(Characteristic.StatusFault).value).toBe(Characteristic.StatusFault.GENERAL_FAULT);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'unsupported-arming-mode', member: 'mode', active: true, reason: 'missing' }),
     );
   });
 

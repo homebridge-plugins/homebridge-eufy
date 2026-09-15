@@ -84,6 +84,26 @@
                   "Refresh"
                 ],
                 "type": "string"
+              },
+              "armingModes": {
+                "additionalProperties": false,
+                "patternProperties": {
+                  "^(home|away|night|off)$": {
+                    "enum": [
+                      "away",
+                      "home",
+                      "schedule",
+                      "custom1",
+                      "custom2",
+                      "custom3",
+                      "off",
+                      "geo",
+                      "disarmed"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
               }
             },
             "type": "object"

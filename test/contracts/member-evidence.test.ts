@@ -52,6 +52,37 @@ describe('device member evidence', () => {
     ).toBe(true);
   });
 
+  /**
+   * The wire values of an enumerated read mean nothing without the SDK's own labels, so they are carried
+   * through. An adapter that has to name what it read — a guard mode a HomeKit state is mapped onto — reads the
+   * name here rather than keeping a second copy of the vendor's table.
+   */
+  it('carries the SDK labels of an enumerated read, keyed by the value it answers with', () => {
+    const labels: Record<string, string> = { '0': 'away', '1': 'home', '63': 'disarmed' };
+    const evidence = indexDeviceMemberEvidence(
+      manifest([
+        {
+          capability: 'arming',
+          accessor: 'arming',
+          reads: [{ accessor: 'mode', property: 'armingMode', type: 'enum', kind: 'enum', writable: true, labels }],
+          actions: [],
+          undescribedActions: [],
+          events: [],
+        },
+      ]),
+    );
+
+    expect(evidence.get('arming.mode.read')?.labels).toEqual({ '0': 'away', '1': 'home', '63': 'disarmed' });
+    labels['2'] = 'schedule';
+    expect(
+      evidence.get('arming.mode.read')?.labels,
+      'the index holds its own copy, so a later discovery cannot change what an attached adapter reads',
+    ).toEqual({ '0': 'away', '1': 'home', '63': 'disarmed' });
+    expect(indexDeviceMemberEvidence(manifest([contactDetail()])).get('contact.open.read')).not.toHaveProperty(
+      'labels',
+    );
+  });
+
   it('rejects conflicting duplicate semantic evidence', () => {
     expect(() => indexDeviceMemberEvidence(manifest([contactDetail(), contactDetail(true)]))).toThrow(
       'device manifest contains conflicting member evidence: contact.open.read',

@@ -334,4 +334,40 @@ describe('preferences offered per device', () => {
     // A station: a speaker for its siren and chimes, and no stream for either setting to reach.
     expect(await offered(withCapabilities('arming', 'storage', 'audio', 'siren', 'info'))).toEqual(['represented']);
   });
+
+  /**
+   * The guard-mode map is offered exactly where a security system will exist, and a capability alone is not that:
+   * a station whose arming members the adapter cannot stand behind gets no map, because nothing would obey it.
+   */
+  it('offers the guard-mode map only where a security system is represented', async () => {
+    const arming: DeviceManifest = {
+      ...manifest('station'),
+      capabilities: ['arming'] as DeviceManifest['capabilities'],
+      details: [
+        {
+          capability: 'arming',
+          accessor: 'arming',
+          reads: [
+            {
+              accessor: 'mode',
+              property: 'armingMode',
+              type: 'enum',
+              kind: 'enum',
+              writable: true,
+              labels: { '0': 'away', '1': 'home', '63': 'disarmed' },
+            },
+          ],
+          actions: [{ name: 'setMode', form: 'stateful', reflects: 'mode' }],
+          undescribedActions: [],
+          events: ['armingModeChanged', 'alarm'],
+        },
+      ],
+    };
+
+    expect(await offered(arming)).toEqual(['represented', 'armingModes']);
+    expect(
+      await offered({ ...arming, details: [{ ...arming.details[0]!, events: [] }] }),
+      'without the arming events nothing represents this station at all, so it is offered no preference whatever',
+    ).toEqual([]);
+  });
 });

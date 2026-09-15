@@ -1,4 +1,4 @@
-import type { AnyDeviceEvent, AvailabilityObservation, Device } from '@mega-yfue/eufy-sdk';
+import type { AnyDeviceEvent, ArmingMode, AvailabilityObservation, Device } from '@mega-yfue/eufy-sdk';
 import type { PlatformAccessory } from 'homebridge';
 
 import type { CompleteDeviceSnapshot } from '../device/snapshot.js';
@@ -69,7 +69,15 @@ export type HomeKitEventReport = { adapter: string; serial: string } & AdapterTr
 export type HomeKitEventReportSink = (trace: HomeKitEventReport) => void;
 
 export type HomeKitEntityPreferences = Readonly<
-  Record<string, { represented?: boolean; audio?: boolean; snapshotMode?: SnapshotMode }>
+  Record<
+    string,
+    {
+      represented?: boolean;
+      audio?: boolean;
+      snapshotMode?: SnapshotMode;
+      armingModes?: Readonly<Partial<Record<'home' | 'away' | 'night' | 'off', ArmingMode>>>;
+    }
+  >
 >;
 
 interface AccessoryContext {
@@ -209,6 +217,9 @@ export class HomeKitReconciler {
           ...(this.stationLiveSessions ? { stationLiveSessions: this.stationLiveSessions } : {}),
           audioEnabled: this.entityPreferences[serial]?.audio !== false,
           snapshotMode: this.entityPreferences[serial]?.snapshotMode ?? 'Refresh',
+          ...(this.entityPreferences[serial]?.armingModes === undefined
+            ? {}
+            : { armingModes: this.entityPreferences[serial]!.armingModes }),
           availability: () => this.source.currentAvailability?.(serial),
           diagnose: (diagnostic) => this.setAdapterDiagnostic(serial, key, diagnostic),
           observed: (code) => this.clearAdapterDiagnostics(serial, code, key),

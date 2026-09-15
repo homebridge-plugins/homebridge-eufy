@@ -1157,6 +1157,8 @@ describe('packed plugin', () => {
         'deviceStatusOnline',
         'deviceStatusSwitchedOff',
         'deviceStatusUnreachable',
+        'armingModesHelp',
+        'preferenceArmingModes',
         'preferenceAudio',
         'preferenceRepresented',
         'preferenceSaveFailed',
@@ -2126,6 +2128,32 @@ describe('packed plugin', () => {
       });
       expect(dashboardUi.saveButtonEnables).toBe(1);
       expect(dashboardUi.saveButtonDisables).toBe(2);
+      await dashboardUi.deviceSettingsControls.dispatch('change', {
+        target: {
+          value: 'schedule',
+          dataset: { preference: 'armingModes', slot: 'night', serial: 'synthetic-contact' },
+        },
+      });
+      expect(
+        dashboardUi.updatedConfig?.[0].entityPreferences,
+        'a HomeKit state a household assigned is written under the station it was assigned on',
+      ).toEqual({
+        'synthetic-absent': { audio: false },
+        'synthetic-contact': { represented: false, armingModes: { night: 'schedule' } },
+      });
+      await dashboardUi.deviceSettingsControls.dispatch('change', {
+        target: {
+          value: '',
+          dataset: { preference: 'armingModes', slot: 'night', serial: 'synthetic-contact' },
+        },
+      });
+      expect(
+        dashboardUi.updatedConfig?.[0].entityPreferences,
+        'unassigning a state removes it rather than pinning an empty map, so a later default still reaches it',
+      ).toEqual({
+        'synthetic-absent': { audio: false },
+        'synthetic-contact': { represented: false },
+      });
       expect(script).not.toContain('appendChild(entry)');
 
       const twoFactorUi = await renderUi(script, [], catalogs, 'en', [], {

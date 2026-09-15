@@ -61,6 +61,16 @@ describe('V5 configuration', () => {
           represented: { default: true, type: 'boolean' },
           audio: { default: true, type: 'boolean' },
           snapshotMode: { default: 'Refresh', enum: ['Cloud', 'Live', 'Refresh'], type: 'string' },
+          armingModes: {
+            additionalProperties: false,
+            patternProperties: {
+              '^(home|away|night|off)$': {
+                enum: ['away', 'home', 'schedule', 'custom1', 'custom2', 'custom3', 'off', 'geo', 'disarmed'],
+                type: 'string',
+              },
+            },
+            type: 'object',
+          },
         },
         type: 'object',
       },
@@ -84,7 +94,31 @@ describe('V5 configuration', () => {
       represented: true,
       audio: true,
       snapshotMode: 'Refresh',
+      armingModes: { home: 'home', away: 'away', off: 'disarmed' },
     });
+  });
+
+  /**
+   * A guard-mode assignment is refused rather than repaired: a HomeKit state this plugin does not name, or a mode
+   * the SDK cannot write, would be recorded as an intention and then quietly ignored on the station.
+   */
+  it('refuses a guard-mode assignment naming a state or a mode that does not exist', () => {
+    const withModes = (armingModes: unknown) =>
+      parseConfig({ platform: 'HomebridgeEufy', entityPreferences: { 'synthetic-station': { armingModes } } });
+
+    expect(() => withModes({ evening: 'schedule' })).toThrowError(
+      'entityPreferences.synthetic-station.armingModes.evening is not a HomeKit security state',
+    );
+    expect(() => withModes({ night: 'holiday' })).toThrowError(
+      'entityPreferences.synthetic-station.armingModes.night must be one of',
+    );
+    expect(() => withModes({ night: 2 })).toThrowError(
+      'entityPreferences.synthetic-station.armingModes.night must be one of',
+    );
+    expect(() => withModes('schedule')).toThrowError(
+      'entityPreferences.synthetic-station.armingModes must be an object keyed by HomeKit state',
+    );
+    expect(withModes({ night: 'geo' }).entityPreferences['synthetic-station']?.armingModes).toEqual({ night: 'geo' });
   });
 
   it('rejects the V4 platform alias instead of registering a compatibility identity', () => {
@@ -135,6 +169,7 @@ describe('V5 configuration', () => {
           snapshotMode: 'Cloud',
         },
         'synthetic-sparse-entity': { audio: false },
+        'synthetic-arming-entity': { armingModes: { night: 'schedule', off: 'off' } },
       },
     };
 
@@ -157,14 +192,20 @@ describe('V5 configuration', () => {
           snapshotMode: 'Cloud',
         },
         'synthetic-sparse-entity': { audio: false },
+        'synthetic-arming-entity': { armingModes: { night: 'schedule', off: 'off' } },
       },
       discardedV4Settings: [],
       discardedV4Acknowledged: false,
     });
+    expect(
+      resolveEntityPreference(roundTrip, 'synthetic-arming-entity').armingModes,
+      'an assigned state overrides the default and an unassigned one keeps it',
+    ).toEqual({ home: 'home', away: 'away', night: 'schedule', off: 'off' });
     expect(resolveEntityPreference(roundTrip, 'synthetic-sparse-entity')).toEqual({
       represented: true,
       audio: false,
       snapshotMode: 'Refresh',
+      armingModes: { home: 'home', away: 'away', off: 'disarmed' },
     });
   });
 

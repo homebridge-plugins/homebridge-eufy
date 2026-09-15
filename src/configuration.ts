@@ -1,3 +1,4 @@
+import { ArmingMode } from '@mega-yfue/eufy-sdk';
 import bundledFfmpegPath from 'ffmpeg-for-homebridge';
 
 import { PLATFORM_NAME } from './settings.js';
@@ -11,16 +12,40 @@ export const DEFAULT_WARM_UP_EVENTS: readonly string[] = ['doorbellPress'];
 
 export type SnapshotMode = 'Cloud' | 'Live' | 'Refresh';
 
+/**
+ * The four states HomeKit's security system names, which is the whole domain a guard-mode map is keyed by.
+ *
+ * HomeKit has four and a station reports nine, so which eufy mode each HomeKit state means is the user's
+ * decision: a household running its base on a schedule, a geofence or a custom posture has no way for this
+ * plugin to guess which HomeKit state should stand for it.
+ */
+export type ArmingSlot = 'home' | 'away' | 'night' | 'off';
+
+/**
+ * Which eufy guard mode each HomeKit state means for one station, for the states the user assigned.
+ *
+ * The values are the SDK's own settable mode names, so a mode the SDK cannot write is not offered here. An
+ * unassigned state falls back to {@link DEFAULT_ARMING_MODES}, and `night` has no default: nothing in the
+ * vendor's vocabulary is a night posture, so it stays a state a station may report and HomeKit cannot set until
+ * a user says what it means.
+ */
+export type ArmingModeMap = Readonly<Partial<Record<ArmingSlot, ArmingMode>>>;
+
+/** What each HomeKit state means where the user assigned nothing. */
+export const DEFAULT_ARMING_MODES: ArmingModeMap = { home: 'home', away: 'away', off: 'disarmed' };
+
 export interface EntityPreference {
   represented?: boolean;
   audio?: boolean;
   snapshotMode?: SnapshotMode;
+  armingModes?: ArmingModeMap;
 }
 
 export interface ResolvedEntityPreference {
   represented: boolean;
   audio: boolean;
   snapshotMode: SnapshotMode;
+  armingModes: ArmingModeMap;
 }
 
 export interface EufyConfig {
@@ -53,8 +78,9 @@ export interface EufyConfig {
   discardedV4Acknowledged: boolean;
 }
 
-const ENTITY_PREFERENCE_KEYS = new Set<keyof EntityPreference>(['represented', 'audio', 'snapshotMode']);
+const ENTITY_PREFERENCE_KEYS = new Set<keyof EntityPreference>(['represented', 'audio', 'snapshotMode', 'armingModes']);
 const SNAPSHOT_MODES = new Set<SnapshotMode>(['Cloud', 'Live', 'Refresh']);
+const ARMING_SLOTS = new Set<ArmingSlot>(['home', 'away', 'night', 'off']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -98,8 +124,29 @@ function parseEntityPreferences(value: unknown): Record<string, EntityPreference
       if (candidate.snapshotMode !== undefined && !SNAPSHOT_MODES.has(candidate.snapshotMode as SnapshotMode)) {
         throw new TypeError(`entityPreferences.${serial}.snapshotMode must be Cloud, Live, or Refresh`);
       }
+      if (candidate.armingModes !== undefined) {
+        if (!isRecord(candidate.armingModes)) {
+          throw new TypeError(`entityPreferences.${serial}.armingModes must be an object keyed by HomeKit state`);
+        }
+        for (const [slot, mode] of Object.entries(candidate.armingModes)) {
+          if (!ARMING_SLOTS.has(slot as ArmingSlot)) {
+            throw new TypeError(`entityPreferences.${serial}.armingModes.${slot} is not a HomeKit security state`);
+          }
+          if (typeof mode !== 'string' || !Object.hasOwn(ArmingMode, mode)) {
+            throw new TypeError(
+              `entityPreferences.${serial}.armingModes.${slot} must be one of ${Object.keys(ArmingMode).join(', ')}`,
+            );
+          }
+        }
+      }
 
-      return [serial, { ...candidate } as EntityPreference];
+      return [
+        serial,
+        {
+          ...candidate,
+          ...(candidate.armingModes === undefined ? {} : { armingModes: { ...candidate.armingModes } }),
+        } as EntityPreference,
+      ];
     }),
   );
 }
@@ -228,5 +275,6 @@ export function resolveEntityPreference(config: EufyConfig, serial: string): Res
     represented: preference?.represented ?? true,
     audio: preference?.audio ?? true,
     snapshotMode: preference?.snapshotMode ?? 'Refresh',
+    armingModes: { ...DEFAULT_ARMING_MODES, ...preference?.armingModes },
   };
 }

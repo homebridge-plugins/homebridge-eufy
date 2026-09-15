@@ -1,4 +1,4 @@
-import type { AnyDeviceEvent, AvailabilityObservation, Device } from '@mega-yfue/eufy-sdk';
+import type { AnyDeviceEvent, ArmingMode, AvailabilityObservation, Device } from '@mega-yfue/eufy-sdk';
 import type { Characteristic, HAP, HapStatusError, PlatformAccessory, Service } from 'homebridge';
 
 import type {
@@ -134,6 +134,14 @@ export interface AdapterAttachmentContext {
   readonly stationLiveSessions?: StationLiveSessionRegistry;
   readonly audioEnabled?: boolean;
   readonly snapshotMode?: SnapshotMode;
+  /**
+   * Which eufy guard mode each HomeKit security state means, for the states the user assigned.
+   *
+   * HomeKit names four states and a station reports nine, so the pairing is a decision rather than a fact. An
+   * unassigned state carries this adapter's own default, and `night` has none: no vendor mode is a night
+   * posture, so HomeKit can set it only once a user says what it means.
+   */
+  readonly armingModes?: Readonly<Partial<Record<'home' | 'away' | 'night' | 'off', ArmingMode>>>;
   readonly availability?: () => AvailabilityObservation | undefined;
   diagnose(diagnostic: AdapterDiagnostic): void;
   observed(code: string): void;

@@ -1,5 +1,28 @@
 import { ArmingMode, CapabilityNotSupportedError, type ArmingActions } from '@mega-yfue/eufy-sdk';
 
+/**
+ * What each HomeKit security state means where the user assigned nothing.
+ *
+ * `night` is absent: no vendor mode is a night posture, so HomeKit offers the state only once a user says what
+ * it stands for on that station.
+ */
+const DEFAULT_ARMING_MODES: Readonly<Partial<Record<ArmingSlot, ArmingMode>>> = {
+  home: ArmingMode.home,
+  away: ArmingMode.away,
+  off: ArmingMode.disarmed,
+};
+
+/**
+ * The HomeKit states a station's guard mode is read against, in the order a mode is looked up in.
+ *
+ * Two states may name one mode — HomeKit's night standing for the same posture as home, say — so the order
+ * decides which one a station reporting that mode reads as, and the first assignment wins.
+ */
+const SLOT_ORDER = ['home', 'away', 'night', 'off'] as const;
+
+/** One of the four states HomeKit's security system names. */
+type ArmingSlot = (typeof SLOT_ORDER)[number];
+
 import type {
   AdapterAttachmentContext,
   AdapterDiagnostic,
@@ -378,40 +401,40 @@ function attachSecuritySystem(context: AdapterAttachmentContext): AttachedAdapte
   const statusFault = service.getCharacteristic(hap.Characteristic.StatusFault);
   service.addOptionalCharacteristic(hap.Characteristic.SecuritySystemAlarmType);
   const alarmType = service.getCharacteristic(hap.Characteristic.SecuritySystemAlarmType);
+  const assigned: Partial<Record<ArmingSlot, ArmingMode>> = {
+    ...DEFAULT_ARMING_MODES,
+    ...context.armingModes,
+  };
+  const slotState: Record<ArmingSlot, number> = {
+    home: hap.Characteristic.SecuritySystemCurrentState.STAY_ARM,
+    away: hap.Characteristic.SecuritySystemCurrentState.AWAY_ARM,
+    night: hap.Characteristic.SecuritySystemCurrentState.NIGHT_ARM,
+    off: hap.Characteristic.SecuritySystemCurrentState.DISARMED,
+  };
+  const modeNames = context.evidence.get(ARMING_MODE_READ.id)?.labels;
   target.setProps({
-    validValues: [
-      hap.Characteristic.SecuritySystemTargetState.STAY_ARM,
-      hap.Characteristic.SecuritySystemTargetState.AWAY_ARM,
-      hap.Characteristic.SecuritySystemTargetState.DISARM,
-    ],
+    validValues: SLOT_ORDER.filter((slot) => assigned[slot] !== undefined).map((slot) => slotState[slot]),
   });
 
   const homeKitMode = (value: unknown): { state: number; exact: boolean } | undefined => {
-    if (value === 1) {
-      return { state: hap.Characteristic.SecuritySystemCurrentState.STAY_ARM, exact: true };
+    const name = modeNames?.[String(value)];
+    if (name === undefined) {
+      return undefined;
     }
-    if (value === 0) {
-      return { state: hap.Characteristic.SecuritySystemCurrentState.AWAY_ARM, exact: true };
+    const slot = SLOT_ORDER.find((candidate) => assigned[candidate] === name);
+    if (slot !== undefined) {
+      return { state: slotState[slot], exact: true };
     }
-    if (value === 6 || value === 63) {
-      return { state: hap.Characteristic.SecuritySystemCurrentState.DISARMED, exact: true };
-    }
-    if (value === 2 || value === 3 || value === 4 || value === 5 || value === 47) {
-      return { state: hap.Characteristic.SecuritySystemCurrentState.NIGHT_ARM, exact: false };
-    }
-    return undefined;
+    return name === ArmingMode.disarmed || name === ArmingMode.off
+      ? { state: hap.Characteristic.SecuritySystemCurrentState.DISARMED, exact: true }
+      : { state: hap.Characteristic.SecuritySystemCurrentState.NIGHT_ARM, exact: false };
   };
   const sdkMode = (value: unknown): ArmingMode => {
-    if (value === hap.Characteristic.SecuritySystemTargetState.STAY_ARM) {
-      return ArmingMode.home;
+    const mode = SLOT_ORDER.filter((slot) => slotState[slot] === value).map((slot) => assigned[slot])[0];
+    if (mode === undefined) {
+      throw new hap.HapStatusError(hap.HAPStatus.INVALID_VALUE_IN_REQUEST);
     }
-    if (value === hap.Characteristic.SecuritySystemTargetState.AWAY_ARM) {
-      return ArmingMode.away;
-    }
-    if (value === hap.Characteristic.SecuritySystemTargetState.DISARM) {
-      return ArmingMode.disarmed;
-    }
-    throw new hap.HapStatusError(hap.HAPStatus.INVALID_VALUE_IN_REQUEST);
+    return mode;
   };
 
   const updateStatusFault = (): void => {
@@ -448,7 +471,7 @@ function attachSecuritySystem(context: AdapterAttachmentContext): AttachedAdapte
     }
     const mapped = homeKitMode(value);
     if (mapped === undefined) {
-      diagnoseMode(true, value === undefined ? 'missing' : 'malformed');
+      diagnoseMode(true, modeNames === undefined || value === undefined ? 'missing' : 'malformed');
       return { state: state.lastExact ?? hap.Characteristic.SecuritySystemCurrentState.DISARMED, exact: false };
     }
     if (!mapped.exact) {

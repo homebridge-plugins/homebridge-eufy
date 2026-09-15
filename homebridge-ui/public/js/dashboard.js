@@ -8,12 +8,50 @@
       .replaceAll("'", '&#039;');
   }
 
+  const EUFY_MODES = [
+    { value: 'away', label: 'Away' },
+    { value: 'home', label: 'Home' },
+    { value: 'schedule', label: 'Schedule' },
+    { value: 'custom1', label: 'Custom 1' },
+    { value: 'custom2', label: 'Custom 2' },
+    { value: 'custom3', label: 'Custom 3' },
+    { value: 'off', label: 'Off' },
+    { value: 'geo', label: 'Geofencing' },
+    { value: 'disarmed', label: 'Disarmed' },
+  ];
+  const ARMING_SLOTS = [
+    { slot: 'home', label: 'Home' },
+    { slot: 'away', label: 'Away' },
+    { slot: 'night', label: 'Night' },
+    { slot: 'off', label: 'Off' },
+  ];
+
+  /**
+   * One select per HomeKit state, because the station has nine modes and HomeKit four, and only the household
+   * knows which of its postures each state should mean. An unassigned state carries no value, which is what
+   * leaves Night out of HomeKit's own controls until it is given one.
+   */
+  function armingModeControl(device, assigned, messages) {
+    const rows = ARMING_SLOTS.map(({ slot, label }) => {
+      const value = assigned[slot] ?? '';
+      const options = EUFY_MODES.map(
+        (mode) =>
+          `<option value="${mode.value}"${value === mode.value ? ' selected' : ''}>${escapeHtml(mode.label)}</option>`,
+      ).join('');
+      return `<label class="arming-row"><span>${escapeHtml(label)}</span><select data-preference="armingModes" data-slot="${slot}" data-serial="${escapeHtml(device.serial)}" data-original="${escapeHtml(value)}"><option value=""${value === '' ? ' selected' : ''}>—</option>${options}</select></label>`;
+    }).join('');
+    return `<div class="arming-setting" data-setting data-requires-representation${device.represented ? '' : ' hidden'}><span class="setting-label">${escapeHtml(messages.preferenceArmingModes)}</span><div class="arming-grid">${rows}</div><p class="snapshot-help">${escapeHtml(messages.armingModesHelp)}</p></div>`;
+  }
+
   function preferenceControl(device, key, preference, messages) {
     const labels = {
       represented: messages.preferenceRepresented,
       audio: messages.preferenceAudio,
       snapshotMode: messages.preferenceSnapshotMode,
     };
+    if (key === 'armingModes') {
+      return armingModeControl(device, preference.armingModes, messages);
+    }
     const represented = preference.represented;
     const dependent = key === 'represented' ? '' : ` data-requires-representation${represented ? '' : ' hidden'}`;
     if (key === 'snapshotMode') {
@@ -29,7 +67,7 @@
 
   function markPendingPreference(control, key, value) {
     if (!control?.classList || control.dataset.original === undefined) return;
-    const current = key === 'snapshotMode' ? String(value) : String(Boolean(value));
+    const current = key === 'snapshotMode' || key === 'armingModes' ? String(value) : String(Boolean(value));
     const setting = control.closest('[data-setting]');
     const changed = current !== control.dataset.original;
     if (key === 'snapshotMode') {
@@ -261,6 +299,10 @@
       const existing = getConfig();
       if (!existing || !serial || !key) return;
       const defaults = { represented: true, audio: true, snapshotMode: 'Refresh' };
+      if (key === 'armingModes') {
+        await saveArmingMode(control, serial, existing, saveConfig, getMessages, elements);
+        return;
+      }
       const value = key === 'snapshotMode' ? control.value : control.checked;
       markPendingPreference(control, key, value);
       if (key === 'snapshotMode') {
@@ -296,6 +338,30 @@
   }
 
   /**
+   * Records one HomeKit state's guard mode, keeping the map sparse: a state set back to the plugin's own choice
+   * is removed rather than pinned, so a later default reaches a household that never overrode it.
+   */
+  async function saveArmingMode(control, serial, existing, saveConfig, getMessages, elements) {
+    const slot = control.dataset.slot;
+    const value = control.value;
+    markPendingPreference(control, 'armingModes', value);
+    const entityPreferences = { ...(existing.entityPreferences ?? {}) };
+    const preference = { ...(entityPreferences[serial] ?? {}) };
+    const armingModes = { ...(preference.armingModes ?? {}) };
+    if (value === '') delete armingModes[slot];
+    else armingModes[slot] = value;
+    if (Object.keys(armingModes).length === 0) delete preference.armingModes;
+    else preference.armingModes = armingModes;
+    if (Object.keys(preference).length === 0) delete entityPreferences[serial];
+    else entityPreferences[serial] = preference;
+    try {
+      await saveConfig({ ...existing, entityPreferences });
+    } catch {
+      elements.summary.textContent = getMessages().preferenceSaveFailed;
+    }
+  }
+
+  /**
    * Fills the settings page for one device, which is where its controls live rather than on the tile itself.
    *
    * The tile is a summary and a fixed square; a device's settings are neither, and grew past it. A device that
@@ -313,6 +379,7 @@
       represented: preferences[device.serial]?.represented ?? true,
       audio: preferences[device.serial]?.audio ?? true,
       snapshotMode: preferences[device.serial]?.snapshotMode ?? 'Refresh',
+      armingModes: { home: 'home', away: 'away', off: 'disarmed', ...preferences[device.serial]?.armingModes },
     };
     const controls = device.preferences
       .map((key) => preferenceControl(device, key, preference, messages))
