@@ -1376,10 +1376,52 @@ button.diagnostics-quiet-action {
  * select, which carries the only border here.
  */
 .arming-setting {
-  display: grid;
-  gap: 8px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.arming-setting > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 12px;
+  align-items: center;
+  gap: 2px 8px;
+  cursor: pointer;
+}
+
+/* `display: grid` on a summary drops the native marker, so the affordance is drawn back in as a caret. */
+.arming-setting > summary::marker,
+.arming-setting > summary::-webkit-details-marker {
+  content: '';
+  display: none;
+}
+
+.arming-setting > summary::after {
+  content: '';
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform 140ms var(--ease-out);
+}
+
+.arming-setting[open] > summary::after {
+  transform: rotate(-135deg);
+}
+
+/* The map as one line, which is the answer most households only ever read. */
+.arming-summary {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arming-setting[open] > summary {
+  margin-bottom: 8px;
 }
 
 .arming-table {
@@ -1432,6 +1474,10 @@ button.diagnostics-quiet-action {
 }
 
 /* The changed row carries the weight, so a pending map reads as which pairing moved rather than as a heavier table. */
+.arming-setting .snapshot-help {
+  margin-top: 6px;
+}
+
 .arming-table select.preference-control-changed {
   border-color: var(--accent);
   font-weight: 700;

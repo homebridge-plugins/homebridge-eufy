@@ -19,6 +19,8 @@
     { value: 'geo', label: 'Geofencing' },
     { value: 'disarmed', label: 'Disarmed' },
   ];
+  /** What each HomeKit state means where the household assigned nothing, as the adapter resolves it. */
+  const DEFAULT_ARMING_MODES = { home: 'home', away: 'away', off: 'disarmed' };
   const ARMING_SLOTS = [
     { slot: 'home', label: 'armingSlotHome' },
     { slot: 'away', label: 'armingSlotAway' },
@@ -27,14 +29,19 @@
   ];
 
   /**
-   * The guard-mode map as a table, because that is what it is: four states HomeKit names against the nine a
-   * station reports, one pairing per row.
+   * The guard-mode map: four states HomeKit names against the nine a station reports, one pairing per row.
    *
-   * A row is the whole control — the state names itself and the select beside it says what it means — so the
-   * panel carries four rows instead of four stacked settings. An unassigned state shows a dash, which is what
-   * keeps Night out of HomeKit until it is given a mode.
+   * Folded shut, because the four defaults are what nearly every household keeps and the panel has a camera's
+   * worth of settings above it. The summary carries the whole map as text, so the answer is readable without
+   * opening anything, and a household that assigned a state of its own finds it already open.
+   *
+   * A row is the whole control — the state names itself and the select beside it says what it means. An
+   * unassigned state shows a dash, which is what keeps Night out of HomeKit until it is given a mode.
    */
   function armingModeControl(device, assigned, messages) {
+    const summary = ARMING_SLOTS.map(
+      ({ slot, label }) => `${messages[label]} → ${EUFY_MODES.find((mode) => mode.value === assigned[slot])?.label ?? '—'}`,
+    ).join(' · ');
     const rows = ARMING_SLOTS.map(({ slot, label }) => {
       const value = assigned[slot] ?? '';
       const id = `arming-${escapeHtml(device.serial)}-${slot}`;
@@ -44,7 +51,8 @@
       ).join('');
       return `<tr><th scope="row"><label for="${id}">${escapeHtml(messages[label])}</label></th><td><select id="${id}" data-preference="armingModes" data-slot="${slot}" data-serial="${escapeHtml(device.serial)}" data-original="${escapeHtml(value)}"><option value=""${value === '' ? ' selected' : ''}>—</option>${options}</select></td></tr>`;
     }).join('');
-    return `<div class="arming-setting" data-setting data-requires-representation${device.represented ? '' : ' hidden'}><span class="setting-label">${escapeHtml(messages.preferenceArmingModes)}</span><table class="arming-table"><thead><tr><th scope="col">HomeKit</th><th scope="col">eufy</th></tr></thead><tbody>${rows}</tbody></table><p class="snapshot-help">${escapeHtml(messages.armingModesHelp)}</p></div>`;
+    const assignedItself = ARMING_SLOTS.some(({ slot }) => assigned[slot] !== DEFAULT_ARMING_MODES[slot]);
+    return `<details class="arming-setting" data-setting${assignedItself ? ' open' : ''}${device.represented ? '' : ' hidden'} data-requires-representation><summary><span class="setting-label">${escapeHtml(messages.preferenceArmingModes)}</span><span class="arming-summary">${escapeHtml(summary)}</span></summary><table class="arming-table"><thead><tr><th scope="col">HomeKit</th><th scope="col">eufy</th></tr></thead><tbody>${rows}</tbody></table><p class="snapshot-help">${escapeHtml(messages.armingModesHelp)}</p></details>`;
   }
 
   function preferenceControl(device, key, preference, messages) {
@@ -383,7 +391,7 @@
       represented: preferences[device.serial]?.represented ?? true,
       audio: preferences[device.serial]?.audio ?? true,
       snapshotMode: preferences[device.serial]?.snapshotMode ?? 'Refresh',
-      armingModes: { home: 'home', away: 'away', off: 'disarmed', ...preferences[device.serial]?.armingModes },
+      armingModes: { ...DEFAULT_ARMING_MODES, ...preferences[device.serial]?.armingModes },
     };
     const controls = device.preferences
       .map((key) => preferenceControl(device, key, preference, messages))
