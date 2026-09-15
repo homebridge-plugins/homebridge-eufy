@@ -471,7 +471,7 @@ describe('diagnostic conditions', () => {
       'level2-unavailable': { reason: 'grace-elapsed', waitedMs: 8000 },
       'cipher-fallback': { cipherId: 209, answeredCipherId: 196 },
       'level2-negotiating': { cipherId: 209 },
-      'station-resolved': { topology: 'attached', channel: 2, stationAdmin: 'self' },
+      'station-resolved': { topology: 'attached', channel: 2, stationAdmin: 'self', stationModel: 'T8030' },
       warming: { retryMs: 2000, deadlineMs: 20000 },
       'media-command-unsent': { reason: 'level2-key' },
       'path-stale': { silentMs: 15000 },
@@ -488,6 +488,14 @@ describe('diagnostic conditions', () => {
     );
     expect(debug.mock.calls.map(([message]) => JSON.parse(message).phase)).toEqual(phases);
     expect(JSON.stringify(debug.mock.calls)).not.toContain('T8000P0000000000');
+
+    const resolved = debug.mock.calls
+      .map(([message]) => JSON.parse(message))
+      .find((record) => record.phase === 'station-resolved');
+    expect(
+      resolved?.stationModel,
+      'a base this SDK reaches differently reads like a base switched off unless its model is retained',
+    ).toBe('T8030');
   });
 
   /**
