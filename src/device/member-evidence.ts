@@ -35,9 +35,15 @@ export interface DeviceProductEvidence {
   readonly model?: string;
 }
 
-/** Exact product evidence an adapter requires in addition to semantic members. */
+/**
+ * The models an adapter's evidence was established on, and the only ones it may attach to.
+ *
+ * A list rather than one model, because a wire confirmed on one product is confirmed for each product it was
+ * pressed on and no others: what an adapter may serve grows one tested device at a time, and a family or a
+ * prefix would claim the untested rest of it.
+ */
 export interface DeviceProductRequirement {
-  readonly model: string;
+  readonly models: readonly string[];
 }
 
 /** One device's product and member evidence indexed from the same complete manifest. */
@@ -109,12 +115,12 @@ export function indexDeviceEvidence(manifest: DeviceManifest): DeviceEvidenceInd
   };
 }
 
-/** Matches an exact SDK product model without consulting display or transport fields. */
+/** Matches one of an adapter's exact SDK product models, without consulting display or transport fields. */
 export function satisfiesProductRequirement(
   evidence: DeviceProductEvidence,
   requirement: DeviceProductRequirement | undefined,
 ): boolean {
-  return requirement === undefined || evidence.model === requirement.model;
+  return requirement === undefined || (evidence.model !== undefined && requirement.models.includes(evidence.model));
 }
 
 /** Matches every required member plus at least one alternative when alternatives are declared. */

@@ -34,7 +34,7 @@ const COVERAGE_BY_ROW = new Map<string, { adapter: string; productEvidence?: str
           {
             adapter,
             ...(requiresProduct
-              ? { productEvidence: `@mega-yfue/eufy-sdk DeviceManifest.model ${requiresProduct.model}` }
+              ? { productEvidence: `@mega-yfue/eufy-sdk DeviceManifest.model ${requiresProduct.models.join(', ')}` }
               : {}),
           },
         ] as const,

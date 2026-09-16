@@ -138,11 +138,15 @@ describe('device member evidence', () => {
     candidate.modelName = 'Synthetic unrelated display model';
     candidate.codec = 'lock';
 
-    expect(satisfiesProductRequirement(indexDeviceEvidence(candidate).product, { model: 'T8531' })).toBe(true);
-    expect(satisfiesProductRequirement(indexDeviceEvidence(candidate).product, { model: 'T85D0' })).toBe(false);
+    expect(satisfiesProductRequirement(indexDeviceEvidence(candidate).product, { models: ['T8531'] })).toBe(true);
+    expect(
+      satisfiesProductRequirement(indexDeviceEvidence(candidate).product, { models: ['T85D0', 'T8531'] }),
+      'a requirement lists the models it was established on, and any of them admits',
+    ).toBe(true);
+    expect(satisfiesProductRequirement(indexDeviceEvidence(candidate).product, { models: ['T85D0'] })).toBe(false);
     delete candidate.model;
     candidate.modelName = 'T8531';
-    expect(satisfiesProductRequirement(indexDeviceEvidence(candidate).product, { model: 'T8531' })).toBe(false);
+    expect(satisfiesProductRequirement(indexDeviceEvidence(candidate).product, { models: ['T8531'] })).toBe(false);
   });
 });
 
