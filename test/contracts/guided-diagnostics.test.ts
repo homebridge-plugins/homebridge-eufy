@@ -1454,11 +1454,15 @@ function repositoryRoot(): string {
  * The session is disposed before the assertions run, because every contract below reads the prepared URL and
  * none of them reads the evidence tree it was built from.
  */
-async function preparedReport(profile: DiagnosticsProfile): Promise<{ url: URL; supportCaseId: string }> {
+async function preparedReport(
+  profile: DiagnosticsProfile,
+  homebridge?: string,
+): Promise<{ url: URL; supportCaseId: string }> {
   const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-issue-'));
   const diagnostics = new GuidedDiagnostics(root, () => Date.parse('2026-09-11T08:00:00.000Z'));
 
   try {
+    if (homebridge !== undefined) recordHostEnvironment(root, { homebridge });
     await diagnostics.authorize(profile, 'now');
     await diagnostics.startReproduction();
     const complete = await diagnostics.endReproduction();
@@ -1494,8 +1498,11 @@ describe('guided diagnostics issue handoff', () => {
   });
 
   /**
-   * The environment block carries the versions and host shape the plugin holds, and keeps a prompt for every
-   * line it cannot answer, so a prefilled form never asks triage for less than an empty one.
+   * The environment block carries every line the plugin holds an answer for, because a line left blank is
+   * charged to the reporter by the form's own triage: a report made the intended way would arrive incomplete.
+   * The host version is answered from the record a run writes, and keeps its prompt where no run has written
+   * one. The support case id is not on the block at all — it sits above the operational class, and the
+   * archive's filename carries it to any report that attaches one.
    */
   it('fills the environment block it can answer and prompts for the rest', async () => {
     const repository = repositoryRoot();
@@ -1508,9 +1515,16 @@ describe('guided diagnostics issue handoff', () => {
     expect(environment).toContain(process.version);
     expect(environment).toContain(process.platform);
     expect(environment).toContain(process.arch);
-    expect(environment, 'the plugin cannot read it, so the prompt survives').toContain('**Homebridge Version**:');
-    expect(environment).toContain('**Support Case ID**:');
+    expect(environment, 'no run has recorded a host, so the prompt survives').toContain('**Homebridge Version**: \n');
+    expect(environment, 'the archive filename carries it, and a query string must not').not.toContain(
+      '**Support Case ID**',
+    );
     expect(environment).not.toContain(supportCaseId);
+
+    const recorded = (await preparedReport('live-media', '2.4.0')).url.searchParams.get('environment') ?? '';
+    expect(recorded, 'the host version is the one fact triage asked for that a run already recorded').toContain(
+      '**Homebridge Version**: 2.4.0',
+    );
   });
 
   /**

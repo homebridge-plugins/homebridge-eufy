@@ -447,11 +447,21 @@ const BUG_REPORT_FORM = 'https://github.com/homebridge-plugins/homebridge-eufy/i
  * Addresses the committed issue form by filename, and fills the field ids that form declares. A prefill is
  * honoured only against a named template, and only the operational class travels in a query string.
  *
+ * Every field this process can answer is answered, because a blank one is charged to the reporter: the form's
+ * own triage asks for what the environment block leaves empty, so a line left for the reporter to complete
+ * turns a report made the intended way into an incomplete one. The host version is the host's own public
+ * version and empty where no run has recorded it yet. The support case id is not among them — it sits above
+ * the operational class, and the archive's own filename carries it to the report that attaches one.
+ *
  * The archive field is left unaddressed, because a query string cannot carry a file. Any text placed there
  * satisfies the field's own `required` validation, so a prefill would answer it on the reporter's behalf and
  * the form would accept a report with no archive on it.
  */
-function bugReportUrl(session: PersistedDiagnosticsSession, missingEvidence: readonly string[]): string {
+function bugReportUrl(
+  session: PersistedDiagnosticsSession,
+  missingEvidence: readonly string[],
+  host: PersistedHostEnvironment | undefined,
+): string {
   const url = new URL(BUG_REPORT_FORM);
   url.searchParams.set('template', 'bug_report.yml');
   url.searchParams.set(
@@ -460,9 +470,8 @@ function bugReportUrl(session: PersistedDiagnosticsSession, missingEvidence: rea
       `- **Plugin Version**: ${PLUGIN_VERSION}`,
       `- **eufy SDK**: ${SDK_VERSION}`,
       `- **Node.js Version**: ${process.version}`,
-      `- **Homebridge Version**: `,
+      `- **Homebridge Version**: ${host?.homebridge ?? ''}`,
       `- **OS**: ${process.platform} ${process.arch}`,
-      `- **Support Case ID**: `,
       `- **Diagnostics profile**: ${session.profile} (${session.reproductionMode})`,
       `- **Missing evidence**: ${missingEvidence.length ? missingEvidence.join(', ') : 'none'}`,
     ].join('\n'),
@@ -1357,7 +1366,7 @@ export class GuidedDiagnostics {
       ...(session.reproductionEndedAt ? { reproductionEndedAt: session.reproductionEndedAt } : {}),
       partialExportAvailable: Boolean(session.reproductionEndedAt),
       ...(session.affectedDevices === undefined ? {} : { affectedDevices: session.affectedDevices }),
-      issueUrl: bugReportUrl(session, missingEvidence),
+      issueUrl: bugReportUrl(session, missingEvidence, readHostEnvironment(this.storageRoot)),
     };
   }
 
