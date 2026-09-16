@@ -1,19 +1,30 @@
 name: Report completeness
 
 # A report the maintainers cannot act on says so on the issue, at once, rather than waiting for someone to
-# read it. Three things are checked, and nothing here is ever closed: closing a report its reporter can still
-# complete is how a real defect gets lost.
+# read it. Four things are checked.
 #
-# 1. The diagnostics archive. The form marks the field required and GitHub honours that with any text, so the
+# 1. Whether the report came through the plugin's own diagnostics flow, which is the only path that produces
+#    an archive and a filled environment block. This is the one finding that closes, and it is judged on the
+#    event that opened the report and never again: a report filed before this rule, and one whose reporter is
+#    still completing it, is not reassessed by a later edit or comment. A report that arrived with an archive
+#    anyway is not closed either, because the archive is the thing the flow exists to produce.
+# 2. The diagnostics archive. The form marks the field required and GitHub honours that with any text, so the
 #    form cannot tell an attachment from a sentence. This can.
-# 2. The environment block, on whether its lines were answered. A blank one is the first thing triage asks
+# 3. The environment block, on whether its lines were answered. A blank one is the first thing triage asks
 #    for, and a blank version is what leaves the version check with nothing to read.
-# 3. The plugin version. V4 is unmaintained, so a 4.x report is stated as unactionable while it is still the
+# 4. The plugin version. V4 is unmaintained, so a 4.x report is stated as unactionable while it is still the
 #    reporter's evening rather than a week later.
+#
+# Nothing else here is ever closed: closing a report its reporter can still complete is how a real defect gets
+# lost.
 #
 # The archive may arrive in a later comment, so every event re-reads the whole thread. Only the archive moves
 # a label: a reporter answers the other two in prose, and no label may depend on a body they will not edit.
 # The waiting state is set once, with the ask, so a maintainer who lifts it to work an issue keeps it lifted.
+#
+# `scripts/report-completeness-cases.mjs` drives the script below against a fake GitHub, over the seven reports
+# whose outcome is a decision rather than a default. Run it after editing this file — nothing else rehearses a
+# judgement that lands on a stranger's issue.
 
 on:
   issues:
@@ -110,6 +121,13 @@ jobs:
 
             const attached = ATTACHED_ARCHIVE.test(body) || comments.some((comment) => ATTACHED_ARCHIVE.test(comment.body || ''));
 
+            // The prefill the plugin's diagnostics flow hands back writes this line and nothing else does, so
+            // its absence is a report typed straight into the form. Judged on the opening event alone, and
+            // never where an archive arrived regardless: the flow exists to produce one, so one that is here
+            // makes the path it came by irrelevant.
+            const FROM_FLOW = /^\s*-\s*\*\*Diagnostics profile\*\*:/im;
+            const outsideTheFlow = context.payload.action === 'opened' && !attached && !FROM_FLOW.test(body);
+
             // This workflow's own voice, so every path is idempotent without a label standing in for one.
             const MARKER = '<!-- report-completeness -->';
             const spoken = comments.some((comment) => (comment.body || '').includes(MARKER));
@@ -123,6 +141,17 @@ jobs:
               .filter((name) => !name.startsWith('Support Case ID'));
 
             const findings = [];
+            if (outsideTheFlow) {
+              findings.push(
+                [
+                  '**This report was not opened from the plugin, so it is closed as it stands.**',
+                  '',
+                  'The plugin writes the report for you. In its dashboard choose **Debug diagnostics**, pick the area that is misbehaving, and follow it through: it hands back an encrypted archive and this form already filled in with your versions. That is the one path that produces a report anyone can act on, and it takes a couple of minutes.',
+                  '',
+                  'Nothing is lost by this — open a fresh one from there. If the plugin cannot produce an archive on your setup, say so in a comment here and someone will pick it up.',
+                ].join('\n'),
+              );
+            }
             if (V4_VERSION.test(body)) {
               findings.push(
                 [
@@ -166,9 +195,17 @@ jobs:
                   '',
                   findings.join('\n\n---\n\n'),
                   '',
-                  'This issue stays open and picks itself back up as soon as that lands.',
+                  outsideTheFlow
+                    ? 'Reopening this one is not the way back — the report the plugin writes is.'
+                    : 'This issue stays open and picks itself back up as soon as that lands.',
                 ].join('\n'),
               });
+            }
+
+            if (outsideTheFlow) {
+              await github.rest.issues.update({ ...request, state: 'closed', state_reason: 'not_planned' });
+              core.warning(`#${issue.number}: closed, opened outside the diagnostics flow`);
+              return;
             }
 
             const labels = (issue.labels || []).map((label) => (typeof label === 'string' ? label : label.name));
