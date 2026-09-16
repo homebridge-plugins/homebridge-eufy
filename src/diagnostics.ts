@@ -1790,7 +1790,11 @@ const LIVE_TRACE_PHASES = {
     const topology = allowlistedLabel(c.topology, ['attached', 'own']);
     const stationAdmin = allowlistedLabel(c.stationAdmin, ['self', 'other', 'unstated']);
     const channel = boundedInteger(c.channel, MAX_STATION_CHANNEL);
-    return topology && stationAdmin && channel !== undefined ? { topology, channel, stationAdmin } : undefined;
+    const stationModel =
+      typeof c.stationModel === 'string' ? boundedText(c.stationModel, MAX_DEVICE_MODEL_LENGTH) : undefined;
+    return topology && stationAdmin && channel !== undefined
+      ? { topology, channel, stationAdmin, ...(stationModel === undefined ? {} : { stationModel }) }
+      : undefined;
   },
   /**
    * How long a connection's path has answered nothing, which is the station stating the path is gone.
