@@ -471,6 +471,7 @@ describe('diagnostic conditions', () => {
       'level2-unavailable': { reason: 'grace-elapsed', waitedMs: 8000 },
       'cipher-fallback': { cipherId: 209, answeredCipherId: 196 },
       'level2-negotiating': { cipherId: 209 },
+      'lookup-channels': { local: true, cloud: false },
       'station-resolved': { topology: 'attached', channel: 2, stationAdmin: 'self', stationModel: 'T8030' },
       warming: { retryMs: 2000, deadlineMs: 20000 },
       'media-command-unsent': { reason: 'level2-key' },

@@ -1786,6 +1786,14 @@ const LIVE_TRACE_PHASES = {
    * never arrived from a start that had no form to be sent in. The channel is an index on a base and the
    * administrator is a relation to the signed-in account: neither is an identity of its own.
    */
+  /**
+   * Which lookup channels a connection could ask for a station on, before it asked.
+   *
+   * A connect that had one channel failed for that channel's reason alone, and a connect that had neither
+   * could not have succeeded. Both are otherwise indistinguishable from a station that is switched off.
+   */
+  'lookup-channels': (c) =>
+    typeof c.local === 'boolean' && typeof c.cloud === 'boolean' ? { local: c.local, cloud: c.cloud } : undefined,
   'station-resolved': (c) => {
     const topology = allowlistedLabel(c.topology, ['attached', 'own']);
     const stationAdmin = allowlistedLabel(c.stationAdmin, ['self', 'other', 'unstated']);
