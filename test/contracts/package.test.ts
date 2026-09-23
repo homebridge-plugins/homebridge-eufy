@@ -1084,6 +1084,7 @@ describe('packed plugin', () => {
         'advancedWarmUpEvent_petDetection',
         'captchaLabel',
         'twoFactorLabel',
+        'twoFactorSent',
         'cameraOwnArming',
         'categoryClean',
         'categoryLife',
@@ -2233,10 +2234,11 @@ describe('packed plugin', () => {
       await twoFactorUi.authForm.dispatch('submit');
       expect(twoFactorUi).toMatchObject({
         authForm: { hidden: true },
-        authStatus: { textContent: 'Synthetic verification' },
+        authStatus: { textContent: catalogs['i18n/en.json'].twoFactorSent },
         challengeForm: { hidden: false },
         challengeImage: { hidden: true },
       });
+      expect(twoFactorUi.authStatus.textContent, 'the SDK describes its wire, not the user').not.toContain('Synthetic');
       await englishUi.browserWindow.dispatch('pagehide');
       expect(englishUi.requests.at(-1), 'leaving the page closes the authentication, whatever ran before it').toEqual({
         path: '/auth/close',

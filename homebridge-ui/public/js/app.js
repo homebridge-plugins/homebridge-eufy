@@ -1056,7 +1056,7 @@ async function handleResult(result) {
     challengeImage.hidden = true;
     challengeLabel.textContent = messages.twoFactorLabel ?? '';
     challengeForm.hidden = false;
-    authStatus.textContent = result.method;
+    authStatus.textContent = messages.twoFactorSent ?? '';
     return;
   }
 

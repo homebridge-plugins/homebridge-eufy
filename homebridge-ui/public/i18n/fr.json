@@ -222,6 +222,7 @@
   "stepDiscover": "Découverte",
   "trustedDeviceLabel": "Nom de l’appareil de confiance",
   "twoFactorLabel": "Code de vérification",
+  "twoFactorSent": "Eufy vous a envoyé un code de vérification. Saisissez-le ci-dessous.",
   "updatePendingAction": "Redémarrer",
   "updatePendingBusy": "Redémarrage…",
   "updatePendingFailed": "Le redémarrage n'a pas pu être lancé. Redémarrez Homebridge pour utiliser la version installée.",
