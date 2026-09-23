@@ -44,6 +44,7 @@
   "brand": "Homebridge Eufy",
   "cameraOwnArming": "Cette caméra apparaît aussi comme son propre système d’alarme. Elle fonctionne sans HomeBase et conserve donc son propre état d’armement au lieu d’en suivre un : c’est pourquoi chaque caméra autonome affiche un système d’alarme distinct dans l’app Maison.",
   "captchaLabel": "Réponse au captcha",
+  "captchaRetry": "Cette réponse n’a pas été acceptée. Saisissez le nouveau captcha.",
   "categoryClean": "Entretien",
   "categoryLife": "Maison",
   "categorySecurity": "Sécurité",

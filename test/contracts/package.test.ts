@@ -1083,6 +1083,7 @@ describe('packed plugin', () => {
         'advancedWarmUpEvent_personDetected',
         'advancedWarmUpEvent_petDetection',
         'captchaLabel',
+        'captchaRetry',
         'twoFactorLabel',
         'twoFactorSent',
         'cameraOwnArming',
@@ -2226,6 +2227,17 @@ describe('packed plugin', () => {
         'synthetic-contact': { represented: false },
       });
       expect(script).not.toContain('appendChild(entry)');
+
+      const captchaRetryUi = await renderUi(script, [], catalogs, 'en', [], {
+        status: 'captcha',
+        image: 'data:image/png;base64,c3ludGhldGlj',
+        retry: true,
+      });
+      await captchaRetryUi.authForm.dispatch('submit');
+      expect(
+        captchaRetryUi.authStatus.textContent,
+        'a refused answer is said to be refused, not replaced by a new image in silence',
+      ).toBe(catalogs['i18n/en.json'].captchaRetry);
 
       const twoFactorUi = await renderUi(script, [], catalogs, 'en', [], {
         status: 'two-factor',

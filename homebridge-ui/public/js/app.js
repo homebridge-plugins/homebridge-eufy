@@ -1047,7 +1047,7 @@ async function handleResult(result) {
     challengeImage.hidden = false;
     challengeLabel.textContent = messages.captchaLabel ?? '';
     challengeForm.hidden = false;
-    authStatus.textContent = '';
+    authStatus.textContent = result.retry ? (messages.captchaRetry ?? '') : '';
     return;
   }
   if (result.status === 'two-factor') {
