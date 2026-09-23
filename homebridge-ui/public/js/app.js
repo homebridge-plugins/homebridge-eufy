@@ -22,6 +22,8 @@ const dashboardTitle = document.querySelector('[data-dashboard-title]');
 const dashboardBadge = document.querySelector('[data-dashboard-badge]');
 const dashboardSummary = document.querySelector('[data-dashboard-summary]');
 const dashboardAuthenticate = document.querySelector('[data-dashboard-authenticate]');
+const reauthDialog = document.querySelector('[data-reauth-dialog]');
+const reauthAction = document.querySelector('[data-reauth-action]');
 const deviceGroups = document.querySelector('[data-device-groups]');
 const updatePending = document.querySelector('[data-update-pending]');
 const updatePendingSummary = document.querySelector('[data-update-pending-summary]');
@@ -960,7 +962,7 @@ dashboardView.bindPreferences(dashboardElements, configuredBlock, updateConfig, 
   openDashboardPanel(devicePanel, trigger);
 });
 
-dashboardAuthenticate.addEventListener('click', () => {
+function openAuthentication() {
   diagnosticsPanel.hidden = true;
   advancedPanel.hidden = true;
   dashboard.hidden = true;
@@ -969,6 +971,16 @@ dashboardAuthenticate.addEventListener('click', () => {
   pageTitle.textContent = messages.pageTitle;
   accountInput.focus?.();
   recordActiveUiEventBestEffort('authentication-opened');
+}
+
+dashboardAuthenticate.addEventListener('click', openAuthentication);
+
+// A saved session the plugin can no longer use stops every device, so nothing on the page works until the user
+// signs in again. The dialog says so in front of everything else, and Escape does not dismiss it.
+reauthDialog.addEventListener('cancel', (event) => event.preventDefault());
+reauthAction.addEventListener('click', () => {
+  reauthDialog.close?.();
+  openAuthentication();
 });
 
 legacyAcknowledge.addEventListener('click', async () => {
@@ -1013,6 +1025,9 @@ async function showDashboard() {
     // Kept beside the render that drew them, so opening a tile finds the device that tile stands for.
     dashboardDevices = snapshot.devices ?? [];
     dashboardView.render(snapshot, configuredBlock() ?? {}, messages, dashboardElements);
+    if (snapshot.state === 'authentication-required' && snapshot.devices?.length > 0 && !reauthDialog.open) {
+      reauthDialog.showModal?.();
+    }
     // The image pass runs beside the rendered dashboard, so its failure is dropped here rather than escaping.
     void dashboardView
       .applyDeviceImages(dashboardElements, (serial) => requestWithinDeadline('/device/image', { serial }, 12000))
@@ -1032,7 +1047,7 @@ async function handleResult(result) {
     challengeImage.hidden = false;
     challengeLabel.textContent = messages.captchaLabel ?? '';
     challengeForm.hidden = false;
-    authStatus.textContent = '';
+    authStatus.textContent = result.retry ? (messages.captchaRetry ?? '') : '';
     return;
   }
   if (result.status === 'two-factor') {
@@ -1041,7 +1056,7 @@ async function handleResult(result) {
     challengeImage.hidden = true;
     challengeLabel.textContent = messages.twoFactorLabel ?? '';
     challengeForm.hidden = false;
-    authStatus.textContent = result.method;
+    authStatus.textContent = messages.twoFactorSent ?? '';
     return;
   }
 

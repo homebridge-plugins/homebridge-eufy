@@ -233,18 +233,6 @@ function stateOf(evidence: Pick<RuntimeTrackerRecord, 'state' | 'status' | 'comp
 }
 
 /**
- * Projects one persisted runtime snapshot without opening an Eufy connection.
- *
- * The devices only ever come from a published inventory, which is the allowlisted read model and the one
- * thing a stale or degraded runtime retains. The runtime's state is the live one whenever a runtime is there
- * to state it, and the file's own state and freshness alone when none is.
- *
- * An inventory committed for an account no runtime has started is shown as `restart-required`. That is the state
- * after an interactive authentication, which discovers the account's devices and commits them with the
- * generation, and on a first setup: the devices are known, and nothing about them is live until Homebridge
- * restarts. Whenever the published record names the account that is active, none of this applies.
- */
-/**
  * What the running build is, where it is not the one this process loaded.
  *
  * The comparison is only ever between two builds that both said which they are, so a runtime predating the field
@@ -258,6 +246,21 @@ function superseded(live: RuntimeChannelReading): { runningVersion?: string; res
   return { runningVersion: live.version, restartable: live.restartable === true };
 }
 
+/**
+ * Projects one persisted runtime snapshot without opening an Eufy connection.
+ *
+ * The devices only ever come from a published inventory, which is the allowlisted read model and the one
+ * thing a stale or degraded runtime retains. The runtime's state is the live one whenever a runtime is there
+ * to state it, and the file's own state and freshness alone when none is.
+ *
+ * A published `authentication-required` never ages into `stale`. The runtime stops publishing once it reaches
+ * that state, and the state stays true until the account is authenticated again.
+ *
+ * An inventory committed for an account no runtime has started is shown as `restart-required`. That is the state
+ * after an interactive authentication, which discovers the account's devices and commits them with the
+ * generation, and on a first setup: the devices are known, and nothing about them is live until Homebridge
+ * restarts. Whenever the published record names the account that is active, none of this applies.
+ */
 export async function readDashboard(
   tracker: DashboardTracker,
   now: () => number = Date.now,
@@ -297,7 +300,10 @@ export async function readDashboard(
       ...superseded(live),
     };
   }
-  if (!Number.isFinite(updatedAt) || age < -5_000 || age > DASHBOARD_FRESH_THRESHOLD_MS) {
+  if (
+    record.state !== 'authentication-required' &&
+    (!Number.isFinite(updatedAt) || age < -5_000 || age > DASHBOARD_FRESH_THRESHOLD_MS)
+  ) {
     return { state: 'stale', updatedAt: record.updatedAt, devices, warmUpCandidates };
   }
   return { state: stateOf(record), updatedAt: record.updatedAt, devices, warmUpCandidates };

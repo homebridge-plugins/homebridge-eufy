@@ -132,6 +132,12 @@ The canonical vocabulary is defined in [CONTEXT.md](./CONTEXT.md).
   will not start, a deliberate stop, and an upgrade without a restart.
 - The dashboard consumes runtime summaries or deliberate one-shot reads; it must not recreate a
   second capability model from SDK internals.
+- A problem the plugin detects is stated where the user already is, together with the one action that
+  resolves it. A state the user must act on, such as a session that needs a new sign-in, is put in
+  front of the page as a blocking dialog leading to that action, and in the Homebridge log that names
+  the same action. It is never left for the user to find in documentation, release notes, or a
+  diagnostic run. A published state the runtime stops refreshing because it is waiting on the user
+  does not age into `stale`.
 - IPC has bounded connection and response timeouts. A bound socket is not readiness; expose an
   explicit ready state.
 - Diagnostics are allowlisted and redacted. Device serials, P2P identifiers, account and user IDs,

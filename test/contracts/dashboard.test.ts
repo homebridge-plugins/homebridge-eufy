@@ -53,6 +53,26 @@ function record(update: Partial<RuntimeTrackerRecord> = {}): RuntimeTrackerRecor
 }
 
 describe('snapshot-driven dashboard', () => {
+  /**
+   * A runtime stops publishing once it needs authentication, so its record only gets older. Age says nothing about
+   * that state: it stays true until the account signs in again, and reading it as `stale` hides the remedy.
+   */
+  it('keeps a published authentication-required however old the record is', async () => {
+    await expect(
+      readDashboard(
+        {
+          read: async () =>
+            record({
+              state: 'authentication-required',
+              status: 'authentication-required',
+              updatedAt: '2026-08-13T11:00:00.000Z',
+            }),
+        },
+        () => Date.parse('2026-08-13T12:00:00.000Z'),
+      ),
+    ).resolves.toMatchObject({ state: 'authentication-required' });
+  });
+
   it('classifies tracker fixtures without creating an SDK client', async () => {
     const now = () => Date.parse('2026-08-13T12:00:30.000Z');
     const clientFactory = vi.fn();
