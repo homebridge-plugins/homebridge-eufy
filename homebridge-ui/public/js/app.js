@@ -33,6 +33,7 @@ const pageTitle = document.querySelector('[data-page-title]');
 const legacyNotice = document.querySelector('[data-legacy-notice]');
 const legacySettings = document.querySelector('[data-legacy-settings]');
 const legacyAcknowledge = document.querySelector('[data-legacy-acknowledge]');
+const legacyStatus = document.querySelector('[data-legacy-status]');
 const menuDiagnostics = document.querySelector('[data-menu-diagnostics]');
 const menuAdvanced = document.querySelector('[data-menu-advanced]');
 const diagnosticsPanel = document.querySelector('[data-diagnostics]');
@@ -133,10 +134,12 @@ const dashboardElements = {
   masthead,
 };
 
+const REQUEST_TIMED_OUT = 'Request timed out';
+
 function requestWithinDeadline(path, body, timeoutMs = 320000) {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error('Request timed out')), timeoutMs);
+    timer = setTimeout(() => reject(new Error(REQUEST_TIMED_OUT)), timeoutMs);
   });
   return Promise.race([homebridge.request(path, body), timeout]).finally(() => clearTimeout(timer));
 }
@@ -153,6 +156,11 @@ async function recordActiveUiEvent(event) {
 function recordActiveUiEventBestEffort(event) {
   void recordActiveUiEvent(event).catch(() => undefined);
 }
+
+/** A country code that is not two letters is refused where it is typed, in the page's own words. */
+countryInput.addEventListener('input', () => {
+  countryInput.setCustomValidity(countryInput.validity.patternMismatch ? (messages.countryInvalid ?? '') : '');
+});
 
 acknowledgement.addEventListener('change', () => {
   continueButton.disabled = !acknowledgement.checked;
@@ -990,12 +998,19 @@ legacyAcknowledge.addEventListener('click', async () => {
     try {
       await updateConfig({ ...existing, discardedV4Settings: legacyNames, discardedV4Acknowledged: true });
     } catch {
+      legacyStatus.textContent = messages.preferenceSaveFailed ?? '';
       return;
     }
   }
   legacyNotice.hidden = true;
 });
 
+/**
+ * Writes the signed-in account into the Homebridge configuration, reporting whether it was saved.
+ *
+ * The Save button is enabled before the attempt and never disabled by it, so a write that fails leaves the user
+ * the one control that retries it.
+ */
 async function saveAuthenticatedConfig() {
   homebridge.enableSaveButton();
   try {
@@ -1004,7 +1019,9 @@ async function saveAuthenticatedConfig() {
     pluginConfig = [pendingConfig];
     savedConfigSignature = configSignature(pluginConfig);
     homebridge.enableSaveButton();
+    return true;
   } catch {
+    return false;
   } finally {
     passwordInput.value = '';
     pendingConfig = undefined;
@@ -1039,6 +1056,14 @@ async function showDashboard() {
   recordActiveUiEventBestEffort('dashboard-opened');
 }
 
+/** The message each unsuccessful sign-in outcome is stated with; any other outcome is a failed sign-in. */
+const AUTH_OUTCOMES = {
+  blocked: 'dashboardOwnerConflictSummary',
+  'plugin-running': 'authPluginRunning',
+  'commit-failed': 'authCommitFailed',
+  'timed-out': 'authTimedOut',
+};
+
 async function handleResult(result) {
   if (result.status === 'captcha') {
     challenge = 'captcha';
@@ -1064,19 +1089,19 @@ async function handleResult(result) {
   if (result.status === 'restart-required') {
     authForm.hidden = true;
     authStatus.textContent = messages.authSuccess ?? '';
-    await saveAuthenticatedConfig();
     // The devices this sign-in discovered are already recorded, so the flow ends on them rather than on a notice.
-    await showDashboard();
-  } else if (result.status === 'blocked' || result.status === 'plugin-running') {
-    authForm.hidden = false;
-    authStatus.textContent = messages.authBlocked ?? '';
-  } else if (result.status === 'timed-out') {
-    authForm.hidden = false;
-    authStatus.textContent = messages.authTimedOut ?? '';
+    if (await saveAuthenticatedConfig()) await showDashboard();
+    else authStatus.textContent = messages.authSaveFailed ?? '';
   } else {
     authForm.hidden = false;
-    authStatus.textContent = messages.authFailed ?? '';
+    authStatus.textContent = messages[AUTH_OUTCOMES[result.status] ?? 'authFailed'] ?? '';
   }
+}
+
+/** A sign-in request that did not come back: the page's own deadline elapsing is said to be a timeout. */
+function reportAuthRequestFailure(error) {
+  authStatus.textContent = messages[error?.message === REQUEST_TIMED_OUT ? 'authTimedOut' : 'authFailed'] ?? '';
+  recordActiveUiEventBestEffort('request-failed');
 }
 
 authForm.addEventListener('submit', async (event) => {
@@ -1107,9 +1132,8 @@ authForm.addEventListener('submit', async (event) => {
   setBusy(true);
   try {
     await handleResult(await requestWithinDeadline('/auth/start', { configuration: pendingConfig }));
-  } catch {
-    authStatus.textContent = messages.authFailed ?? '';
-    recordActiveUiEventBestEffort('request-failed');
+  } catch (error) {
+    reportAuthRequestFailure(error);
   } finally {
     setBusy(false);
   }
@@ -1123,9 +1147,8 @@ challengeForm.addEventListener('submit', async (event) => {
   setBusy(true);
   try {
     await handleResult(await requestWithinDeadline(path, body));
-  } catch {
-    authStatus.textContent = messages.authFailed ?? '';
-    recordActiveUiEventBestEffort('request-failed');
+  } catch (error) {
+    reportAuthRequestFailure(error);
   } finally {
     setBusy(false);
   }

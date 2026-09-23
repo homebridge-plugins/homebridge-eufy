@@ -120,6 +120,7 @@ export type TemporaryAuthenticationResult =
   | { status: 'blocked'; owner: AccountOwnerEvidence }
   | ({ status: 'plugin-running' } & TemporaryRuntimeEvidence)
   | { status: 'failed' }
+  | { status: 'commit-failed' }
   | { status: 'timed-out' }
   | { status: 'closed' };
 
@@ -337,7 +338,9 @@ export class TemporaryAuthentication {
     this.stores!.snapshot.save(snapshot);
     this.state = 'settled';
     const cleaned = await this.cleanup(true);
-    const terminalResult: TemporaryAuthenticationResult = { status: cleaned ? 'restart-required' : 'failed' };
+    const terminalResult: TemporaryAuthenticationResult = {
+      status: cleaned ? 'restart-required' : 'commit-failed',
+    };
     this.terminalResult = terminalResult;
     return terminalResult;
   }

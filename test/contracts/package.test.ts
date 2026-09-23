@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 interface PackResult {
   filename: string;
@@ -80,7 +80,17 @@ async function renderUi(
   const challengeForm = interactiveElement({ hidden: true });
   const account = { value: '' };
   const password = { value: '' };
-  const country = { value: '' };
+  /** The country field. `validity` answers the markup's two-letter pattern the way a browser does. */
+  const country = interactiveElement({
+    value: '',
+    validityMessage: '',
+    get validity() {
+      return { patternMismatch: this.value !== '' && !/^[A-Za-z]{2}$/.test(this.value) };
+    },
+    setCustomValidity(message: string) {
+      this.validityMessage = message;
+    },
+  });
   const trustedDeviceName = { value: '' };
   const challengeAnswer = { value: '' };
   const challengeImage = { hidden: true, src: '' };
@@ -117,6 +127,7 @@ async function renderUi(
   const legacyNotice = { hidden: true };
   const legacySettings = { textContent: '' };
   const legacyAcknowledge = interactiveElement({});
+  const legacyStatus = { textContent: '' };
   const menuDiagnostics = labelledElement();
   const mastheadDiagnostics = labelledElement();
   const menuAdvanced = interactiveElement({});
@@ -287,6 +298,7 @@ async function renderUi(
   let saves = 0;
   let saveButtonDisables = 0;
   let saveButtonEnables = 0;
+  let configWritesFail = false;
   let diagnosticsReproductionMode = 'now';
   let diagnosticsSelectedProfile = 'control-state';
   const translatedNodes = translationKeys.map((key) => ({ dataset: { i18n: key }, textContent: '__untranslated__' }));
@@ -348,6 +360,7 @@ async function renderUi(
           '[data-legacy-notice]': legacyNotice,
           '[data-legacy-settings]': legacySettings,
           '[data-legacy-acknowledge]': legacyAcknowledge,
+          '[data-legacy-status]': legacyStatus,
           '[data-menu-diagnostics]': menuDiagnostics,
           '[data-masthead-diagnostics]': mastheadDiagnostics,
           '[data-menu-advanced]': menuAdvanced,
@@ -568,9 +581,11 @@ async function renderUi(
         return { status: 'restart-required' };
       },
       savePluginConfig: async () => {
+        if (configWritesFail) throw new Error('synthetic save failure');
         saves++;
       },
       updatePluginConfig: async (config: Array<Record<string, unknown>>) => {
+        if (configWritesFail) throw new Error('synthetic update failure');
         updatedConfig = config;
         return config;
       },
@@ -666,6 +681,7 @@ async function renderUi(
     advancedStatus,
     legacyAcknowledge,
     legacyNotice,
+    legacyStatus,
     legacySettings,
     createdElements,
     requests,
@@ -683,6 +699,10 @@ async function renderUi(
     },
     get updatedConfig() {
       return updatedConfig;
+    },
+    /** Makes every later configuration write the page attempts fail, as a Homebridge that cannot save would. */
+    set configWritesFail(fail: boolean) {
+      configWritesFail = fail;
     },
     trustedDeviceName,
     browserWindow,
@@ -1069,10 +1089,13 @@ describe('packed plugin', () => {
       const expectedCatalogKeys = [
         ...translationKeys,
         ...translatedLabelKeys,
-        'authBlocked',
+        'authCommitFailed',
         'authFailed',
+        'authPluginRunning',
+        'authSaveFailed',
         'authSuccess',
         'authTimedOut',
+        'countryInvalid',
         'advancedSaveFailed',
         'advancedPollingInvalid',
         'advancedConcurrentMediaInvalid',
@@ -2251,6 +2274,82 @@ describe('packed plugin', () => {
         challengeImage: { hidden: true },
       });
       expect(twoFactorUi.authStatus.textContent, 'the SDK describes its wire, not the user').not.toContain('Synthetic');
+
+      /**
+       * An unsuccessful sign-in names its own cause and the action for it, rather than one message for every cause.
+       */
+      for (const [status, key] of [
+        ['blocked', 'dashboardOwnerConflictSummary'],
+        ['plugin-running', 'authPluginRunning'],
+        ['commit-failed', 'authCommitFailed'],
+      ] as const) {
+        const outcomeUi = await renderUi(script, [], catalogs, 'en', [], { status });
+        await outcomeUi.authForm.dispatch('submit');
+        expect(outcomeUi.authStatus.textContent, `${status} is stated as its own cause`).toBe(
+          catalogs['i18n/en.json'][key],
+        );
+      }
+
+      /** The page's own deadline elapsing is a timeout, and is said to be one. */
+      vi.useFakeTimers();
+      try {
+        const unansweredUi = await renderUi(
+          script,
+          [],
+          catalogs,
+          'en',
+          [],
+          new Promise(() => undefined) as unknown as Record<string, unknown>,
+        );
+        const submitted = unansweredUi.authForm.dispatch('submit');
+        await vi.advanceTimersByTimeAsync(320_000);
+        await submitted;
+        expect(unansweredUi.authStatus.textContent, 'an unanswered sign-in timed out').toBe(
+          catalogs['i18n/en.json'].authTimedOut,
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+
+      /** A country code that is not two letters is refused where it is typed, in the page's words. */
+      expect(document).toContain('pattern="[A-Za-z]{2}"');
+      const countryUi = await renderUi(script, [], catalogs);
+      countryUi.country.value = 'U1';
+      await countryUi.country.dispatch('input');
+      expect(countryUi.country.validityMessage, 'a malformed code is refused').toBe(
+        catalogs['i18n/en.json'].countryInvalid,
+      );
+      countryUi.country.value = 'fr';
+      await countryUi.country.dispatch('input');
+      expect(countryUi.country.validityMessage, 'a two-letter code is accepted').toBe('');
+
+      /**
+       * A sign-in whose settings could not be written says so and stays on the page, with Save left enabled, rather
+       * than moving on as if the account were saved.
+       */
+      const unsavedUi = await renderUi(script, [], catalogs, 'en', [], { status: 'restart-required' });
+      unsavedUi.configWritesFail = true;
+      await unsavedUi.authForm.dispatch('submit');
+      expect(unsavedUi).toMatchObject({
+        authStatus: { textContent: catalogs['i18n/en.json'].authSaveFailed },
+        dashboard: { hidden: true },
+        saveButtonDisables: 1,
+        saveButtonEnables: 1,
+      });
+      expect(unsavedUi.requests.map(({ path }) => path)).not.toContain('/dashboard');
+
+      /** An acknowledgement that could not be saved says so in the notice, which stays up to be acknowledged again. */
+      const unacknowledgedUi = await renderUi(
+        script,
+        [{ platform: 'HomebridgeEufy', username: 'guest@example.invalid', discardedV4Settings: ['cameras'] }],
+        catalogs,
+      );
+      unacknowledgedUi.configWritesFail = true;
+      await unacknowledgedUi.legacyAcknowledge.dispatch('click');
+      expect(unacknowledgedUi).toMatchObject({
+        legacyNotice: { hidden: false },
+        legacyStatus: { textContent: catalogs['i18n/en.json'].preferenceSaveFailed },
+      });
       await englishUi.browserWindow.dispatch('pagehide');
       expect(englishUi.requests.at(-1), 'leaving the page closes the authentication, whatever ran before it').toEqual({
         path: '/auth/close',
