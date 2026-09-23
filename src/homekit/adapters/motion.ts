@@ -23,11 +23,11 @@ export const MOTION_EVENT_REQUIREMENTS = [
   { capability: 'motion', eventName: 'motion' },
   { capability: 'motion', eventName: 'cryingDetected' },
   { capability: 'motion', eventName: 'soundDetected' },
+  { capability: 'motion', eventName: 'petDetection' },
   { capability: 'motion', eventName: 'vehicleDetected' },
   { capability: 'motion', eventName: 'dogDetected' },
   { capability: 'person_detection', eventName: 'personDetected' },
   { capability: 'person_detection', eventName: 'strangerDetected' },
-  { capability: 'doorbell', eventName: 'petDetection' },
 ] as const satisfies readonly { capability: string; eventName: AnyDeviceEvent['eventName'] }[];
 
 /** Whether a device reports at least one detection event this adapter admits as motion. */

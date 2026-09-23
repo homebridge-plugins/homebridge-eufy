@@ -132,8 +132,12 @@ describe('snapshot-driven dashboard', () => {
   it('offers only the events HomeKit answers by asking for media', async () => {
     const camera = manifest('camera', 'motion');
     camera.details = [
-      { ...camera.details[0]!, capability: 'motion', events: ['motion', 'vehicleDetected', 'cryingDetected'] },
-      { ...camera.details[0]!, capability: 'doorbell', events: ['doorbellPress', 'petDetection'] },
+      {
+        ...camera.details[0]!,
+        capability: 'motion',
+        events: ['motion', 'vehicleDetected', 'cryingDetected', 'petDetection'],
+      },
+      { ...camera.details[0]!, capability: 'doorbell', events: ['doorbellPress'] },
       { ...camera.details[0]!, capability: 'person_detection', events: ['personDetected', 'strangerDetected'] },
       { ...camera.details[0]!, capability: 'battery', events: ['batteryAlert'] },
       { ...camera.details[0]!, capability: 'arming', events: ['alarm', 'armingMode'] },

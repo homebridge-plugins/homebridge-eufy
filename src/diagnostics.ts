@@ -1814,6 +1814,14 @@ const LIVE_TRACE_PHASES = {
       : undefined;
   },
   /**
+   * Why a device could not be addressed on its station: its record states no channel, or another attached
+   * device states the same one. The call was refused before anything was sent.
+   */
+  'station-channel-unresolved': (c) => {
+    const issue = allowlistedLabel(c.issue, ['missing', 'shared']);
+    return issue ? { issue } : undefined;
+  },
+  /**
    * How long a connection's path has answered nothing, which is the station stating the path is gone.
    *
    * A duration, so it is retained as a bounded tally. Its bound is the warm-up window a start is given: a
