@@ -823,6 +823,28 @@ button.diagnostics-quiet-action {
   background: color-mix(in srgb, var(--alert) 26%, var(--panel));
 }
 
+.reauth-dialog {
+  max-width: 420px;
+  border: 1px solid var(--alert);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 24px;
+}
+
+.reauth-dialog::backdrop {
+  background: rgb(0 0 0 / 55%);
+}
+
+.reauth-dialog h2 {
+  margin: 0 0 8px;
+}
+
+.reauth-dialog p {
+  margin: 0 0 20px;
+  color: var(--ink-secondary);
+}
+
 .device-group + .device-group {
   margin-top: 24px;
 }

@@ -94,6 +94,17 @@ async function renderUi(
   const dashboardDiagnose = interactiveElement({ hidden: true });
   const dashboardSummary = { hidden: false, textContent: '' };
   const dashboardAuthenticate = interactiveElement({ hidden: true });
+  /** The blocking sign-in dialog. `showModal` and `close` flip `open` the way a browser's dialog does. */
+  const reauthDialog = interactiveElement({
+    open: false,
+    showModal() {
+      this.open = true;
+    },
+    close() {
+      this.open = false;
+    },
+  });
+  const reauthAction = interactiveElement({});
   /**
    * The container the dashboard draws device tiles into.
    *
@@ -330,6 +341,8 @@ async function renderUi(
           '[data-dashboard-diagnose]': dashboardDiagnose,
           '[data-dashboard-summary]': dashboardSummary,
           '[data-dashboard-authenticate]': dashboardAuthenticate,
+          '[data-reauth-dialog]': reauthDialog,
+          '[data-reauth-action]': reauthAction,
           '[data-device-groups]': deviceGroups,
           '[data-page-title]': pageTitle,
           '[data-legacy-notice]': legacyNotice,
@@ -585,6 +598,8 @@ async function renderUi(
     dashboardDiagnose,
     dashboardSummary,
     dashboardAuthenticate,
+    reauthDialog,
+    reauthAction,
     dashboardTitle,
     deviceGroups,
     devicePanel,
@@ -1018,6 +1033,9 @@ describe('packed plugin', () => {
           'oneAccountSession',
           'pageTitle',
           'passwordLabel',
+          'reauthAction',
+          'reauthSummary',
+          'reauthTitle',
           'legacyEyebrow',
           'legacySummary',
           'legacyTitle',
@@ -1590,6 +1608,54 @@ describe('packed plugin', () => {
         { state: 'authentication-required', devices: [] },
       );
       expect(signingInUi.setupContent.hidden, 'a dashboard that needs a sign-in shows the sign-in').toBe(false);
+      expect(signingInUi.reauthDialog.open, 'the sign-in is already the page, so nothing blocks it').toBe(false);
+
+      /**
+       * A runtime that stopped on a session it can no longer use still knows the account's devices, so the page
+       * would otherwise show them as if nothing were wrong. A dialog in front of everything says what happened and
+       * leads to the sign-in; Escape does not dismiss it.
+       */
+      const sessionLostUi = await renderUi(
+        script,
+        [{ platform: 'HomebridgeEufy', username: 'guest@example.invalid' }],
+        catalogs,
+        'en',
+        [],
+        undefined,
+        {
+          state: 'authentication-required',
+          devices: [
+            {
+              serial: 'synthetic-camera',
+              name: 'Entry camera',
+              modelName: 'Synthetic camera',
+              category: 'security',
+              deviceClass: 'camera',
+              recognized: true,
+              represented: true,
+              controllable: false,
+              diagnosticOnly: false,
+              preferences: ['represented'],
+            },
+          ],
+        },
+      );
+      expect(sessionLostUi.reauthDialog.open, 'a lost session with known devices blocks the page').toBe(true);
+
+      let dismissed = true;
+      await sessionLostUi.reauthDialog.dispatch('cancel', {
+        preventDefault() {
+          dismissed = false;
+        },
+      });
+      expect(dismissed, 'Escape does not dismiss the dialog').toBe(false);
+
+      await sessionLostUi.reauthAction.dispatch('click');
+      expect(sessionLostUi).toMatchObject({
+        reauthDialog: { open: false },
+        dashboard: { hidden: true },
+        setupContent: { hidden: false },
+      });
 
       await signingInUi.menuDiagnostics.dispatch('click');
 
