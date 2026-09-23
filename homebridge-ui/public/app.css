@@ -825,15 +825,17 @@ button.diagnostics-quiet-action {
 
 .reauth-dialog {
   max-width: 420px;
-  border: 1px solid var(--alert);
-  border-radius: var(--radius-sm);
+  border: 0;
+  border-radius: var(--radius-panel);
   background: var(--panel);
+  box-shadow: var(--shadow-overlay);
   color: var(--ink);
   padding: 24px;
 }
 
 .reauth-dialog::backdrop {
-  background: rgb(0 0 0 / 55%);
+  background: rgb(0 0 0 / 30%);
+  backdrop-filter: blur(5px);
 }
 
 .reauth-dialog h2 {
