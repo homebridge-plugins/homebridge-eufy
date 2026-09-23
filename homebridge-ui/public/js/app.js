@@ -1050,7 +1050,7 @@ async function showDashboard() {
       .applyDeviceImages(dashboardElements, (serial) => requestWithinDeadline('/device/image', { serial }, 12000))
       .catch(() => undefined);
   } catch {
-    dashboardView.render({ state: 'missing', devices: [] }, configuredBlock() ?? {}, messages, dashboardElements);
+    dashboardView.render({ state: 'unreachable', devices: [] }, configuredBlock() ?? {}, messages, dashboardElements);
     recordActiveUiEventBestEffort('request-failed');
   }
   recordActiveUiEventBestEffort('dashboard-opened');

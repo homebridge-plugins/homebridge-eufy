@@ -1117,6 +1117,8 @@ describe('packed plugin', () => {
         'dashboardAuthenticationRequiredTitle',
         'dashboardDegradedSummary',
         'dashboardDegradedTitle',
+        'dashboardFailedSummary',
+        'dashboardFailedTitle',
         'dashboardIncompleteSummary',
         'dashboardIncompleteTitle',
         'dashboardMissingSummary',
@@ -1130,6 +1132,8 @@ describe('packed plugin', () => {
         'dashboardRestartRequiredTitle',
         'dashboardStaleSummary',
         'dashboardStaleTitle',
+        'dashboardUnreachableSummary',
+        'dashboardUnreachableTitle',
         'diagnosticDescription',
         'diagnosticNoAction',
         'diagnosticOnly',
@@ -2105,7 +2109,7 @@ describe('packed plugin', () => {
       );
       expect(dashboardUi).toMatchObject({
         dashboard: { hidden: false, dataset: { state: 'degraded' } },
-        dashboardDiagnose: { hidden: false },
+        dashboardDiagnose: { hidden: true },
         setupContent: { hidden: true },
       });
       expect(dashboardUi.deviceGroups.innerHTML).toContain('Front contact');
@@ -2274,6 +2278,37 @@ describe('packed plugin', () => {
         challengeImage: { hidden: true },
       });
       expect(twoFactorUi.authStatus.textContent, 'the SDK describes its wire, not the user').not.toContain('Synthetic');
+
+      /**
+       * A plugin that stopped on an error, and a page whose own request for the devices went unanswered, each state
+       * their cause and remedy rather than reading as a first run or offering a diagnostic run.
+       */
+      for (const [state, snapshot] of [
+        ['failed', { state: 'failed', devices: [] }],
+        [
+          'unreachable',
+          {
+            then: (_: unknown, reject: (error: Error) => void) => reject(new Error('synthetic unanswered request')),
+          },
+        ],
+      ] as const) {
+        const stateUi = await renderUi(
+          script,
+          [{ platform: 'HomebridgeEufy', username: 'guest@example.invalid' }],
+          catalogs,
+          'en',
+          [],
+          undefined,
+          snapshot as unknown as Record<string, unknown>,
+        );
+        const suffix = state[0].toUpperCase() + state.slice(1);
+        expect(stateUi, `${state} names its own cause and remedy`).toMatchObject({
+          dashboard: { dataset: { state } },
+          dashboardTitle: { textContent: catalogs['i18n/en.json'][`dashboard${suffix}Title`] },
+          dashboardSummary: { textContent: catalogs['i18n/en.json'][`dashboard${suffix}Summary`] },
+          dashboardDiagnose: { hidden: true },
+        });
+      }
 
       /**
        * An unsuccessful sign-in names its own cause and the action for it, rather than one message for every cause.
