@@ -47,17 +47,17 @@
   ],
   "dependencies": {
     "@homebridge/plugin-ui-utils": "^2.2.6",
-    "@mega-yfue/eufy-sdk": "0.2.0-beta.14",
+    "@mega-yfue/eufy-sdk": "0.2.0",
     "ffmpeg-for-homebridge": "2.2.2"
   },
   "devDependencies": {
-    "@homebridge/hap-nodejs": "2.2.2",
-    "@types/node": "^26.4.1",
+    "@homebridge/hap-nodejs": "2.2.3",
+    "@types/node": "^26.6.2",
     "homebridge": "^2.4.0",
-    "prettier": "^3.9.6",
+    "prettier": "^3.9.9",
     "rimraf": "^6.1.3",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.1"
   },
   "homepage": "https://homebridge-plugins.github.io/homebridge-eufy/",
   "author": "homebridge-eufy",
