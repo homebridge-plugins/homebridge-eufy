@@ -2282,7 +2282,7 @@ const RUNTIME_CONDITIONS = {
   },
 } as const;
 const HOMEKIT_CONDITIONS = {
-  'recognized-device-not-represented': ['log.homekit.recognizedNotRepresented', 'log.action.openDashboard'],
+  'recognized-device-not-represented': ['log.homekit.recognizedNotRepresented', 'log.action.notSupportedYet'],
   'battery-capability-unavailable': ['log.homekit.batteryCapabilityUnavailable', 'log.action.waitBattery'],
   'invalid-battery-observation': ['log.homekit.invalidBatteryObservation', 'log.action.waitBatteryObservation'],
   'battery-temperature-alert': ['log.homekit.batteryTemperatureAlert', 'log.action.allowBatteryCooling'],
@@ -2295,7 +2295,7 @@ const HOMEKIT_CONDITIONS = {
   'smart-light-operation-failed': ['log.homekit.lightOperationFailed', 'log.action.retryLight'],
   'smart-light-reconciliation-expired': ['log.homekit.lightReconciliationExpired', 'log.action.checkPhysicalLight'],
   'arming-capability-unavailable': ['log.homekit.armingCapabilityUnavailable', 'log.action.waitArming'],
-  'unsupported-arming-mode': ['log.homekit.unsupportedArmingMode', 'log.action.selectSupportedArmingMode'],
+  'unsupported-arming-mode': ['log.homekit.unsupportedArmingMode', 'log.action.mapArmingMode'],
   'arming-operation-failed': ['log.homekit.armingOperationFailed', 'log.action.retryArming'],
   'arming-reconciliation-expired': ['log.homekit.armingReconciliationExpired', 'log.action.checkPhysicalArmingMode'],
   'lock-capability-unavailable': ['log.homekit.lockCapabilityUnavailable', 'log.action.waitLock'],
@@ -2331,6 +2331,33 @@ const HOMEKIT_CONDITIONS = {
 } as const;
 
 type HomeKitConditionCode = keyof typeof HOMEKIT_CONDITIONS;
+
+/**
+ * The action a HomeKit condition names for a reason whose remedy is not the condition's own, keyed `code:reason`.
+ *
+ * A camera adapter is missing only where no FFmpeg path resolved, and an adaptation fails to spawn only where the
+ * path cannot be run, so both are fixed in the plugin's settings rather than waited out.
+ */
+const HOMEKIT_REASON_ACTIONS: Readonly<Record<string, string>> = {
+  'camera-streaming-capability-unavailable:adapter-missing': 'log.action.setFfmpegPath',
+  'camera-recording-unavailable:adapter-missing': 'log.action.setFfmpegPath',
+  'camera-live-session-failed:adaptation-spawn-failed': 'log.action.checkFfmpegPath',
+};
+
+/** HomeKit conditions that state a gap nothing in the user's setup closes, so an active one is not a warning. */
+const INFORMATIONAL_HOMEKIT_CONDITIONS = new Set<HomeKitConditionCode>(['recognized-device-not-represented']);
+
+/** The level and action one HomeKit condition is written with, decided once for the console and the record. */
+function homeKitConditionPresentation(
+  code: HomeKitConditionCode,
+  active: boolean,
+  reason: string,
+): { level: 'info' | 'warn'; actionKey: string } {
+  return {
+    level: active && !INFORMATIONAL_HOMEKIT_CONDITIONS.has(code) ? 'warn' : 'info',
+    actionKey: HOMEKIT_REASON_ACTIONS[`${code}:${reason}`] ?? HOMEKIT_CONDITIONS[code][1],
+  };
+}
 
 function sanitizeStructuredEvent(message: string): Record<string, unknown> | undefined {
   let value: Record<string, unknown>;
@@ -2495,14 +2522,19 @@ function sanitizeStructuredEvent(message: string): Record<string, unknown> | und
           .filter((alias): alias is string => typeof alias === 'string' && /^accessory-[0-9a-f-]{36}$/.test(alias))
           .slice(0, MAX_ACCESSORY_ALIASES)
       : [];
+    const { level: conditionLevel, actionKey } = homeKitConditionPresentation(
+      value.code as HomeKitConditionCode,
+      value.active,
+      value.reason,
+    );
     return {
       scope: 'diagnostic-condition',
-      level: value.active ? 'warn' : 'info',
+      level: conditionLevel,
       code: value.code,
       active: value.active,
       reason: value.reason,
       summaryKey: homeKitDefinition![0],
-      actionKey: homeKitDefinition![1],
+      actionKey,
       ...(typeof value.capability === 'string' && CAPABILITIES.has(value.capability)
         ? { capability: value.capability }
         : {}),
@@ -2990,13 +3022,18 @@ export class DiagnosticConditions {
       .map((identity) => this.aliasFor(identity))
       .filter((alias): alias is string => alias !== undefined)
       .sort();
+    const { level, actionKey } = homeKitConditionPresentation(
+      condition.code as HomeKitConditionCode,
+      condition.active,
+      condition.reason,
+    );
     this.write(
       condition.code,
       condition.active,
       condition.reason,
       definition[0],
-      definition[1],
-      condition.active ? 'warn' : 'info',
+      actionKey,
+      level,
       {
         ...(condition.capability === undefined ? {} : { capability: condition.capability }),
         ...(condition.member === undefined ? {} : { member: condition.member }),
