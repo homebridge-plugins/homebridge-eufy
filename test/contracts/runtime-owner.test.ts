@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  DeviceChannelUnresolvedError,
   SessionExpiredError,
   type AvailabilityObservation,
   type Device,
@@ -138,6 +139,15 @@ describe('persisted runtime owner', () => {
     expect(debug.mock.calls[0]?.[0]).not.toContain('SensitiveDeviceName');
     expect(debug.mock.calls[1]?.[0]).toContain('"level":"error"');
     expect(error).not.toHaveBeenCalled();
+  });
+  it('names a channel-unresolved refusal in an SDK debug diagnostic', () => {
+    const debug = vi.fn();
+    const logger = createSdkLogger({ debug, info: vi.fn(), warn: vi.fn(), error: vi.fn() })!;
+
+    logger.debug('[mega] connection error', new DeviceChannelUnresolvedError('T8000P0000000000', 'T8010P0000000000'));
+
+    expect(debug.mock.calls[0]?.[0]).toContain('"errorType":"DeviceChannelUnresolvedError"');
+    expect(debug.mock.calls[0]?.[0]).not.toContain('T80');
   });
   it('owns startup, complete publication, and shutdown through one direct interface', async () => {
     const calls: string[] = [];
