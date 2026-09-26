@@ -658,6 +658,25 @@ describe('HomeKit registry reconciliation', () => {
     },
   );
 
+  /** A package sensor needs the pickup as well as the delivery, since nothing else would ever clear it. */
+  it('adds a package sensor to a doorbell only with delivery and pickup evidence', () => {
+    const represent = (serial: string, events: string[]): PlatformAccessory => {
+      const source = new RegistrySource();
+      const recording = recordingApi();
+      new HomeKitReconciler(source, recording.api, vi.fn()).start();
+      source.publish(
+        registryView(1, new Map([[serial, {} as Device]]), snapshot(eventManifest(serial, 'doorbell', events))),
+      );
+      return recording.registerPlatformAccessories.mock.calls[0]?.[0][0] as PlatformAccessory;
+    };
+
+    const complete = represent('synthetic-package', ['doorbellPress', 'packageDelivered', 'packageTaken']);
+    expect(complete.getServiceById(Service.OccupancySensor, 'doorbell.package')).toBeDefined();
+    const deliveryOnly = represent('synthetic-delivery-only', ['doorbellPress', 'packageDelivered']);
+    expect(deliveryOnly.getServiceById(Service.Doorbell, 'doorbell.press')).toBeDefined();
+    expect(deliveryOnly.getServiceById(Service.OccupancySensor, 'doorbell.package')).toBeUndefined();
+  });
+
   it('represents a siren only with active, test, and stop evidence', () => {
     const serial = 'synthetic-siren';
     const source = new RegistrySource();
