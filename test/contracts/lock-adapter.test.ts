@@ -8,6 +8,7 @@ import {
   LOCK_ADAPTER,
   LOCK_ADAPTER_KEY,
   LOCK_STATE_EVENT_ROW,
+  LOCKED_READ_ROW,
   type LockDiagnostic,
   type LockSdkDevice,
 } from '../../src/homekit/adapters/lock.js';
@@ -345,6 +346,25 @@ describe('T8531 lock capability adapter', () => {
     expect(service.getCharacteristic(Characteristic.LockCurrentState).value).toBe(
       Characteristic.LockCurrentState.SECURED,
     );
+  });
+
+  it('presents the state the lock reports before any announcement, and lets an announcement supersede it', async () => {
+    const target = accessory();
+    const evidence = new Map<string, { id: string; kind: string }>(LOCK_EVIDENCE);
+    evidence.set(LOCKED_READ_ROW, { id: LOCKED_READ_ROW, kind: 'read' });
+    const adapter = attach(lockDevice({ ...workingLock(), locked: true }), target, vi.fn(), evidence)!;
+    const service = target.getServiceById(Service.LockMechanism, LOCK_ADAPTER_KEY)!;
+    const current = service.getCharacteristic(Characteristic.LockCurrentState);
+
+    await expect(current.handleGetRequest(), 'a restart is not the lock forgetting').resolves.toBe(
+      Characteristic.LockCurrentState.SECURED,
+    );
+    await expect(service.getCharacteristic(Characteristic.LockTargetState).handleGetRequest()).resolves.toBe(
+      Characteristic.LockTargetState.SECURED,
+    );
+
+    adapter.event?.(announced(LockPushEvent.MANUAL_UNLOCK));
+    await expect(current.handleGetRequest()).resolves.toBe(Characteristic.LockCurrentState.UNSECURED);
   });
 
   it('ignores an event that is not this lock announcing its state', () => {

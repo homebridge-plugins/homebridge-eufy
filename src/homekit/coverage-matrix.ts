@@ -48,8 +48,6 @@ const BLOCKED = new Set([
   'leak.leakDetected.read',
   'smoke.smokeDetected.read',
   'co.coDetected.read',
-  'lock.locked.read',
-  'lock.locked.persistent-operation',
   'keypad.batteryLow.read',
   'keypad.charging.read',
 ]);
