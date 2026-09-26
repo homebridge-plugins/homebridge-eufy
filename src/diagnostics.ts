@@ -155,6 +155,7 @@ const HOMEKIT_LIVE_REQUEST_EVENTS = new Set([
  * failure.
  */
 const SDK_ERROR_TYPES = [
+  'DeviceChannelUnresolvedError',
   'Error',
   'RangeError',
   'SessionExpiredError',
