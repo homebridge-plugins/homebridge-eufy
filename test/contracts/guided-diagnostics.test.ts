@@ -577,11 +577,12 @@ describe('guided diagnostics session', () => {
       expect(markers).not.toMatch(/serial|device|camera/i);
 
       now += 73 * HOUR_MS;
-      expect(await diagnostics.status()).toMatchObject({
+      expect(await diagnostics.status(), 'an expired session no longer offers its archive').toMatchObject({
         status: 'expired',
-        partialExportAvailable: true,
+        partialExportAvailable: false,
         issueUrl: prepared.issueUrl,
       });
+      await expect(diagnostics.reviewSupportArchive()).rejects.toThrow('expired');
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -778,6 +779,9 @@ describe('guided diagnostics session', () => {
       expect(exported.archive.toString('utf8')).not.toContain(forbidden);
       expect(exported.archive.toString('utf8')).not.toContain('contact-state');
       await expect(diagnostics.exportSupportArchive(review.reviewId)).rejects.toThrow('review');
+      expect(await diagnostics.status(), 'handing the archive over ends the session').toMatchObject({
+        status: 'inactive',
+      });
 
       const payload = decryptSupportArchive(exported.archive, privateKey);
       expect(payload.manifest).toEqual(review.manifest);
@@ -861,6 +865,9 @@ describe('guided diagnostics session', () => {
       tampered.keyId = 'substituted-key';
       expect(() => decryptSupportArchive(gzipSync(JSON.stringify(tampered)), privateKey)).toThrow();
 
+      await diagnostics.authorize('control-state', 'intermittent');
+      await diagnostics.startReproduction();
+      await diagnostics.endReproduction();
       const expiredReview = await diagnostics.reviewSupportArchive();
       now += 24 * HOUR_MS;
       await expect(diagnostics.exportSupportArchive(expiredReview.reviewId)).rejects.toThrow('stale');

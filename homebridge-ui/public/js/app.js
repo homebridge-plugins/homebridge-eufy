@@ -70,8 +70,6 @@ const diagnosticsGuidanceBeforeSection = document.querySelector('[data-diagnosti
 const diagnosticsGuidanceBefore = document.querySelector('[data-diagnostics-guidance-before]');
 const diagnosticsGuidanceAction = document.querySelector('[data-diagnostics-guidance-action]');
 const diagnosticsManifest = document.querySelector('[data-diagnostics-manifest]');
-const diagnosticsReviewConfirm = document.querySelector('[data-diagnostics-review-confirm]');
-const diagnosticsReviewConfirmLabel = document.querySelector('[data-diagnostics-review-confirm-label]');
 const diagnosticsExport = document.querySelector('[data-diagnostics-export]');
 const diagnosticsResultHeading = document.querySelector('[data-diagnostics-result-heading]');
 const diagnosticsStartAnother = document.querySelector('[data-diagnostics-start-another]');
@@ -106,17 +104,9 @@ let diagnosticsState = { status: 'inactive', missingEvidence: [] };
 let diagnosticsArchiveDownloaded = false;
 /** The session whose manifest is on screen, so it is fetched once rather than on every render. */
 let diagnosticsReviewedCaseId = '';
-/** Guards the one fetch, so a burst of renders does not assemble the manifest several times over. */
-let diagnosticsReviewPending = false;
+/** The one fetch in flight, so a burst of renders does not assemble the manifest several times over. */
+let diagnosticsReviewRequest;
 let diagnosticsReviewId = '';
-let diagnosticsStartingAnother = false;
-/**
- * The session the reporter has finished with, which the wizard never offers again.
- *
- * Held for this page only: a completed session stays exportable until it expires, so a reload offers its
- * archive once more.
- */
-let diagnosticsEndedCaseId;
 let panelReturn;
 let dashboardPanelTrigger;
 const dashboardView = window.HomebridgeEufyDashboard;
@@ -382,23 +372,20 @@ function setIssueStepReachable(url) {
 }
 
 /**
- * Finishes with the session on screen: the archive dialog closes and the wizard is back at its first question.
+ * Leaves the archive dialog once its file is handed over: the plugin ended the session with the download, so the
+ * wizard is back at its first question.
  */
 function endDiagnosticsCase() {
-  diagnosticsEndedCaseId = diagnosticsState.supportCaseId ?? '';
-  diagnosticsStartingAnother = true;
+  diagnosticsArchiveDownloaded = false;
   diagnosticsWizardState = diagnosticsWizard.start();
-  renderDiagnostics(diagnosticsState);
+  renderDiagnostics({ status: 'inactive', selectedEvidence: [], missingEvidence: [], partialExportAvailable: false });
   diagnosticsQuestionText.focus?.();
 }
 
 function renderDiagnostics(state) {
   if (state.supportCaseId !== diagnosticsState.supportCaseId) diagnosticsArchiveDownloaded = false;
   diagnosticsState = state;
-  const screen = diagnosticsWizard.screen(
-    state,
-    diagnosticsStartingAnother || diagnosticsEndedCaseId === (state.supportCaseId ?? ''),
-  );
+  const screen = diagnosticsWizard.screen(state);
   const choosing = screen === 'choose';
   const reviewing = screen === 'review';
   const reproductionMode = state.reproductionMode ?? 'now';
@@ -426,19 +413,20 @@ function renderDiagnostics(state) {
         : messages.diagnosticsStartRecording;
   diagnosticsIssue.hidden = true;
   setIssueStepReachable(diagnosticsArchiveDownloaded ? (state.issueUrl ?? '') : '');
-  const offering = reviewing && !diagnosticsPanel.hidden;
+  const offering = (reviewing || diagnosticsArchiveDownloaded) && !diagnosticsPanel.hidden;
   if (offering && !diagnosticsResult.open) diagnosticsResult.showModal?.();
   if (!offering && diagnosticsResult.open) diagnosticsResult.close?.();
+  diagnosticsResultHeading.textContent =
+    messages[diagnosticsArchiveDownloaded ? 'diagnosticsArchiveDownloaded' : 'diagnosticsEvidenceReady'] ?? '';
   const reviewed = reviewing && diagnosticsReviewedCaseId === (state.supportCaseId ?? '');
   diagnosticsManifest.hidden = !reviewed;
-  diagnosticsReviewConfirmLabel.hidden = !reviewed;
-  diagnosticsExport.hidden = !reviewed;
+  diagnosticsExport.hidden = !reviewed || diagnosticsArchiveDownloaded;
   diagnosticsIssue.hidden = !reviewed;
+  diagnosticsStartAnother.hidden = !diagnosticsArchiveDownloaded;
   if (!reviewed) {
-    diagnosticsReviewConfirm.checked = false;
     diagnosticsExport.disabled = true;
     diagnosticsReviewId = '';
-    if (reviewing) void ensureArchiveReview(state.supportCaseId ?? '');
+    if (reviewing && !diagnosticsArchiveDownloaded) void ensureArchiveReview(state.supportCaseId ?? '');
   }
   if (screen === 'reproduce') {
     renderDiagnosticsGuidance(state.profile);
@@ -467,7 +455,7 @@ function renderDiagnostics(state) {
         expired: 'diagnosticsExpired',
       }[state.status];
   diagnosticsStatus.textContent = (
-    choosing && (state.status === 'inactive' || diagnosticsStartingAnother) ? '' : (messages[statusKey] ?? '')
+    choosing && state.status === 'inactive' ? '' : (messages[statusKey] ?? '')
   ).replace('{evidence}', state.missingEvidence?.join(', ') ?? '');
 }
 
@@ -534,34 +522,36 @@ function renderArchiveManifest(manifest) {
  *
  * A completed reproduction that the reporter is looking at is a file they came for, so the manifest is
  * read without being asked for. It is read once per session rather than per render, because assembling it
- * reads every collected log. Exporting spends it, so the session is forgotten again and a second download
- * asks for a fresh one.
+ * reads every collected log. Exporting spends it, and ends the session with it.
  */
-async function ensureArchiveReview(caseId) {
-  if (!caseId || diagnosticsReviewedCaseId === caseId || diagnosticsReviewPending) return;
-  diagnosticsReviewPending = true;
-  try {
-    const review = await requestWithinDeadline('/diagnostics/archive/review', undefined, 12000);
-    diagnosticsReviewId = review.reviewId;
-    diagnosticsReviewedCaseId = caseId;
-    renderArchiveManifest(review.manifest);
-    diagnosticsReviewConfirmLabel.hidden = false;
-    diagnosticsExport.hidden = false;
-    diagnosticsExport.disabled = !diagnosticsReviewConfirm.checked;
-    diagnosticsIssue.hidden = false;
-  } catch {
-    diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
-  } finally {
-    diagnosticsReviewPending = false;
-  }
+function ensureArchiveReview(caseId) {
+  if (!caseId || diagnosticsReviewedCaseId === caseId) return Promise.resolve();
+  diagnosticsReviewRequest ??= (async () => {
+    try {
+      const review = await requestWithinDeadline('/diagnostics/archive/review', undefined, 12000);
+      diagnosticsReviewId = review.reviewId;
+      diagnosticsReviewedCaseId = caseId;
+      renderArchiveManifest(review.manifest);
+      diagnosticsExport.hidden = false;
+      diagnosticsExport.disabled = false;
+    } catch {
+      diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
+    } finally {
+      diagnosticsReviewRequest = undefined;
+    }
+  })();
+  return diagnosticsReviewRequest;
 }
 
-diagnosticsReviewConfirm.addEventListener('change', () => {
-  diagnosticsExport.disabled = !diagnosticsReviewConfirm.checked || !diagnosticsReviewId;
-});
-
-diagnosticsExport.addEventListener('click', async () => {
-  if (!diagnosticsReviewConfirm.checked || !diagnosticsReviewId) return;
+/**
+ * Hands the archive of the session on screen over as a download.
+ *
+ * Finishing a reproduction calls this without being asked, since the file is what the reporter finished for; the
+ * dialog's own button is the way to try again after a failed attempt.
+ */
+async function downloadDiagnosticsArchive() {
+  await ensureArchiveReview(diagnosticsState.supportCaseId ?? '');
+  if (!diagnosticsReviewId) return;
   diagnosticsExport.disabled = true;
   try {
     const exported = await requestWithinDeadline(
@@ -576,14 +566,19 @@ diagnosticsExport.addEventListener('click', async () => {
     download.click();
     document.body.removeChild(download);
     diagnosticsReviewId = '';
-    diagnosticsReviewedCaseId = '';
-    diagnosticsReviewConfirm.checked = false;
     diagnosticsArchiveDownloaded = true;
-    setIssueStepReachable(diagnosticsState.issueUrl ?? '');
+    renderDiagnostics(diagnosticsState);
+    diagnosticsResultHeading.focus?.();
   } catch {
+    // The plugin spends a review on any attempt, so trying again asks for a fresh one.
+    diagnosticsReviewId = '';
+    diagnosticsReviewedCaseId = '';
+    diagnosticsExport.disabled = false;
     diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
   }
-});
+}
+
+diagnosticsExport.addEventListener('click', downloadDiagnosticsArchive);
 
 diagnosticsAuthorize.addEventListener('click', async () => {
   diagnosticsAuthorize.disabled = true;
@@ -599,13 +594,11 @@ diagnosticsAuthorize.addEventListener('click', async () => {
       },
       12000,
     );
-    diagnosticsStartingAnother = false;
     renderDiagnostics(authorized);
     if (diagnosticsState.status === 'authorized') diagnosticsGuidance.focus?.();
   } catch {
     try {
       const refreshed = await requestWithinDeadline('/diagnostics/status', undefined, 12000);
-      if (refreshed.status !== previousStatus) diagnosticsStartingAnother = false;
       renderDiagnostics(refreshed);
       if (refreshed.status === previousStatus) {
         diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
@@ -697,7 +690,10 @@ diagnosticsReproduction.addEventListener('click', async () => {
       closeDashboardPanel();
       return;
     }
-    if (state.status === 'complete' || state.partialExportAvailable) diagnosticsResultHeading.focus?.();
+    if (state.partialExportAvailable) {
+      diagnosticsResultHeading.focus?.();
+      await downloadDiagnosticsArchive();
+    }
   } catch {
     try {
       const refreshed = await requestWithinDeadline('/diagnostics/status', undefined, 12000);
@@ -815,7 +811,6 @@ menuAdvanced.addEventListener('click', async () => {
   }
 });
 diagnosticsClose.addEventListener('click', () => {
-  diagnosticsStartingAnother = false;
   closeDashboardPanel();
   renderDiagnostics(diagnosticsState);
 });

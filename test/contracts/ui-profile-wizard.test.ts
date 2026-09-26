@@ -22,7 +22,7 @@ interface DiagnosticsWizard {
   deviceProfiles: readonly string[];
   profiles: readonly string[];
   reject(state: WizardState): WizardState;
-  screen(session: { partialExportAvailable?: boolean; status: string }, startingAnother: boolean): string;
+  screen(session: { partialExportAvailable?: boolean; status: string }): string;
   select(state: WizardState, profile: string): WizardState;
   start(): WizardState;
 }
@@ -194,14 +194,13 @@ describe('diagnostics profile wizard', () => {
     );
   });
 
-  it('prioritizes completed evidence until another session is explicitly started', () => {
+  it('offers the archive of a finished session until the plugin ends it', () => {
     const wizard = loadWizard();
 
-    expect(wizard.screen({ status: 'complete', partialExportAvailable: true }, false)).toBe('review');
-    expect(wizard.screen({ status: 'expired', partialExportAvailable: true }, false)).toBe('review');
-    expect(wizard.screen({ status: 'expired', partialExportAvailable: true }, true)).toBe('choose');
-    expect(wizard.screen({ status: 'expired', partialExportAvailable: false }, false)).toBe('choose');
-    expect(wizard.screen({ status: 'authorized' }, false)).toBe('reproduce');
+    expect(wizard.screen({ status: 'complete', partialExportAvailable: true })).toBe('review');
+    expect(wizard.screen({ status: 'expired', partialExportAvailable: false })).toBe('choose');
+    expect(wizard.screen({ status: 'inactive', partialExportAvailable: false })).toBe('choose');
+    expect(wizard.screen({ status: 'authorized' })).toBe('reproduce');
   });
 
   it('shows the background action only for an active dashboard reproduction', () => {

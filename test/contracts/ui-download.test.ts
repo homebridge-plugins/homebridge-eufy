@@ -44,11 +44,12 @@ describe('custom UI downloads', () => {
     expect(script).toContain('document.body.removeChild(download)');
   });
 
-  it('renders the archive review confirmation as a bounded checkbox', () => {
+  it('downloads the archive without a confirmation to tick first', () => {
+    const document = readFileSync(new URL('../../homebridge-ui/public/index.html', import.meta.url), 'utf8');
     const stylesheet = readFileSync(new URL('../../homebridge-ui/public/app.css', import.meta.url), 'utf8');
 
-    expect(stylesheet).toContain('.first-setup-confirmation input,\n.diagnostics-review-confirm input');
-    expect(stylesheet).toContain('width: 18px;\n  min-height: 18px;\n  height: 18px;\n  flex: 0 0 auto;');
+    expect(document).not.toContain('data-diagnostics-review-confirm');
+    expect(stylesheet).not.toContain('diagnostics-review-confirm');
   });
 
   it('opens on the areas, then discloses one screen at a time', () => {

@@ -639,15 +639,6 @@ button.diagnostics-quiet-action {
   padding-left: 20px;
 }
 
-.diagnostics-review-confirm {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 12px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
 .advanced-fields {
   display: grid;
   grid-template-columns: 1fr;
@@ -1698,8 +1689,7 @@ button.diagnostics-quiet-action {
   cursor: pointer;
 }
 
-.first-setup-confirmation input,
-.diagnostics-review-confirm input {
+.first-setup-confirmation input {
   appearance: none;
   display: grid;
   place-content: center;
@@ -1714,8 +1704,7 @@ button.diagnostics-quiet-action {
   padding: 0;
 }
 
-.first-setup-confirmation input::before,
-.diagnostics-review-confirm input::before {
+.first-setup-confirmation input::before {
   content: '';
   width: 8px;
   height: 4px;
@@ -1724,14 +1713,12 @@ button.diagnostics-quiet-action {
   transform: rotate(-45deg) scale(0);
 }
 
-.first-setup-confirmation input:checked,
-.diagnostics-review-confirm input:checked {
+.first-setup-confirmation input:checked {
   border-color: var(--accent);
   background: var(--accent);
 }
 
-.first-setup-confirmation input:checked::before,
-.diagnostics-review-confirm input:checked::before {
+.first-setup-confirmation input:checked::before {
   transform: rotate(-45deg) scale(1);
 }
 

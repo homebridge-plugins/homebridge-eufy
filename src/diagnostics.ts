@@ -950,6 +950,9 @@ export class GuidedDiagnostics {
     if (!session?.reproductionStartedAt || !session.reproductionEndedAt) {
       throw new Error('A completed reproduction is required before archive review');
     }
+    if (Date.parse(session.expiresAt) <= this.now()) {
+      throw new Error('Diagnostics authorization is inactive or expired');
+    }
     const collected = await this.collectSupportEvidence(session);
     const reproductionStartedAt = Date.parse(session.reproductionStartedAt);
     const selected = DIAGNOSTICS_PROFILES[session.profile];
@@ -993,7 +996,12 @@ export class GuidedDiagnostics {
     return { reviewId, manifest };
   }
 
-  /** Consumes one reviewed snapshot and returns an encrypted envelope without writing plaintext or an archive to disk. */
+  /**
+   * Consumes one reviewed snapshot and returns an encrypted envelope without writing plaintext or an archive to disk.
+   *
+   * Handing the archive over is what finishes a session, so the persisted session goes with it: the next visit
+   * starts a new one rather than offering an archive the reporter already has.
+   */
   async exportSupportArchive(reviewId: string): Promise<EncryptedSupportArchive> {
     const pending = this.pendingSupportArchive;
     if (!pending || pending.reviewId !== reviewId) {
@@ -1047,11 +1055,15 @@ export class GuidedDiagnostics {
         authTag: cipher.getAuthTag().toString('base64'),
         ciphertext: ciphertext.toString('base64'),
       };
-      return {
+      const exported: EncryptedSupportArchive = {
         filename: `homebridge-eufy-${pending.manifest.supportCaseId}.eufysupport.gz`,
         mediaType: 'application/gzip',
         archive: await gzip(Buffer.from(`${JSON.stringify(envelope)}\n`, 'utf8')),
       };
+      if (readDiagnosticsSession(this.storageRoot)?.supportCaseId === pending.manifest.supportCaseId) {
+        await rm(diagnosticsSessionPath(this.storageRoot), { force: true });
+      }
+      return exported;
     } finally {
       contentKey.fill(0);
     }
@@ -1365,7 +1377,7 @@ export class GuidedDiagnostics {
       expiresAt: session.expiresAt,
       ...(session.reproductionStartedAt ? { reproductionStartedAt: session.reproductionStartedAt } : {}),
       ...(session.reproductionEndedAt ? { reproductionEndedAt: session.reproductionEndedAt } : {}),
-      partialExportAvailable: Boolean(session.reproductionEndedAt),
+      partialExportAvailable: Boolean(session.reproductionEndedAt) && !expired,
       ...(session.affectedDevices === undefined ? {} : { affectedDevices: session.affectedDevices }),
       issueUrl: bugReportUrl(session, missingEvidence, readHostEnvironment(this.storageRoot)),
     };
