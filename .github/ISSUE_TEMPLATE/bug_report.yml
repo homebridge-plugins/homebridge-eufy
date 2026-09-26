@@ -77,8 +77,8 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics Archive
-      description: "Open the plugin settings, select the device that is misbehaving, click **Run diagnostics**, and follow it through. Drag the `homebridge-eufy-<case-id>.eufysupport.gz` file it gives you into this box. It is encrypted, nothing was uploaded, and it does not contain your serial numbers, addresses or login details."
-      placeholder: "Drag the .eufysupport.gz file here..."
+      description: "Open the plugin settings, click the **Diagnostics** (bug) icon on the dashboard, and follow it through. Drag the `homebridge-eufy-support-<id>.eufysupport.gz` file it gives you into this box. It is encrypted, nothing was uploaded, and it does not contain your serial numbers, addresses or login details."
+      placeholder: "Drag the .eufysupport.gz file here. Typing text instead leaves the report on hold."
     validations:
       required: true
 

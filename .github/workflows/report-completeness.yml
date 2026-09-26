@@ -7,7 +7,8 @@ name: Report completeness
 #    an archive and a filled environment block. This is the one finding that closes, and it is judged on the
 #    event that opened the report and never again: a report filed before this rule, and one whose reporter is
 #    still completing it, is not reassessed by a later edit or comment. A report that arrived with an archive
-#    anyway is not closed either, because the archive is the thing the flow exists to produce.
+#    anyway is not closed either, because the archive is the thing the flow exists to produce. A report closed
+#    this way reopens when its reporter attaches the archive in a later comment.
 # 2. The diagnostics archive. The form marks the field required and GitHub honours that with any text, so the
 #    form cannot tell an attachment from a sentence. This can.
 # 3. The environment block, on whether its lines were answered. A blank one is the first thing triage asks
@@ -22,7 +23,7 @@ name: Report completeness
 # a label: a reporter answers the other two in prose, and no label may depend on a body they will not edit.
 # The waiting state is set once, with the ask, so a maintainer who lifts it to work an issue keeps it lifted.
 #
-# `scripts/report-completeness-cases.mjs` drives the script below against a fake GitHub, over the seven reports
+# `scripts/report-completeness-cases.mjs` drives the script below against a fake GitHub, over the reports
 # whose outcome is a decision rather than a default. Run it after editing this file — nothing else rehearses a
 # judgement that lands on a stranger's issue.
 
@@ -73,6 +74,18 @@ jobs:
                 KEEP.test(name) ? match : '_(attachment removed: not a diagnostics archive)_',
               );
 
+            // One path and one file name, in every message this workflow posts.
+            const HOW_TO = 'open the plugin settings, click the **Diagnostics** (bug) icon on the dashboard, and follow it through. It gives you a file named like `homebridge-eufy-support-<id>.eufysupport.gz`.';
+            const ALREADY_RAN = 'Already ran diagnostics? Look in your Downloads for a file ending `.eufysupport.gz` and drag it into a comment here.';
+
+            // A diagnostics file whose name changed on the way, like a browser " (1)" suffix, a zip or an
+            // unpacked copy. It still goes, since the name is what is judged, but it is not a leak.
+            const RENAMED = [
+              '**The file attached here has been removed, because its name changed.** It looks like your diagnostics file, but only a name ending in `.eufysupport.gz` is kept.',
+              '',
+              'Attach it again with the name ending in `.eufysupport.gz`, as the plugin saved it, without unpacking or zipping it.',
+            ].join('\n');
+
             const WARNING = [
               '**The file attached here has been removed, because it was not a diagnostics archive.**',
               '',
@@ -80,8 +93,10 @@ jobs:
               '',
               'If you attached one of those, treat what was in it as seen: change the password of the eufy account the plugin uses, the passwords of your other connected accounts, and your Homebridge interface password. Removing it here does not unsend the notification emails or take the uploaded file off GitHub, so changing the passwords is the part that protects you.',
               '',
-              'To produce the right file: open the plugin settings, select the device that is misbehaving, click **Run diagnostics**, and follow it through. Screenshots are welcome as always.',
+              `To produce the right file: ${HOW_TO} Screenshots are welcome as always.`,
             ].join('\n');
+            const warningFor = (text) =>
+              [...(text || '').matchAll(UPLOAD)].every(([, name]) => KEEP.test(name) || /eufysupport/i.test(name)) ? RENAMED : WARNING;
 
             for (const comment of comments) {
               // A maintainer attaching a capture knows what is in it.
@@ -92,16 +107,16 @@ jobs:
                 continue;
               }
               await github.rest.issues.deleteComment({ ...request, comment_id: comment.id });
-              await github.rest.issues.createComment({ ...request, body: WARNING });
+              await github.rest.issues.createComment({ ...request, body: warningFor(comment.body) });
               core.warning(`#${issue.number}: removed comment ${comment.id}, unsafe attachment`);
             }
 
             // The body cannot be deleted, so the link is taken out of it. Both passes are idempotent by
             // removal: what they matched is gone, so a later event finds nothing to act on.
             if (strip(body) !== body) {
+              await github.rest.issues.createComment({ ...request, body: warningFor(body) });
               body = strip(body);
               await github.rest.issues.update({ ...request, body });
-              await github.rest.issues.createComment({ ...request, body: WARNING });
               core.warning(`#${issue.number}: stripped an unsafe attachment from the report body`);
             }
 
@@ -140,15 +155,29 @@ jobs:
               .map(([, name]) => name)
               .filter((name) => !name.startsWith('Support Case ID'));
 
+            // A report closed above for arriving outside the flow reopens when its own reporter attaches the
+            // archive in a later comment. The heading ties the close to this workflow, not to a maintainer.
+            const CLOSED = '**This report was not opened from the plugin, so it is closed as it stands.**';
+            const comment = context.payload.comment;
+            if (
+              issue.state === 'closed' &&
+              comment?.user?.login === issue.user?.login &&
+              ATTACHED_ARCHIVE.test(comments.find(({ id }) => id === comment.id)?.body || '') &&
+              comments.some(({ body }) => (body || '').includes(MARKER) && body.includes(CLOSED))
+            ) {
+              await github.rest.issues.update({ ...request, state: 'open' });
+              core.info(`#${issue.number}: reopened, the reporter attached an archive`);
+            }
+
             const findings = [];
             if (outsideTheFlow) {
               findings.push(
                 [
-                  '**This report was not opened from the plugin, so it is closed as it stands.**',
+                  CLOSED,
                   '',
-                  'The plugin writes the report for you. In its dashboard choose **Debug diagnostics**, pick the area that is misbehaving, and follow it through: it hands back an encrypted archive and this form already filled in with your versions. That is the one path that produces a report anyone can act on, and it takes a couple of minutes.',
+                  `The plugin writes the report for you: ${HOW_TO} It also hands back this form already filled in with your versions. That is the one path that produces a report anyone can act on, and it takes a couple of minutes.`,
                   '',
-                  'Nothing is lost by this — open a fresh one from there. If the plugin cannot produce an archive on your setup, say so in a comment here and someone will pick it up.',
+                  `${ALREADY_RAN} This issue reopens when you do. If the plugin cannot produce an archive on your setup, say so in a comment here and someone will pick it up.`,
                 ].join('\n'),
               );
             }
@@ -172,7 +201,9 @@ jobs:
                 [
                   '**No diagnostics archive is attached**, and without it the logs that would say which part failed do not exist.',
                   '',
-                  'To produce one: open the plugin settings, select the device that is misbehaving, click **Run diagnostics**, and follow it through. Reproduce the problem once while it is collecting, then drag the file it gives you into a comment here. It is encrypted and redacted — no serial numbers, addresses, tokens or login details, and the plugin uploads nothing anywhere.',
+                  `To produce one: ${HOW_TO} Reproduce the problem once while it is collecting, then drag that file into a comment here. It is encrypted and redacted - no serial numbers, addresses, tokens or login details, and the plugin uploads nothing anywhere.`,
+                  '',
+                  ALREADY_RAN,
                 ].join('\n'),
               );
             }
@@ -195,9 +226,7 @@ jobs:
                   '',
                   findings.join('\n\n---\n\n'),
                   '',
-                  outsideTheFlow
-                    ? 'Reopening this one is not the way back — the report the plugin writes is.'
-                    : 'This issue stays open and picks itself back up as soon as that lands.',
+                  outsideTheFlow ? '' : 'This issue stays open and picks itself back up as soon as that lands.',
                 ].join('\n'),
               });
             }

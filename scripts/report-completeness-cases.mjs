@@ -3,7 +3,7 @@
 //
 // The script decides whether a report is answered, held or closed, and a mistake in it acts on a stranger's
 // issue where nothing rehearses it. So the script is read out of the workflow and driven here against a fake
-// GitHub, and the seven reports below are the ones whose outcome is a decision rather than a default.
+// GitHub, and the reports below are the ones whose outcome is a decision rather than a default.
 //
 // Run it after any edit to the workflow: `node scripts/report-completeness-cases.mjs`
 
@@ -43,29 +43,76 @@ const bugReport = ({ flow, version }) =>
   ].join('\n');
 
 /** What the workflow did, in the vocabulary the cases are stated in rather than as REST calls. */
-async function outcomeOf({ action, flow = false, archive = false, version = '5.0.0-beta.11', bugForm = true }) {
+async function outcomeOf({
+  action,
+  flow = false,
+  archive = false,
+  version = '5.0.0-beta.11',
+  bugForm = true,
+  closed = false,
+  upload,
+  by = 'reporter',
+}) {
   const acted = [];
   const issue = {
     number: 1,
     body: bugForm ? bugReport({ flow, version }) : '### Model\n\nT8000P0000000000',
     labels: [{ name: 'needs-triage' }],
+    state: closed ? 'closed' : 'open',
+    user: { login: 'reporter' },
   };
   const comments = archive ? [{ id: 9, body: ARCHIVE, author_association: 'NONE' }] : [];
+  if (closed) {
+    comments.unshift({
+      id: 8,
+      body: '<!-- report-completeness -->\n**This report was not opened from the plugin, so it is closed as it stands.**',
+    });
+  }
+  const comment = upload && {
+    id: 10,
+    body: `https://github.com/user-attachments/files/2/${upload}`,
+    user: { login: by },
+  };
+  if (comment) {
+    comments.push({ ...comment, author_association: 'NONE' });
+  }
   const github = {
     paginate: async () => comments,
     rest: {
       issues: {
         listComments: {},
-        createComment: async ({ body }) => acted.push(/closed as it stands/.test(body) ? 'redirected' : 'asked'),
-        deleteComment: async () => acted.push('deleted a comment'),
-        update: async (fields) => acted.push(fields.state ? `closed as ${fields.state_reason}` : 'edited the body'),
+        createComment: async ({ body }) =>
+          acted.push(
+            /closed as it stands/.test(body)
+              ? 'redirected'
+              : /name changed/.test(body)
+                ? 'told the name changed'
+                : /change the password/.test(body)
+                  ? 'warned'
+                  : 'asked',
+          ),
+        deleteComment: async ({ comment_id }) => {
+          comments.splice(
+            comments.findIndex(({ id }) => id === comment_id),
+            1,
+          );
+          acted.push('deleted a comment');
+        },
+        update: async (fields) =>
+          acted.push(
+            fields.state === 'open'
+              ? 'reopened'
+              : fields.state
+                ? `closed as ${fields.state_reason}`
+                : 'edited the body',
+          ),
         addLabels: async ({ labels }) => acted.push(`labelled ${labels.join()}`),
         removeLabel: async ({ name }) => acted.push(`unlabelled ${name}`),
       },
     },
   };
 
-  await assess({ payload: { issue, action }, repo: { owner: 'o', repo: 'r' }, eventName: 'issues' }, github, {
+  await assess({ payload: { issue, action, comment }, repo: { owner: 'o', repo: 'r' }, eventName: 'issues' }, github, {
     info() {},
     warning() {},
   });
@@ -100,6 +147,31 @@ const CASES = [
     'asked, labelled needs-info, unlabelled needs-triage',
   ],
   ['a request that was never asked for an archive is left alone', { action: 'opened', bugForm: false }, 'nothing'],
+  [
+    'a diagnostics file with a changed name is removed without the password warning',
+    { action: 'created', flow: true, archive: true, upload: 'homebridge-eufy-support-1.eufysupport.1.gz' },
+    'deleted a comment, told the name changed',
+  ],
+  [
+    'any other file is removed with the password warning',
+    { action: 'created', flow: true, archive: true, upload: 'homebridge-backup.tar.gz' },
+    'deleted a comment, warned',
+  ],
+  [
+    'a report closed outside the flow reopens when its reporter attaches the archive',
+    { action: 'created', closed: true, upload: 'homebridge-eufy-support-1.eufysupport.gz' },
+    'reopened',
+  ],
+  [
+    'an archive from anyone else does not reopen it',
+    { action: 'created', closed: true, upload: 'homebridge-eufy-support-1.eufysupport.gz', by: 'stranger' },
+    'nothing',
+  ],
+  [
+    'a renamed archive does not reopen it',
+    { action: 'created', closed: true, upload: 'homebridge-eufy-support-1.eufysupport.zip' },
+    'deleted a comment, told the name changed',
+  ],
 ];
 
 for (const [name, report, expected] of CASES) {
