@@ -379,8 +379,9 @@ button.diagnostics-quiet-action {
   font-size: 12px;
 }
 
-.diagnostics-result {
+.diagnostics-result[open] {
   display: grid;
+  max-width: 560px;
   gap: 8px;
 }
 
@@ -390,7 +391,8 @@ button.diagnostics-quiet-action {
  * anchor because it navigates to GitHub.
  */
 .diagnostics-result [data-diagnostics-export],
-.diagnostics-result [data-diagnostics-issue] {
+.diagnostics-result [data-diagnostics-issue],
+.diagnostics-result [data-diagnostics-existing-issue] {
   display: flex;
   width: 100%;
   min-height: 44px;
@@ -443,6 +445,16 @@ button.diagnostics-quiet-action {
   background: var(--accent);
   color: var(--on-accent);
   content: '2';
+}
+
+/* The other way to hand the file over: attaching it to an issue the reporter already opened. */
+.diagnostics-result [data-diagnostics-existing-issue] {
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+}
+
+.diagnostics-result [data-diagnostics-existing-issue][hidden] {
+  display: none;
 }
 
 /* Without an archive there is nothing to attach, so the step is present and not yet a link. */
@@ -823,7 +835,7 @@ button.diagnostics-quiet-action {
   background: color-mix(in srgb, var(--alert) 26%, var(--panel));
 }
 
-.reauth-dialog {
+.blocking-dialog {
   max-width: 420px;
   border: 0;
   border-radius: var(--radius-panel);
@@ -833,16 +845,16 @@ button.diagnostics-quiet-action {
   padding: 24px;
 }
 
-.reauth-dialog::backdrop {
+.blocking-dialog::backdrop {
   background: rgb(0 0 0 / 30%);
   backdrop-filter: blur(5px);
 }
 
-.reauth-dialog h2 {
+.blocking-dialog h2 {
   margin: 0 0 8px;
 }
 
-.reauth-dialog p {
+.blocking-dialog p {
   margin: 0 0 20px;
   color: var(--ink-secondary);
 }

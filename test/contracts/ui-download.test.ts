@@ -63,7 +63,9 @@ describe('custom UI downloads', () => {
     expect(document).toContain('data-diagnostics-frequency-answer="now"');
     expect(document).toMatch(/data-diagnostics-match hidden/);
     expect(document).toMatch(/data-diagnostics-actions hidden/);
-    expect(document).toMatch(/data-diagnostics-result hidden/);
+    expect(document, 'the archive is a dialog of its own, closed until a session completes').toMatch(
+      /<dialog[^>]+data-diagnostics-result/,
+    );
     expect(document).toMatch(/data-diagnostics-guidance[^>]+hidden/);
     expect(document).toContain('data-diagnostics-start-another');
     expect(document, 'the heading takes focus and is the one the group is named by').toMatch(

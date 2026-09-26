@@ -59,6 +59,7 @@ const diagnosticsReproduction = document.querySelector('[data-diagnostics-reprod
 const diagnosticsStatus = document.querySelector('[data-diagnostics-status]');
 const diagnosticsIssue = document.querySelector('[data-diagnostics-issue]');
 const diagnosticsIssueHint = document.querySelector('[data-diagnostics-issue-hint]');
+const diagnosticsExistingIssue = document.querySelector('[data-diagnostics-existing-issue]');
 const diagnosticsResult = document.querySelector('[data-diagnostics-result]');
 const diagnosticsActions = document.querySelector('[data-diagnostics-actions]');
 const diagnosticsGuidanceTitle = document.querySelector('[data-diagnostics-guidance-title]');
@@ -109,6 +110,13 @@ let diagnosticsReviewedCaseId = '';
 let diagnosticsReviewPending = false;
 let diagnosticsReviewId = '';
 let diagnosticsStartingAnother = false;
+/**
+ * The session the reporter has finished with, which the wizard never offers again.
+ *
+ * Held for this page only: a completed session stays exportable until it expires, so a reload offers its
+ * archive once more.
+ */
+let diagnosticsEndedCaseId;
 let panelReturn;
 let dashboardPanelTrigger;
 const dashboardView = window.HomebridgeEufyDashboard;
@@ -369,12 +377,28 @@ function setIssueStepReachable(url) {
   diagnosticsIssue.href = url;
   diagnosticsIssue.setAttribute('aria-disabled', url ? 'false' : 'true');
   diagnosticsIssueHint.textContent = messages[url ? 'diagnosticsIssueOpensTab' : 'diagnosticsIssueNeedsArchive'] ?? '';
+  diagnosticsExistingIssue.href = url.replace(/\/issues\/new.*$/, '/issues?q=is%3Aissue+is%3Aopen+author%3A%40me');
+  diagnosticsExistingIssue.hidden = !url;
+}
+
+/**
+ * Finishes with the session on screen: the archive dialog closes and the wizard is back at its first question.
+ */
+function endDiagnosticsCase() {
+  diagnosticsEndedCaseId = diagnosticsState.supportCaseId ?? '';
+  diagnosticsStartingAnother = true;
+  diagnosticsWizardState = diagnosticsWizard.start();
+  renderDiagnostics(diagnosticsState);
+  diagnosticsQuestionText.focus?.();
 }
 
 function renderDiagnostics(state) {
   if (state.supportCaseId !== diagnosticsState.supportCaseId) diagnosticsArchiveDownloaded = false;
   diagnosticsState = state;
-  const screen = diagnosticsWizard.screen(state, diagnosticsStartingAnother);
+  const screen = diagnosticsWizard.screen(
+    state,
+    diagnosticsStartingAnother || diagnosticsEndedCaseId === (state.supportCaseId ?? ''),
+  );
   const choosing = screen === 'choose';
   const reviewing = screen === 'review';
   const reproductionMode = state.reproductionMode ?? 'now';
@@ -402,7 +426,9 @@ function renderDiagnostics(state) {
         : messages.diagnosticsStartRecording;
   diagnosticsIssue.hidden = true;
   setIssueStepReachable(diagnosticsArchiveDownloaded ? (state.issueUrl ?? '') : '');
-  diagnosticsResult.hidden = !reviewing;
+  const offering = reviewing && !diagnosticsPanel.hidden;
+  if (offering && !diagnosticsResult.open) diagnosticsResult.showModal?.();
+  if (!offering && diagnosticsResult.open) diagnosticsResult.close?.();
   const reviewed = reviewing && diagnosticsReviewedCaseId === (state.supportCaseId ?? '');
   diagnosticsManifest.hidden = !reviewed;
   diagnosticsReviewConfirmLabel.hidden = !reviewed;
@@ -643,11 +669,15 @@ diagnosticsReject.addEventListener('click', () => {
   diagnosticsQuestionText.focus?.();
 });
 
-diagnosticsStartAnother.addEventListener('click', () => {
-  diagnosticsStartingAnother = true;
-  diagnosticsWizardState = diagnosticsWizard.start();
-  renderDiagnostics(diagnosticsState);
-  diagnosticsQuestionText.focus?.();
+diagnosticsStartAnother.addEventListener('click', endDiagnosticsCase);
+diagnosticsExistingIssue.addEventListener('click', endDiagnosticsCase);
+diagnosticsIssue.addEventListener('click', () => {
+  if (diagnosticsArchiveDownloaded) endDiagnosticsCase();
+});
+/** Escape leaves the archive dialog only once its file is downloaded, and leaving it finishes the session. */
+diagnosticsResult.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  if (diagnosticsArchiveDownloaded) endDiagnosticsCase();
 });
 
 diagnosticsReproduction.addEventListener('click', async () => {
@@ -786,8 +816,8 @@ menuAdvanced.addEventListener('click', async () => {
 });
 diagnosticsClose.addEventListener('click', () => {
   diagnosticsStartingAnother = false;
-  renderDiagnostics(diagnosticsState);
   closeDashboardPanel();
+  renderDiagnostics(diagnosticsState);
 });
 advancedClose.addEventListener('click', () => {
   closeDashboardPanel();

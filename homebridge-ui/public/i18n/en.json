@@ -123,6 +123,7 @@
   "diagnosticsDevicesSummary": "Checks why a HomeKit accessory is missing, duplicated, or shown as the wrong type.",
   "diagnosticsEndReproduction": "Issue happened: end reproduction",
   "diagnosticsEvidenceReady": "Collection complete.",
+  "diagnosticsExistingIssue": "Attach it to my existing issue",
   "diagnosticsExpired": "The previous collection session has ended. Start a new one when needed.",
   "diagnosticsEyebrow": "Support",
   "diagnosticsFailed": "The diagnostics request failed. Try again.",

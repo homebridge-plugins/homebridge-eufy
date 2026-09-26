@@ -123,6 +123,7 @@
   "diagnosticsDevicesSummary": "Vérifie pourquoi un accessoire HomeKit est absent, dupliqué ou affiché avec le mauvais type.",
   "diagnosticsEndReproduction": "Le problème est survenu : terminer la reproduction",
   "diagnosticsEvidenceReady": "Collecte terminée.",
+  "diagnosticsExistingIssue": "Le joindre à mon ticket existant",
   "diagnosticsExpired": "La session de collecte précédente est terminée. Démarrez-en une nouvelle si nécessaire.",
   "diagnosticsEyebrow": "Assistance",
   "diagnosticsFailed": "La demande de diagnostic a échoué. Réessayez.",

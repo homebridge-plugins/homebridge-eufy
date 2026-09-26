@@ -189,15 +189,25 @@ async function renderUi(
   const diagnosticsReproduction = interactiveElement({ disabled: true, textContent: '' });
   const diagnosticsStatus = { textContent: '' };
   const diagnosticsIssueHint = { textContent: '' };
-  const diagnosticsIssue = {
+  const diagnosticsIssue = interactiveElement({
     hidden: true,
     href: '',
     attributes: {} as Record<string, string>,
     setAttribute(name: string, value: string) {
       this.attributes[name] = value;
     },
-  };
-  const diagnosticsResult = { hidden: true };
+  });
+  const diagnosticsExistingIssue = interactiveElement({ hidden: true, href: '' });
+  /** The archive dialog. `showModal` and `close` flip `open` the way a browser's dialog does. */
+  const diagnosticsResult = interactiveElement({
+    open: false,
+    showModal() {
+      this.open = true;
+    },
+    close() {
+      this.open = false;
+    },
+  });
   const diagnosticsActions = { hidden: true };
   const diagnosticsGuidanceTitle = {
     focused: false,
@@ -392,6 +402,7 @@ async function renderUi(
           '[data-diagnostics-devices-chosen]': diagnosticsDevicesChosen,
           '[data-diagnostics-issue]': diagnosticsIssue,
           '[data-diagnostics-issue-hint]': diagnosticsIssueHint,
+          '[data-diagnostics-existing-issue]': diagnosticsExistingIssue,
           '[data-diagnostics-result]': diagnosticsResult,
           '[data-diagnostics-actions]': diagnosticsActions,
           '[data-diagnostics-guidance-title]': diagnosticsGuidanceTitle,
@@ -658,6 +669,7 @@ async function renderUi(
     diagnosticsStatus,
     diagnosticsIssue,
     diagnosticsIssueHint,
+    diagnosticsExistingIssue,
     diagnosticsResult,
     diagnosticsActions,
     diagnosticsModeSummary,
@@ -1026,6 +1038,7 @@ describe('packed plugin', () => {
           'diagnosticsBeforeLabel',
           'diagnosticsBestMatch',
           'diagnosticsEvidenceReady',
+          'diagnosticsExistingIssue',
           'diagnosticsEyebrow',
           'diagnosticsOpenIssue',
           'diagnosticsNo',
@@ -1382,7 +1395,7 @@ describe('packed plugin', () => {
         dashboard: { hidden: true },
         diagnosticsPanel: { hidden: false },
         diagnosticsIssue: { hidden: true },
-        diagnosticsResult: { hidden: true },
+        diagnosticsResult: { open: false },
         diagnosticsQuestion: { hidden: false },
         diagnosticsFrequency: { hidden: true },
         diagnosticsMatch: { hidden: true },
@@ -1447,7 +1460,7 @@ describe('packed plugin', () => {
       });
       await menuUi.diagnosticsReproduction.dispatch('click');
       expect(menuUi).toMatchObject({
-        diagnosticsResult: { hidden: false },
+        diagnosticsResult: { open: true },
         diagnosticsWizardPanel: { hidden: true },
         diagnosticsResultHeading: { focused: true },
       });
@@ -1783,7 +1796,7 @@ describe('packed plugin', () => {
       await reloadedDashboardBackgroundUi.diagnosticsReproduction.dispatch('click');
       expect(reloadedDashboardBackgroundUi).toMatchObject({
         diagnosticsPanel: { hidden: false },
-        diagnosticsResult: { hidden: false },
+        diagnosticsResult: { open: true },
         diagnosticsResultHeading: { focused: true },
         menuDiagnostics: {
           dataset: {},
@@ -1812,9 +1825,14 @@ describe('packed plugin', () => {
           selectedEvidence: ['plugin-log', 'sdk-log'],
           missingEvidence: [],
           partialExportAvailable: true,
-          issueUrl: 'https://example.invalid/issue',
+          issueUrl: 'https://example.invalid/owner/repo/issues/new?template=bug',
         },
       );
+      expect(
+        completedDiagnosticsUi.diagnosticsResult.open,
+        'a completed session waits for the reporter to open diagnostics rather than blocking the page on load',
+      ).toBe(false);
+      await completedDiagnosticsUi.menuDiagnostics.dispatch('click');
       expect(
         completedDiagnosticsUi.diagnosticsIssue.attributes,
         'a control a reader can see but not use says so, and says why',
@@ -1824,7 +1842,7 @@ describe('packed plugin', () => {
         diagnosticsReviewConfirmLabel: { hidden: false },
         diagnosticsExport: { disabled: true, hidden: false },
         diagnosticsIssue: { hidden: false, href: '' },
-        diagnosticsResult: { hidden: false },
+        diagnosticsResult: { open: true },
         diagnosticsWizardPanel: { hidden: true },
       });
       expect(completedDiagnosticsUi.requests, 'the manifest is fetched once, unasked').toContainEqual({
@@ -1862,32 +1880,29 @@ describe('packed plugin', () => {
           href: 'data:application/gzip;base64,c3ludGhldGlj',
         }),
       ]);
-      expect(completedDiagnosticsUi.diagnosticsIssue).toMatchObject({
-        hidden: false,
-        href: 'https://example.invalid/issue',
+      expect(
+        completedDiagnosticsUi,
+        'the archive in hand offers a new issue, or the reporter own open issues to attach it to',
+      ).toMatchObject({
+        diagnosticsResult: { open: true },
+        diagnosticsIssue: { hidden: false, href: 'https://example.invalid/owner/repo/issues/new?template=bug' },
+        diagnosticsExistingIssue: {
+          hidden: false,
+          href: 'https://example.invalid/owner/repo/issues?q=is%3Aissue+is%3Aopen+author%3A%40me',
+        },
       });
-      expect(
-        completedDiagnosticsUi.diagnosticsIssue,
-        'the archive in hand is what makes step two reachable',
-      ).toMatchObject({ hidden: false, href: 'https://example.invalid/issue' });
-      await completedDiagnosticsUi.diagnosticsClose.dispatch('click');
-      await completedDiagnosticsUi.menuDiagnostics.dispatch('click');
-      expect(
-        completedDiagnosticsUi.diagnosticsIssue,
-        'leaving the panel and returning does not withdraw an offer the reporter already earned',
-      ).toMatchObject({ hidden: false, href: 'https://example.invalid/issue' });
-      await completedDiagnosticsUi.diagnosticsStartAnother.dispatch('click');
-      expect(completedDiagnosticsUi).toMatchObject({
-        diagnosticsResult: { hidden: true },
+      await completedDiagnosticsUi.diagnosticsExistingIssue.dispatch('click');
+      expect(completedDiagnosticsUi, 'handing the file over finishes the session').toMatchObject({
+        diagnosticsResult: { open: false },
         diagnosticsWizardPanel: { hidden: false },
         diagnosticsQuestion: { hidden: false },
         diagnosticsQuestionText: { focused: true },
       });
       await completedDiagnosticsUi.diagnosticsClose.dispatch('click');
       await completedDiagnosticsUi.menuDiagnostics.dispatch('click');
-      expect(completedDiagnosticsUi).toMatchObject({
-        diagnosticsResult: { hidden: false },
-        diagnosticsWizardPanel: { hidden: true },
+      expect(completedDiagnosticsUi, 'a finished session is not offered again on return').toMatchObject({
+        diagnosticsResult: { open: false },
+        diagnosticsWizardPanel: { hidden: false },
       });
 
       const expiredCompletedDiagnosticsUi = await renderUi(
@@ -1906,8 +1921,9 @@ describe('packed plugin', () => {
           issueUrl: 'https://example.invalid/expired-issue',
         },
       );
+      await expiredCompletedDiagnosticsUi.menuDiagnostics.dispatch('click');
       expect(expiredCompletedDiagnosticsUi).toMatchObject({
-        diagnosticsResult: { hidden: false },
+        diagnosticsResult: { open: true },
         diagnosticsWizardPanel: { hidden: true },
       });
 

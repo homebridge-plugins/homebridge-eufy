@@ -276,8 +276,8 @@
           ></button>
         </div>
       </div>
-      <div class="diagnostics-result diagnostics-surface" data-diagnostics-result hidden>
-        <strong tabindex="-1" data-diagnostics-result-heading data-i18n="diagnosticsEvidenceReady"></strong>
+      <dialog class="blocking-dialog diagnostics-result" data-diagnostics-result aria-labelledby="diagnostics-result-heading">
+        <strong id="diagnostics-result-heading" tabindex="-1" data-diagnostics-result-heading data-i18n="diagnosticsEvidenceReady"></strong>
         <p data-i18n="diagnosticsArchiveReviewIntro"></p>
         <div class="diagnostics-manifest" data-diagnostics-manifest hidden></div>
         <label class="diagnostics-review-confirm" data-diagnostics-review-confirm-label hidden>
@@ -295,13 +295,20 @@
           data-i18n="diagnosticsOpenIssue"
         ></a>
         <p class="diagnostics-step-hint" id="diagnostics-issue-hint" data-diagnostics-issue-hint></p>
+        <a
+          data-diagnostics-existing-issue
+          hidden
+          target="_blank"
+          rel="noopener noreferrer"
+          data-i18n="diagnosticsExistingIssue"
+        ></a>
         <button
           type="button"
           class="diagnostics-secondary-action"
           data-diagnostics-start-another
           data-i18n="diagnosticsStartAnother"
         ></button>
-      </div>
+      </dialog>
       <p class="diagnostics-status" role="status" aria-live="polite" data-diagnostics-status></p>
     </div>
   </section>
@@ -363,7 +370,7 @@
 
   <p class="footnote" data-i18n="footnote"></p>
 
-  <dialog class="reauth-dialog" data-reauth-dialog aria-labelledby="reauth-title" aria-describedby="reauth-summary">
+  <dialog class="blocking-dialog" data-reauth-dialog aria-labelledby="reauth-title" aria-describedby="reauth-summary">
     <h2 id="reauth-title" data-i18n="reauthTitle"></h2>
     <p id="reauth-summary" data-i18n="reauthSummary"></p>
     <button type="button" data-reauth-action data-i18n="reauthAction"></button>
