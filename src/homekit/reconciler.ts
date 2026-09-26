@@ -74,6 +74,7 @@ export type HomeKitEntityPreferences = Readonly<
     {
       represented?: boolean;
       audio?: boolean;
+      securitySystem?: boolean;
       snapshotMode?: SnapshotMode;
       armingModes?: Readonly<Partial<Record<'home' | 'away' | 'night' | 'off', ArmingMode>>>;
     }
@@ -216,6 +217,7 @@ export class HomeKitReconciler {
           ...(this.mediaBudget ? { mediaBudget: this.mediaBudget } : {}),
           ...(this.stationLiveSessions ? { stationLiveSessions: this.stationLiveSessions } : {}),
           audioEnabled: this.entityPreferences[serial]?.audio !== false,
+          securitySystemEnabled: this.entityPreferences[serial]?.securitySystem !== false,
           snapshotMode: this.entityPreferences[serial]?.snapshotMode ?? 'Refresh',
           ...(this.entityPreferences[serial]?.armingModes === undefined
             ? {}

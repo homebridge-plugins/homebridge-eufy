@@ -36,7 +36,7 @@ export interface DashboardDevice {
   controllable: boolean;
   diagnosticOnly: boolean;
   artwork?: string;
-  preferences: Array<'represented' | 'audio' | 'snapshotMode' | 'armingModes'>;
+  preferences: Array<'represented' | 'audio' | 'snapshotMode' | 'securitySystem' | 'armingModes'>;
   /**
    * The adapters that will represent this device in HomeKit, so the interface can name what it becomes.
    *
@@ -149,7 +149,9 @@ function deviceClassOf(codec: DeviceManifest['codec']): DashboardDevice['deviceC
  * Audio and snapshot mode both reach a camera's stream and nowhere else, so both require the camera capability —
  * an `audio` capability alone is a speaker, which a station has for its siren and chimes and which no stream
  * setting governs. The guard-mode map is offered wherever the security-system adapter will attach, which is a
- * station and a camera that stands alone as its own, and nowhere else.
+ * station and a camera that stands alone as its own, and nowhere else. Turning the security system off is offered
+ * only on that camera, where it shares the accessory: a station is the security system, so `represented` already
+ * governs it.
  */
 function projectDevice(manifest: DeviceManifest, representationEnabled: boolean | undefined): DashboardDevice {
   const admission = describeHomeKitRepresentation(manifest);
@@ -161,6 +163,9 @@ function projectDevice(manifest: DeviceManifest, representationEnabled: boolean 
   }
   if (streams) {
     preferences.push('snapshotMode');
+  }
+  if (streams && admission.services.includes('arming.security-system')) {
+    preferences.push('securitySystem');
   }
   if (admission.services.includes('arming.security-system')) {
     preferences.push('armingModes');

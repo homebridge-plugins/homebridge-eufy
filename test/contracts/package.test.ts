@@ -1213,6 +1213,7 @@ describe('packed plugin', () => {
         'preferenceAudio',
         'preferenceRepresented',
         'preferenceSaveFailed',
+        'preferenceSecuritySystem',
         'preferenceSnapshotMode',
         'snapshotModeCloudDescription',
         'snapshotModeLiveDescription',
@@ -2016,6 +2017,7 @@ describe('packed plugin', () => {
             username: 'guest@example.invalid',
             entityPreferences: {
               'synthetic-absent': { audio: false },
+              'synthetic-working-camera': { securitySystem: false },
               'synthetic-contact': { represented: false },
             },
           },
@@ -2089,7 +2091,7 @@ describe('packed plugin', () => {
               represented: true,
               controllable: false,
               diagnosticOnly: false,
-              preferences: ['represented'],
+              preferences: ['represented', 'securitySystem', 'armingModes'],
               enabled: true,
             },
             {
@@ -2132,6 +2134,20 @@ describe('packed plugin', () => {
         'a setting that only means something for a represented device is withheld while it is not',
       ).toContain('data-requires-representation hidden');
       expect(dashboardUi.devicePanel.hidden).toBe(false);
+      await dashboardUi.deviceGroups.dispatch('click', {
+        target: {
+          closest: (selector: string) =>
+            selector === '.device-open-control'
+              ? { closest: () => ({ dataset: { serial: 'synthetic-working-camera' } }) }
+              : undefined,
+        },
+      });
+      expect(
+        dashboardUi.deviceSettingsControls.innerHTML,
+        'the guard-mode map is withheld while the security system it maps is turned off',
+      ).toMatch(
+        /<details class="arming-setting" data-setting hidden data-requires-representation data-requires-security-system>/,
+      );
       expect(dashboardUi.deviceGroups.innerHTML).toContain('assets/devices/security/security-T8910.webp');
       expect(dashboardUi.deviceGroups.innerHTML.indexOf('Back contact')).toBeLessThan(
         dashboardUi.deviceGroups.innerHTML.indexOf('Front contact'),
@@ -2211,6 +2227,7 @@ describe('packed plugin', () => {
       });
       expect(dashboardUi.updatedConfig?.[0].entityPreferences).toEqual({
         'synthetic-absent': { audio: false },
+        'synthetic-working-camera': { securitySystem: false },
       });
       expect(dashboardUi.saveButtonEnables).toBe(1);
       expect(dashboardUi.saveButtonDisables).toBe(1);
@@ -2223,6 +2240,7 @@ describe('packed plugin', () => {
       });
       expect(dashboardUi.updatedConfig?.[0].entityPreferences).toEqual({
         'synthetic-absent': { audio: false },
+        'synthetic-working-camera': { securitySystem: false },
         'synthetic-contact': { represented: false },
       });
       expect(dashboardUi.saveButtonEnables).toBe(1);
@@ -2238,6 +2256,7 @@ describe('packed plugin', () => {
         'a HomeKit state a household assigned is written under the station it was assigned on',
       ).toEqual({
         'synthetic-absent': { audio: false },
+        'synthetic-working-camera': { securitySystem: false },
         'synthetic-contact': { represented: false, armingModes: { night: 'schedule' } },
       });
       await dashboardUi.deviceSettingsControls.dispatch('change', {
@@ -2251,6 +2270,7 @@ describe('packed plugin', () => {
         'unassigning a state removes it rather than pinning an empty map, so a later default still reaches it',
       ).toEqual({
         'synthetic-absent': { audio: false },
+        'synthetic-working-camera': { securitySystem: false },
         'synthetic-contact': { represented: false },
       });
       expect(script).not.toContain('appendChild(entry)');

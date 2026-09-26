@@ -60,6 +60,7 @@ describe('V5 configuration', () => {
         properties: {
           represented: { default: true, type: 'boolean' },
           audio: { default: true, type: 'boolean' },
+          securitySystem: { default: true, type: 'boolean' },
           snapshotMode: { default: 'Refresh', enum: ['Cloud', 'Live', 'Refresh'], type: 'string' },
           armingModes: {
             additionalProperties: false,
@@ -93,6 +94,7 @@ describe('V5 configuration', () => {
     expect(resolveEntityPreference(config, 'synthetic-serial')).toEqual({
       represented: true,
       audio: true,
+      securitySystem: true,
       snapshotMode: 'Refresh',
       armingModes: { home: 'home', away: 'away', off: 'disarmed' },
     });
@@ -204,6 +206,7 @@ describe('V5 configuration', () => {
     expect(resolveEntityPreference(roundTrip, 'synthetic-sparse-entity')).toEqual({
       represented: true,
       audio: false,
+      securitySystem: true,
       snapshotMode: 'Refresh',
       armingModes: { home: 'home', away: 'away', off: 'disarmed' },
     });

@@ -387,6 +387,10 @@ describe('preferences offered per device', () => {
 
     expect(await offered(arming)).toEqual(['represented', 'armingModes']);
     expect(
+      await offered({ ...withCapabilities('camera', 'arming'), details: arming.details }),
+      'a camera that stands alone carries its own security system, so only there is it turned off apart from the device',
+    ).toEqual(['represented', 'snapshotMode', 'securitySystem', 'armingModes']);
+    expect(
       await offered({ ...arming, details: [{ ...arming.details[0]!, events: [] }] }),
       'without the arming events nothing represents this station at all, so it is offered no preference whatever',
     ).toEqual([]);
