@@ -14,6 +14,7 @@ import { AccountSessionPersistence } from '../account/persistence.js';
 import type { EufyConfig } from '../configuration.js';
 import {
   armDiagnosticsAuthorization,
+  type ActiveCondition,
   PLUGIN_VERSION,
   reportRuntimeNotice,
   type PlatformLogger,
@@ -104,6 +105,8 @@ export interface RuntimeOwnerOptions {
   persistence?: RuntimePersistence;
   statusPublisher?: RuntimeStatusPublisher;
   channel?: RuntimeChannelHost;
+  /** The diagnostic conditions active now, which the live channel answers with the status. */
+  conditions?: () => ActiveCondition[];
 }
 
 export interface RuntimeRegistryView {
@@ -152,6 +155,7 @@ export class RuntimeOwner {
   private cleanupTerminalState?: 'authentication-required' | 'failed' | 'stopped';
   private readonly storageRoot?: string;
   private readonly persistence?: RuntimePersistence;
+  private readonly conditions?: () => ActiveCondition[];
   private readonly shutdownTimeoutMs: number;
   private readonly rearmWindowMs: number;
   private readonly rearmIntervalMs: number;
@@ -176,6 +180,7 @@ export class RuntimeOwner {
     this.ownership = options.ownership;
     this.statusPublisher = options.statusPublisher;
     this.channel = options.channel;
+    this.conditions = options.conditions;
     if (this.storageRoot) {
       this.persistence = options.persistence ?? new AccountSessionPersistence(join(this.storageRoot, 'accounts'));
     } else {
@@ -667,6 +672,7 @@ export class RuntimeOwner {
       ...(published?.generation === undefined ? {} : { generation: published.generation }),
       complete: published?.complete ?? false,
       updatedAt: new Date().toISOString(),
+      ...(this.conditions === undefined ? {} : { conditions: this.conditions() }),
     };
   }
 

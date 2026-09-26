@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { posix } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
-import type { RuntimeState } from '../diagnostics.js';
-import { isSupportCaseId } from '../diagnostics.js';
+import type { ActiveCondition, RuntimeState } from '../diagnostics.js';
+import { isSupportCaseId, knownCondition } from '../diagnostics.js';
 import { isBatteryLevel } from '../device/member-trust.js';
 import type { RuntimeStatus } from './tracker.js';
 
@@ -88,7 +88,8 @@ export interface RuntimeChannelAuthorization {
  * The live runtime status: the persisted record's scalar fields, stated by the process that holds them.
  *
  * `updatedAt` is when the answering process stated the status, which for a live answer is when the reported
- * state was true. The complete device snapshot is not part of this contract.
+ * state was true. The complete device snapshot is not part of this contract. `conditions` is every diagnostic
+ * condition active in the answering process, absent where it states none, and never an entry outside the catalog.
  */
 export interface RuntimeChannelStatus {
   state: RuntimeState;
@@ -96,6 +97,7 @@ export interface RuntimeChannelStatus {
   generation?: string;
   complete: boolean;
   updatedAt: string;
+  conditions?: ActiveCondition[];
 }
 
 /**
@@ -260,6 +262,9 @@ export function answeredStatus(status: RuntimeChannelStatus): RuntimeChannelStat
     ...(status.generation === undefined ? {} : { generation: status.generation }),
     complete: status.complete,
     updatedAt: status.updatedAt,
+    ...(status.conditions === undefined
+      ? {}
+      : { conditions: status.conditions.flatMap((condition) => knownCondition(condition) ?? []) }),
   };
 }
 
@@ -330,7 +335,8 @@ export function isRuntimeChannelStatus(value: unknown): value is RuntimeChannelS
     typeof candidate.status === 'string' &&
     typeof candidate.complete === 'boolean' &&
     typeof candidate.updatedAt === 'string' &&
-    (candidate.generation === undefined || typeof candidate.generation === 'string')
+    (candidate.generation === undefined || typeof candidate.generation === 'string') &&
+    (candidate.conditions === undefined || Array.isArray(candidate.conditions))
   );
 }
 

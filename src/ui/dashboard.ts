@@ -7,7 +7,7 @@ import { MOTION_EVENT_REQUIREMENTS } from '../homekit/adapters/motion.js';
 import { DOORBELL_PRESS_EVENT } from '../homekit/adapters/doorbell.js';
 import type { RuntimeTrackerRecord } from '../runtime/tracker.js';
 import type { RuntimeChannelDevice } from '../runtime/channel.js';
-import { PLUGIN_VERSION } from '../diagnostics.js';
+import { PLUGIN_VERSION, type ActiveCondition } from '../diagnostics.js';
 import type { RuntimeChannelReading, RuntimeStatusChannel } from './runtime-channel-client.js';
 
 const DASHBOARD_FRESH_THRESHOLD_MS = 90_000;
@@ -90,6 +90,8 @@ export interface DashboardSnapshot {
   runningVersion?: string;
   /** Whether ending that runtime would replace it, stated only alongside a `runningVersion`. */
   restartable?: boolean;
+  /** The diagnostic conditions the live runtime holds active, absent where no runtime states them. */
+  conditions?: ActiveCondition[];
 }
 
 export interface DashboardTracker {
@@ -307,6 +309,7 @@ export async function readDashboard(
       devices: devices.map((device) => observed(device, observations)),
       warmUpCandidates,
       ...superseded(live),
+      ...(live.status.conditions === undefined ? {} : { conditions: live.status.conditions }),
     };
   }
   if (

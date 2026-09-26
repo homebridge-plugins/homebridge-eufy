@@ -2346,6 +2346,45 @@ const HOMEKIT_REASON_ACTIONS: Readonly<Record<string, string>> = {
   'camera-live-session-failed:adaptation-spawn-failed': 'log.action.checkFfmpegPath',
 };
 
+/**
+ * One condition that is active now, as the custom UI is told it.
+ *
+ * The code and both keys come from the condition catalog, so nothing in it is free text. `serials` names the
+ * devices a HomeKit condition affects and is absent from a runtime condition. It is live state answered to the
+ * owner's own interface and is never retained in a record.
+ */
+export interface ActiveCondition {
+  code: string;
+  summaryKey: string;
+  actionKey: string;
+  serials?: string[];
+}
+
+/** Projects a value onto an active condition, or nothing where the catalog does not write that code with those keys. */
+export function knownCondition(value: unknown): ActiveCondition | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const { code, summaryKey, actionKey, serials } = value as Record<string, unknown>;
+  if (typeof code !== 'string') return undefined;
+  const runtime = Object.values(RUNTIME_CONDITIONS).find((condition) => condition.code === code);
+  const homeKit = Object.hasOwn(HOMEKIT_CONDITIONS, code)
+    ? HOMEKIT_CONDITIONS[code as HomeKitConditionCode]
+    : undefined;
+  const [summary, ...actions]: string[] = runtime
+    ? [runtime.summaryKey, runtime.actionKey]
+    : homeKit
+      ? [
+          ...homeKit,
+          ...Object.entries(HOMEKIT_REASON_ACTIONS)
+            .filter(([key]) => key.startsWith(`${code}:`))
+            .map(([, action]) => action),
+        ]
+      : [];
+  const action = allowlistedLabel(actionKey, actions);
+  if (summary === undefined || summaryKey !== summary || action === undefined) return undefined;
+  const named = Array.isArray(serials) ? serials.filter((serial): serial is string => typeof serial === 'string') : [];
+  return { code, summaryKey: summary, actionKey: action, ...(named.length === 0 ? {} : { serials: named }) };
+}
+
 /** HomeKit conditions that state a gap nothing in the user's setup closes, so an active one is not a warning. */
 const INFORMATIONAL_HOMEKIT_CONDITIONS = new Set<HomeKitConditionCode>(['recognized-device-not-represented']);
 
@@ -2958,7 +2997,7 @@ function sanitizeLiveVideoSelection(value: Record<string, unknown>): Record<stri
 
 /** Emits bounded normal-output condition transitions without stable device or account identity. */
 export class DiagnosticConditions {
-  private readonly active = new Map<string, string>();
+  private readonly active = new Map<string, { fingerprint: string; condition: ActiveCondition }>();
   private readonly aliases = new Map<string, string>();
   private runtimeState?: RuntimeState;
 
@@ -3051,7 +3090,13 @@ export class DiagnosticConditions {
           return name === undefined ? undefined : alias === undefined ? name : `${name} (${alias})`;
         })
         .filter((named): named is string => named !== undefined),
+      uniqueDeviceIds,
     );
+  }
+
+  /** Every condition active now, each held from the transition that raised it to the one that clears it. */
+  current(): ActiveCondition[] {
+    return [...this.active.values()].map(({ condition }) => condition);
   }
 
   /**
@@ -3080,13 +3125,17 @@ export class DiagnosticConditions {
     conditionKey = code,
     /** Accessory names for the console line only — never retained, see {@link DiagnosticConditions}. */
     names?: readonly string[],
+    serials: readonly string[] = [],
   ): void {
-    const fingerprint = JSON.stringify({ active, reason, ...fields });
+    const fingerprint = JSON.stringify({ active, reason, ...fields, serials });
     if (active) {
-      if (this.active.get(conditionKey) === fingerprint) {
+      if (this.active.get(conditionKey)?.fingerprint === fingerprint) {
         return;
       }
-      this.active.set(conditionKey, fingerprint);
+      this.active.set(conditionKey, {
+        fingerprint,
+        condition: { code, summaryKey, actionKey, ...(serials.length === 0 ? {} : { serials: [...serials] }) },
+      });
     } else if (!this.active.delete(conditionKey)) {
       return;
     }

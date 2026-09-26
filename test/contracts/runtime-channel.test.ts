@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseConfig } from '../../src/configuration.js';
 import { AccountOwnership } from '../../src/account/ownership.js';
-import { createDiagnosticLogger, GuidedDiagnostics } from '../../src/diagnostics.js';
+import { createDiagnosticLogger, DiagnosticConditions, GuidedDiagnostics } from '../../src/diagnostics.js';
 import {
   FrameReader,
   runtimeChannelEndpoint,
@@ -968,6 +968,63 @@ describe('runtime channel device observations', () => {
 
     expect(Object.keys(reading!.devices![0]!).sort()).toEqual(ANSWERED_DEVICE_FIELDS);
     expect(JSON.stringify(reading)).not.toMatch(/password|credential|captcha|answer|authToken|cookie|secret/i);
+  });
+});
+
+describe('diagnostic conditions answered to the dashboard', () => {
+  let root: string;
+  let server: RuntimeChannelServer | undefined;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'homebridge-eufy-channel-conditions-'));
+  });
+
+  afterEach(async () => {
+    server?.close();
+    await rm(root, { force: true, recursive: true });
+  });
+
+  /**
+   * The dashboard names every condition the runtime holds active, with its catalog keys and the devices it is
+   * about, and stops naming one once it clears. An entry outside the catalog never crosses the channel.
+   */
+  it('carries the active conditions from the runtime to the dashboard and drops a cleared one', async () => {
+    const conditions = new DiagnosticConditions({ debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() });
+    const endpoint = runtimeChannelEndpoint(root, process.platform, tmpdir());
+    server = new RuntimeChannelServer(endpoint, () =>
+      status({
+        conditions: [
+          ...conditions.current(),
+          { code: 'runtime-failed', summaryKey: 'free text', actionKey: 'log.action.reviewRuntime' },
+        ],
+      }),
+    );
+    await server.open();
+    const dashboard = () =>
+      readDashboard({ read: async () => trackerRecord() }, Date.now, {}, new RuntimeChannelClient(endpoint));
+    const lockFailed = { code: 'lock-operation-failed', capability: 'lock', active: true, reason: 'operation-failure' };
+
+    conditions.reportRuntimeState('degraded');
+    conditions.reportHomeKit(lockFailed, ['synthetic-sensor']);
+
+    expect((await dashboard()).conditions).toEqual([
+      {
+        code: 'runtime-transport-degraded',
+        summaryKey: 'log.runtime.transportDegraded',
+        actionKey: 'log.action.checkNetwork',
+      },
+      {
+        code: 'lock-operation-failed',
+        summaryKey: 'log.homekit.lockOperationFailed',
+        actionKey: 'log.action.retryLock',
+        serials: ['synthetic-sensor'],
+      },
+    ]);
+
+    conditions.reportRuntimeState('ready');
+    conditions.reportHomeKit({ ...lockFailed, active: false, reason: 'recovered' }, []);
+
+    expect((await dashboard()).conditions).toEqual([]);
   });
 });
 

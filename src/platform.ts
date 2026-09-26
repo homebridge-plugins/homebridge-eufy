@@ -103,6 +103,7 @@ export function createEufyPlatform(
       this.runtime = new RuntimeOwner(diagnosticLog, configuredConfig, clientFactory, {
         storageRoot,
         shutdownTimeoutMs,
+        conditions: () => diagnostics.current(),
       });
       this.runtime.subscribeState((state) => diagnostics.reportRuntimeState(state));
       if (storageRoot) {
