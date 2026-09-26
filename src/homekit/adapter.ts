@@ -133,6 +133,7 @@ export interface AdapterAttachmentContext {
   /** Where a live session is recorded, so opportunistic media work elsewhere on its station stands aside. */
   readonly stationLiveSessions?: StationLiveSessionRegistry;
   readonly audioEnabled?: boolean;
+  readonly securitySystemEnabled?: boolean;
   readonly snapshotMode?: SnapshotMode;
   /**
    * Which eufy guard mode each HomeKit security state means, for the states the user assigned.

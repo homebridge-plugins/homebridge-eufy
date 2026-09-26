@@ -344,9 +344,19 @@ export const SECURITY_SYSTEM_ADAPTER = {
  * Only an exact mode reaches the target state, whose valid values are the three modes this adapter can write.
  * Night is a state the station reports and nothing here sets, so the target keeps the last mode written or
  * read exactly, and HomeKit offers no control that would have to be refused.
+ *
+ * A device whose owner turned the security system off gets no service, and loses the one a cached accessory
+ * still carries.
  */
 function attachSecuritySystem(context: AdapterAttachmentContext): AttachedAdapter | undefined {
   const { accessory, hap } = context;
+  if (context.securitySystemEnabled === false) {
+    const cached = accessory.getServiceById(hap.Service.SecuritySystem, SECURITY_SYSTEM_ADAPTER_KEY);
+    if (cached) {
+      accessory.removeService(cached);
+    }
+    return undefined;
+  }
   const device = context.device as SecuritySystemSdkDevice;
   let arming: ArmingActions | undefined;
   try {

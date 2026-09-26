@@ -201,6 +201,7 @@
   "passwordLabel": "Mot de passe",
   "preferenceArmingModes": "Modes de garde HomeKit",
   "preferenceAudio": "Audio HomeKit",
+  "preferenceSecuritySystem": "Système de sécurité HomeKit",
   "preferenceRepresented": "Exposer dans HomeKit",
   "preferenceSaveFailed": "La préférence n’a pas pu être enregistrée. Réessayez.",
   "preferenceSnapshotMode": "Mode d’instantané",

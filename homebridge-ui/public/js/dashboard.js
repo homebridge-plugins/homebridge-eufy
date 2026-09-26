@@ -59,6 +59,7 @@
     const labels = {
       represented: messages.preferenceRepresented,
       audio: messages.preferenceAudio,
+      securitySystem: messages.preferenceSecuritySystem,
       snapshotMode: messages.preferenceSnapshotMode,
     };
     if (key === 'armingModes') {
@@ -311,7 +312,7 @@
       const key = control?.dataset?.preference;
       const existing = getConfig();
       if (!existing || !serial || !key) return;
-      const defaults = { represented: true, audio: true, snapshotMode: 'Refresh' };
+      const defaults = { represented: true, audio: true, securitySystem: true, snapshotMode: 'Refresh' };
       if (key === 'armingModes') {
         await saveArmingMode(control, serial, existing, saveConfig, getMessages, elements);
         return;
@@ -391,6 +392,7 @@
     const preference = {
       represented: preferences[device.serial]?.represented ?? true,
       audio: preferences[device.serial]?.audio ?? true,
+      securitySystem: preferences[device.serial]?.securitySystem ?? true,
       snapshotMode: preferences[device.serial]?.snapshotMode ?? 'Refresh',
       armingModes: { ...DEFAULT_ARMING_MODES, ...preferences[device.serial]?.armingModes },
     };

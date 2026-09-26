@@ -1213,6 +1213,7 @@ describe('packed plugin', () => {
         'preferenceAudio',
         'preferenceRepresented',
         'preferenceSaveFailed',
+        'preferenceSecuritySystem',
         'preferenceSnapshotMode',
         'snapshotModeCloudDescription',
         'snapshotModeLiveDescription',

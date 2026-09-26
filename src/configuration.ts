@@ -37,6 +37,7 @@ export const DEFAULT_ARMING_MODES: ArmingModeMap = { home: 'home', away: 'away',
 export interface EntityPreference {
   represented?: boolean;
   audio?: boolean;
+  securitySystem?: boolean;
   snapshotMode?: SnapshotMode;
   armingModes?: ArmingModeMap;
 }
@@ -44,6 +45,7 @@ export interface EntityPreference {
 export interface ResolvedEntityPreference {
   represented: boolean;
   audio: boolean;
+  securitySystem: boolean;
   snapshotMode: SnapshotMode;
   armingModes: ArmingModeMap;
 }
@@ -78,7 +80,13 @@ export interface EufyConfig {
   discardedV4Acknowledged: boolean;
 }
 
-const ENTITY_PREFERENCE_KEYS = new Set<keyof EntityPreference>(['represented', 'audio', 'snapshotMode', 'armingModes']);
+const ENTITY_PREFERENCE_KEYS = new Set<keyof EntityPreference>([
+  'represented',
+  'audio',
+  'securitySystem',
+  'snapshotMode',
+  'armingModes',
+]);
 const SNAPSHOT_MODES = new Set<SnapshotMode>(['Cloud', 'Live', 'Refresh']);
 const ARMING_SLOTS = new Set<ArmingSlot>(['home', 'away', 'night', 'off']);
 
@@ -120,6 +128,9 @@ function parseEntityPreferences(value: unknown): Record<string, EntityPreference
       }
       if (candidate.audio !== undefined && typeof candidate.audio !== 'boolean') {
         throw new TypeError(`entityPreferences.${serial}.audio must be a boolean`);
+      }
+      if (candidate.securitySystem !== undefined && typeof candidate.securitySystem !== 'boolean') {
+        throw new TypeError(`entityPreferences.${serial}.securitySystem must be a boolean`);
       }
       if (candidate.snapshotMode !== undefined && !SNAPSHOT_MODES.has(candidate.snapshotMode as SnapshotMode)) {
         throw new TypeError(`entityPreferences.${serial}.snapshotMode must be Cloud, Live, or Refresh`);
@@ -274,6 +285,7 @@ export function resolveEntityPreference(config: EufyConfig, serial: string): Res
   return {
     represented: preference?.represented ?? true,
     audio: preference?.audio ?? true,
+    securitySystem: preference?.securitySystem ?? true,
     snapshotMode: preference?.snapshotMode ?? 'Refresh',
     armingModes: { ...DEFAULT_ARMING_MODES, ...preference?.armingModes },
   };

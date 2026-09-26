@@ -765,6 +765,34 @@ describe('HomeKit registry reconciliation', () => {
     expect(recording.unregisterPlatformAccessories).toHaveBeenCalledWith([accessory]);
   });
 
+  /** A security system its owner turned off is removed from the cached accessory, and the device's other services stay. */
+  it('attaches no Security System where the preference turns it off, and keeps the rest of the accessory', () => {
+    const serial = 'synthetic-standalone-security-system';
+    const manifest = contactManifest(serial);
+    const arming = armingManifest(serial);
+    manifest.capabilities.push(...arming.capabilities);
+    manifest.details.push(...arming.details);
+    const device = { ...contactDevice(), ...armingDevice() } as Device;
+
+    const armedSource = new RegistrySource();
+    const armed = recordingApi();
+    new HomeKitReconciler(armedSource, armed.api, vi.fn()).start();
+    armedSource.publish(registryView(1, new Map([[serial, device]]), snapshot(manifest)));
+    const cached = armed.registerPlatformAccessories.mock.calls[0]?.[0][0] as PlatformAccessory;
+    expect(cached.getServiceById(Service.SecuritySystem, 'arming.security-system')).toBeDefined();
+
+    const source = new RegistrySource();
+    const recording = recordingApi();
+    new HomeKitReconciler(source, recording.api, vi.fn(), [cached], undefined, {
+      [serial]: { securitySystem: false },
+    }).start();
+    source.publish(registryView(1, new Map([[serial, device]]), snapshot(manifest)));
+
+    expect(cached.getServiceById(Service.SecuritySystem, 'arming.security-system')).toBeUndefined();
+    expect(cached.getService(Service.ContactSensor)).toBeDefined();
+    expect(recording.unregisterPlatformAccessories).not.toHaveBeenCalled();
+  });
+
   it('represents lock targets only for the exact evidenced T8531 boundary', async () => {
     const serial = 'synthetic-video-lock';
     const source = new RegistrySource();

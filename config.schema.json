@@ -76,6 +76,10 @@
                 "default": true,
                 "type": "boolean"
               },
+              "securitySystem": {
+                "default": true,
+                "type": "boolean"
+              },
               "snapshotMode": {
                 "default": "Refresh",
                 "enum": [

@@ -201,6 +201,7 @@
   "passwordLabel": "Password",
   "preferenceArmingModes": "HomeKit guard modes",
   "preferenceAudio": "HomeKit audio",
+  "preferenceSecuritySystem": "HomeKit security system",
   "preferenceRepresented": "Expose in HomeKit",
   "preferenceSaveFailed": "The preference could not be saved. Try again.",
   "preferenceSnapshotMode": "Snapshot mode",
