@@ -37,8 +37,10 @@
    *
    * A row is the whole control — the state names itself and the select beside it says what it means. An
    * unassigned state shows a dash, which is what keeps Night out of HomeKit until it is given a mode.
+   *
+   * It is withheld while the security system it maps is turned off, and the stored map is kept for when it is back.
    */
-  function armingModeControl(device, assigned, messages) {
+  function armingModeControl(device, assigned, messages, securitySystem) {
     const summary = ARMING_SLOTS.map(
       ({ slot, label }) => `${messages[label]} → ${EUFY_MODES.find((mode) => mode.value === assigned[slot])?.label ?? '—'}`,
     ).join(' · ');
@@ -52,7 +54,7 @@
       return `<tr><th scope="row"><label for="${id}">${escapeHtml(messages[label])}</label></th><td><select id="${id}" data-preference="armingModes" data-slot="${slot}" data-serial="${escapeHtml(device.serial)}" data-original="${escapeHtml(value)}"><option value=""${value === '' ? ' selected' : ''}>—</option>${options}</select></td></tr>`;
     }).join('');
     const assignedItself = ARMING_SLOTS.some(({ slot }) => assigned[slot] !== DEFAULT_ARMING_MODES[slot]);
-    return `<details class="arming-setting" data-setting${assignedItself ? ' open' : ''}${device.represented ? '' : ' hidden'} data-requires-representation><summary><span class="setting-label">${escapeHtml(messages.preferenceArmingModes)}</span><span class="arming-summary">${escapeHtml(summary)}</span></summary><table class="arming-table"><thead><tr><th scope="col">HomeKit</th><th scope="col">eufy</th></tr></thead><tbody>${rows}</tbody></table><p class="snapshot-help">${escapeHtml(messages.armingModesHelp)}</p></details>`;
+    return `<details class="arming-setting" data-setting${assignedItself ? ' open' : ''}${device.represented && securitySystem ? '' : ' hidden'} data-requires-representation data-requires-security-system><summary><span class="setting-label">${escapeHtml(messages.preferenceArmingModes)}</span><span class="arming-summary">${escapeHtml(summary)}</span></summary><table class="arming-table"><thead><tr><th scope="col">HomeKit</th><th scope="col">eufy</th></tr></thead><tbody>${rows}</tbody></table><p class="snapshot-help">${escapeHtml(messages.armingModesHelp)}</p></details>`;
   }
 
   function preferenceControl(device, key, preference, messages) {
@@ -63,7 +65,7 @@
       snapshotMode: messages.preferenceSnapshotMode,
     };
     if (key === 'armingModes') {
-      return armingModeControl(device, preference.armingModes, messages);
+      return armingModeControl(device, preference.armingModes, messages, preference.securitySystem);
     }
     const represented = preference.represented;
     const dependent = key === 'represented' ? '' : ` data-requires-representation${represented ? '' : ' hidden'}`;
@@ -338,9 +340,16 @@
             (candidate) => candidate.dataset.serial === serial,
           );
           tile?.classList.toggle('device-tile-disabled', !value);
+          const grid = control.closest('.preference-grid');
+          const securityOff = grid?.querySelector('[data-preference="securitySystem"]')?.checked === false;
+          grid?.querySelectorAll('[data-requires-representation]').forEach((setting) => {
+            setting.hidden = !value || (securityOff && setting.hasAttribute('data-requires-security-system'));
+          });
+        }
+        if (key === 'securitySystem') {
           control
             .closest('.preference-grid')
-            ?.querySelectorAll('[data-requires-representation]')
+            ?.querySelectorAll('[data-requires-security-system]')
             .forEach((setting) => {
               setting.hidden = !value;
             });
