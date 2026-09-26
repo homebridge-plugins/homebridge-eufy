@@ -132,7 +132,13 @@ describe('SDK/HAP coverage matrix', () => {
 
     const representedLock = SDK_HAP_COVERAGE_MATRIX.rows.filter(({ adapter }) => adapter === 'lock.mechanism');
     expect(representedLock.map(({ id }) => id).sort()).toEqual(
-      ['lock.lock.momentary-action', 'lock.unlock.momentary-action', 'lock.lockState.event'].sort(),
+      [
+        'lock.lock.momentary-action',
+        'lock.unlock.momentary-action',
+        'lock.lockState.event',
+        'lock.locked.read',
+        'lock.locked.persistent-operation',
+      ].sort(),
     );
     expect(
       representedLock
@@ -144,15 +150,6 @@ describe('SDK/HAP coverage matrix', () => {
       'the announced state is presented, not controlled',
     ).toMatchObject({ representationStatus: 'represented', controlStatus: 'not-controllable' });
     expect(representedLock.every(({ evidence }) => evidence.some((item) => item.includes('T8531')))).toBe(true);
-    expect(
-      SDK_HAP_COVERAGE_MATRIX.rows
-        .filter(({ id }) => id === 'lock.locked.read' || id === 'lock.locked.persistent-operation')
-        .every(
-          ({ disposition, representationStatus }) =>
-            disposition === 'blocked-sdk-gap' && representationStatus === 'not-represented',
-        ),
-      'the SDK does not stand behind the locked read, so no state is presented from it',
-    ).toBe(true);
 
     const diagnosticOnlySiren = SDK_HAP_COVERAGE_MATRIX.rows.filter(
       ({ capability, disposition }) => capability === 'siren' && disposition === 'diagnostic-only',

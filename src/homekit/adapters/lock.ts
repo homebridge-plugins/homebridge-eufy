@@ -10,14 +10,17 @@ import type {
 
 export const LOCK_ADAPTER_KEY = 'lock.mechanism';
 
-/**
- * The announcement this adapter presents the lock's physical state from.
- *
- * The lock holds no state param worth reading — the SDK's `locked` member sits on a placeholder id with
- * `guessed` provenance and is normally not even installed — so this event is the only evidence of what the
- * bolt did. It is required before any state is presented, so the code cannot claim a state it never receives.
- */
+/** The announcement this adapter presents what the bolt did from, as it happens. */
 export const LOCK_STATE_EVENT_ROW = 'lock.lockState.event';
+
+/**
+ * The lock's own reported state, which presents the bolt before any announcement has.
+ *
+ * The SDK verifies it on the lock's state param. The lock and unlock actions are what write it, which is why
+ * its operation row is the target this adapter already controls.
+ */
+export const LOCKED_READ_ROW = 'lock.locked.read';
+const LOCKED_WRITE_ROW = 'lock.locked.persistent-operation';
 
 const LOCK_ACTION = {
   id: 'lock.lock.momentary-action',
@@ -361,7 +364,7 @@ export interface LockDiagnostic extends AdapterDiagnostic {
     | 'recovered';
 }
 
-const COVERAGE = [LOCK_ACTION.id, UNLOCK_ACTION.id, LOCK_STATE_EVENT_ROW];
+const COVERAGE = [LOCK_ACTION.id, UNLOCK_ACTION.id, LOCK_STATE_EVENT_ROW, LOCKED_READ_ROW, LOCKED_WRITE_ROW];
 
 /**
  * Complete HomeKit policy for the evidenced lock-control boundary, one model at a time.
@@ -381,11 +384,12 @@ export const LOCK_ADAPTER = {
 } as const satisfies HomeKitAdapter;
 
 /**
- * Attaches the lock's controls, and its physical state where the device announces one.
+ * Attaches the lock's controls, and its physical state where the device reports or announces one.
  *
- * The controls and the state are deliberately gated apart: a lock that reports no state announcement is still
- * worth locking from HomeKit, so the two momentary actions admit the accessory and the announcement only
- * decides whether a state is presented beside them.
+ * The controls and the state are deliberately gated apart: a lock that reports no state is still worth locking
+ * from HomeKit, so the two momentary actions admit the accessory and the state evidence only decides whether a
+ * state is presented beside them. The reported state seeds only an attachment nothing has announced to yet,
+ * because an announcement is the newer observation and the only one that can say the bolt jammed.
  */
 function attachLock(context: AdapterAttachmentContext): AttachedAdapter | undefined {
   const { accessory, hap } = context;
@@ -439,13 +443,25 @@ function attachLock(context: AdapterAttachmentContext): AttachedAdapter | undefi
   const current = service.getCharacteristic(hap.Characteristic.LockCurrentState);
   const target = service.getCharacteristic(hap.Characteristic.LockTargetState);
   const announces = context.evidence.has(LOCK_STATE_EVENT_ROW);
+  const reports = context.evidence.has(LOCKED_READ_ROW);
   const diagnoseState = (active: boolean, reason: LockDiagnostic['reason']): void => {
     context.diagnose({ code: 'unusable-lock-announcement', capability: 'lock', member: 'state', active, reason });
     if (!active) {
       context.observed('unusable-lock-announcement');
     }
   };
-  if (!announces) {
+  if (reports && state.announced === undefined) {
+    let locked: unknown;
+    try {
+      locked = actions.locked;
+    } catch {
+      locked = undefined;
+    }
+    if (typeof locked === 'boolean') {
+      state.announced = state.announcedTarget = locked ? 'secured' : 'unsecured';
+    }
+  }
+  if (!announces && !reports) {
     state.announced = undefined;
     state.announcedTarget = undefined;
     context.diagnose({
