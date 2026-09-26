@@ -2074,6 +2074,7 @@ const HOMEKIT_EVENT_ROUTES: Readonly<Record<string, ReadonlySet<string>>> = {
   'battery.status': new Set(['battery-alert', 'battery-level']),
   'contact.sensor': new Set(['contact-state']),
   'doorbell.press': new Set(['doorbell-press']),
+  'doorbell.package': new Set(['package-presence']),
   'lock.mechanism': new Set(['lock-state']),
   'motion.sensor': new Set(['motion-detection']),
   'arming.security-system': new Set(['arming-mode-changed', 'security-system-alarm']),
