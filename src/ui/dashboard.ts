@@ -20,6 +20,7 @@ export type DashboardState =
   | 'missing'
   | 'stale'
   | 'incomplete'
+  | 'failed'
   | 'restart-required';
 
 export type DashboardCategory = 'security' | 'life' | 'clean';
@@ -223,6 +224,9 @@ function stateOf(evidence: Pick<RuntimeTrackerRecord, 'state' | 'status' | 'comp
   if (evidence.state === 'owner-conflict') {
     return 'owner-conflict';
   }
+  if (evidence.state === 'failed') {
+    return 'failed';
+  }
   if (evidence.state === 'degraded' && evidence.status === 'transport-degraded') {
     return 'degraded';
   }
@@ -253,8 +257,8 @@ function superseded(live: RuntimeChannelReading): { runningVersion?: string; res
  * thing a stale or degraded runtime retains. The runtime's state is the live one whenever a runtime is there
  * to state it, and the file's own state and freshness alone when none is.
  *
- * A published `authentication-required` never ages into `stale`. The runtime stops publishing once it reaches
- * that state, and the state stays true until the account is authenticated again.
+ * A published `authentication-required` or `failed` never ages into `stale`. The runtime stops publishing once it
+ * reaches either state, and the state stays true until the account is authenticated again or Homebridge restarts.
  *
  * An inventory committed for an account no runtime has started is shown as `restart-required`. That is the state
  * after an interactive authentication, which discovers the account's devices and commits them with the
@@ -302,6 +306,7 @@ export async function readDashboard(
   }
   if (
     record.state !== 'authentication-required' &&
+    record.state !== 'failed' &&
     (!Number.isFinite(updatedAt) || age < -5_000 || age > DASHBOARD_FRESH_THRESHOLD_MS)
   ) {
     return { state: 'stale', updatedAt: record.updatedAt, devices, warmUpCandidates };

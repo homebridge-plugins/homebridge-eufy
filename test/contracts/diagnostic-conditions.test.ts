@@ -948,6 +948,80 @@ describe('diagnostic conditions', () => {
    * Every reason a camera omitted from HomeKit Secure Video can carry. The allowlist discards a record whose
    * reason it does not know, so a reason that never reaches this seam is a camera that never explains itself.
    */
+  /**
+   * A condition names the remedy that fits its cause. A device HomeKit cannot represent yet is an informational line
+   * with nothing to do, an unmapped guard mode points at the mode map, a missing FFmpeg points at the path setting,
+   * and one that cannot be started points at the same setting to check. A reason with no remedy of its own keeps
+   * the condition's. The retained record carries the same level and action as the console line.
+   */
+  it('names the remedy that fits each cause, at its level, on the console and in the record', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-remedy-'));
+    const info = vi.fn();
+    const warn = vi.fn();
+    const logger = createDiagnosticLogger({ debug: vi.fn(), error: vi.fn(), info, warn }, root);
+    const conditions = new DiagnosticConditions(logger);
+    const cases = [
+      ['recognized-device-not-represented', {}, 'no-primary-purpose-member', 'info', 'log.action.notSupportedYet'],
+      [
+        'unsupported-arming-mode',
+        { capability: 'arming', member: 'mode' },
+        'unsupported',
+        'warn',
+        'log.action.mapArmingMode',
+      ],
+      [
+        'camera-streaming-capability-unavailable',
+        { capability: 'camera', member: 'live' },
+        'adapter-missing',
+        'warn',
+        'log.action.setFfmpegPath',
+      ],
+      [
+        'camera-recording-unavailable',
+        { capability: 'camera', member: 'recordFragments' },
+        'adapter-missing',
+        'warn',
+        'log.action.setFfmpegPath',
+      ],
+      [
+        'camera-live-session-failed',
+        { capability: 'camera', member: 'live' },
+        'adaptation-spawn-failed',
+        'warn',
+        'log.action.checkFfmpegPath',
+      ],
+      [
+        'camera-live-session-failed',
+        { capability: 'camera', member: 'live' },
+        'source-error',
+        'warn',
+        'log.action.retryLiveView',
+      ],
+    ] as const;
+
+    try {
+      for (const [code, fields, reason] of cases) {
+        conditions.reportHomeKit({ code, ...fields, active: true, reason }, ['T8000P0000000000']);
+      }
+      await logger.flush?.();
+
+      const records = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(records.map(({ code, reason, level, actionKey }) => [code, reason, level, actionKey])).toEqual(
+        cases.map(([code, , reason, level, actionKey]) => [code, reason, level, actionKey]),
+      );
+      expect(info.mock.calls.map(([message]) => String(message).split(']')[0])).toEqual([
+        '[recognized-device-not-represented',
+      ]);
+      expect(info.mock.calls[0]![0]).toContain('No action is needed');
+      expect(warn).toHaveBeenCalledTimes(cases.length - 1);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it('attributes every reason a camera is unavailable for recording', () => {
     const warn = vi.fn();
     const info = vi.fn();

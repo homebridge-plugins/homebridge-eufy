@@ -254,10 +254,11 @@
   }
 
   /*
-   * The states a diagnostic run can shed light on. Sign-in, another process holding the session, and a pending
-   * restart each have their own remedy stated on the page, so sending those to the wizard would be a detour.
+   * The states a diagnostic run can shed light on. Sign-in, another process holding the session, a pending
+   * restart, a plugin that stopped on an error, a page that could not load, and a connection that recovers on its
+   * own each have their own remedy stated on the page, so sending those to the wizard would be a detour.
    */
-  const DIAGNOSABLE = new Set(['degraded', 'incomplete', 'missing', 'stale']);
+  const DIAGNOSABLE = new Set(['incomplete', 'missing', 'stale']);
 
   function render(result, config, messages, elements) {
     const suffix = result.state

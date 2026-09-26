@@ -516,7 +516,11 @@ describe('temporary authentication', () => {
     await authentication.close();
   });
 
-  it('releases ownership when publishing an authenticated session fails', async () => {
+  /**
+   * A sign-in that succeeded and then could not be committed is its own outcome, distinct from a refused sign-in,
+   * because its remedy is a restart rather than new account details. Ownership is released either way.
+   */
+  it('reports commit-failed and releases ownership when publishing an authenticated session fails', async () => {
     const release = vi.fn(async () => ({ state: 'stopped' as const }));
     const stores = {
       account: 'guest@example.invalid',
@@ -545,7 +549,7 @@ describe('temporary authentication', () => {
       { flowTimeoutMs: 1_000, cleanupTimeoutMs: 100 },
     );
 
-    await expect(authentication.start(authenticationInput())).resolves.toEqual({ status: 'failed' });
+    await expect(authentication.start(authenticationInput())).resolves.toEqual({ status: 'commit-failed' });
     expect(release).toHaveBeenCalledOnce();
   });
 
@@ -582,7 +586,7 @@ describe('temporary authentication', () => {
       { flowTimeoutMs: 1_000, cleanupTimeoutMs: 100 },
     );
 
-    await expect(authentication.start(authenticationInput())).resolves.toEqual({ status: 'failed' });
+    await expect(authentication.start(authenticationInput())).resolves.toEqual({ status: 'commit-failed' });
   });
 
   it.each(['disconnect', 'SIGHUP', 'SIGINT', 'SIGTERM'] as const)('cleans up on process %s', async (signal) => {

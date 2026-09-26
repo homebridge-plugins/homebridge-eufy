@@ -27,6 +27,7 @@
       <h2 id="legacy-notice-title" data-i18n="legacyTitle"></h2>
       <p data-i18n="legacySummary"></p>
       <p class="legacy-settings" data-legacy-settings></p>
+      <p role="status" data-legacy-status></p>
     </div>
     <button type="button" data-legacy-acknowledge data-i18n="acknowledge"></button>
   </aside>
@@ -339,7 +340,7 @@
       <div class="field-row">
         <label>
           <span data-i18n="countryLabel"></span>
-          <input type="text" inputmode="text" maxlength="2" required data-country />
+          <input type="text" inputmode="text" maxlength="2" pattern="[A-Za-z]{2}" required data-country />
         </label>
         <label>
           <span data-i18n="trustedDeviceLabel"></span>
