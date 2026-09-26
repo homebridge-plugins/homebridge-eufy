@@ -53,9 +53,9 @@
     return deviceProfiles.includes(state.profile) ? { ...state, mode: 'devices' } : start();
   }
 
-  function screen(session, startingAnother) {
-    if (session.partialExportAvailable && !startingAnother) return 'review';
-    if (startingAnother || session.status === 'inactive' || session.status === 'expired') return 'choose';
+  function screen(session) {
+    if (session.partialExportAvailable) return 'review';
+    if (session.status === 'inactive' || session.status === 'expired') return 'choose';
     if (session.status === 'authorized' || session.status === 'reproducing') return 'reproduce';
     return 'status';
   }

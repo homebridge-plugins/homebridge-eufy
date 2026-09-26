@@ -379,8 +379,9 @@ button.diagnostics-quiet-action {
   font-size: 12px;
 }
 
-.diagnostics-result {
+.diagnostics-result[open] {
   display: grid;
+  max-width: 560px;
   gap: 8px;
 }
 
@@ -390,7 +391,8 @@ button.diagnostics-quiet-action {
  * anchor because it navigates to GitHub.
  */
 .diagnostics-result [data-diagnostics-export],
-.diagnostics-result [data-diagnostics-issue] {
+.diagnostics-result [data-diagnostics-issue],
+.diagnostics-result [data-diagnostics-existing-issue] {
   display: flex;
   width: 100%;
   min-height: 44px;
@@ -443,6 +445,16 @@ button.diagnostics-quiet-action {
   background: var(--accent);
   color: var(--on-accent);
   content: '2';
+}
+
+/* The other way to hand the file over: attaching it to an issue the reporter already opened. */
+.diagnostics-result [data-diagnostics-existing-issue] {
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+}
+
+.diagnostics-result [data-diagnostics-existing-issue][hidden] {
+  display: none;
 }
 
 /* Without an archive there is nothing to attach, so the step is present and not yet a link. */
@@ -625,15 +637,6 @@ button.diagnostics-quiet-action {
 .diagnostics-manifest ul {
   margin: 8px 0;
   padding-left: 20px;
-}
-
-.diagnostics-review-confirm {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 12px;
-  font-size: 12px;
-  cursor: pointer;
 }
 
 .advanced-fields {
@@ -823,7 +826,7 @@ button.diagnostics-quiet-action {
   background: color-mix(in srgb, var(--alert) 26%, var(--panel));
 }
 
-.reauth-dialog {
+.blocking-dialog {
   max-width: 420px;
   border: 0;
   border-radius: var(--radius-panel);
@@ -833,16 +836,16 @@ button.diagnostics-quiet-action {
   padding: 24px;
 }
 
-.reauth-dialog::backdrop {
+.blocking-dialog::backdrop {
   background: rgb(0 0 0 / 30%);
   backdrop-filter: blur(5px);
 }
 
-.reauth-dialog h2 {
+.blocking-dialog h2 {
   margin: 0 0 8px;
 }
 
-.reauth-dialog p {
+.blocking-dialog p {
   margin: 0 0 20px;
   color: var(--ink-secondary);
 }
@@ -1686,8 +1689,7 @@ button.diagnostics-quiet-action {
   cursor: pointer;
 }
 
-.first-setup-confirmation input,
-.diagnostics-review-confirm input {
+.first-setup-confirmation input {
   appearance: none;
   display: grid;
   place-content: center;
@@ -1702,8 +1704,7 @@ button.diagnostics-quiet-action {
   padding: 0;
 }
 
-.first-setup-confirmation input::before,
-.diagnostics-review-confirm input::before {
+.first-setup-confirmation input::before {
   content: '';
   width: 8px;
   height: 4px;
@@ -1712,14 +1713,12 @@ button.diagnostics-quiet-action {
   transform: rotate(-45deg) scale(0);
 }
 
-.first-setup-confirmation input:checked,
-.diagnostics-review-confirm input:checked {
+.first-setup-confirmation input:checked {
   border-color: var(--accent);
   background: var(--accent);
 }
 
-.first-setup-confirmation input:checked::before,
-.diagnostics-review-confirm input:checked::before {
+.first-setup-confirmation input:checked::before {
   transform: rotate(-45deg) scale(1);
 }
 
