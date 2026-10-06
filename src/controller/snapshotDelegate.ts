@@ -374,8 +374,12 @@ export class snapshotDelegate {
       return;
     }
 
+    let localStream: Readable | undefined;
     try {
       const source = await this.getCameraSource();
+      if (source.type === 'local') {
+        localStream = source.stream;
+      }
       const buffer = await this.runFFmpegSnapshot('[Livestream Snapshot]', async (params) => {
         if (source.type === 'rtsp') {
           params.setInputSource(source.url);
@@ -391,6 +395,13 @@ export class snapshotDelegate {
       this.log.info('Snapshot captured from active livestream.');
     } catch (error) {
       this.log.debug('Failed to capture snapshot from active livestream: ' + error);
+    } finally {
+      // Release the fork like fetchSnapshot does. Left unread, it backpressures the
+      // shared P2P stream and stalls every other consumer (live view, HKSV).
+      if (localStream) {
+        localStream.destroy();
+        this.livestreamManager.stopLocalLiveStream();
+      }
     }
   }
 
