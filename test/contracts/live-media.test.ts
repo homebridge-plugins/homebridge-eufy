@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
+import { PassThrough, Writable } from 'node:stream';
 
 import type {
   LiveAudioFrame,
@@ -7,6 +7,7 @@ import type {
   LiveVideoConfig,
   LiveVideoFrame,
   StreamBudgetNotice,
+  TalkbackCodec,
   TalkbackHandle,
 } from '@mega-yfue/eufy-sdk';
 import { LiveStreamStartError } from '@mega-yfue/eufy-sdk';
@@ -41,6 +42,9 @@ const NEGOTIATED_VIDEO: NegotiatedLiveVideo = {
   mtu: 1200,
   rtcpInterval: 0.5,
 };
+
+/** A synthetic AudioSpecificConfig: ER AAC-ELD, 16 kHz, mono, LD-SBR, shaped like the one the SDK attaches. */
+const ELD_CONFIG = Buffer.from([0xf8, 0xf0, 0x21, 0x2c, 0x00, 0xbc, 0x00]);
 
 const AAC_ELD_16: NegotiatedLiveAudio = {
   codec: 'AAC-eld',
@@ -143,6 +147,32 @@ function inputOptions(args: readonly string[]): string[] {
   return args.slice(0, args.indexOf('-i'));
 }
 
+/** The FLV file header an audio-only stream opens with: signature, version 1, audio flag, size 9, no tag before. */
+const FLV_AUDIO_FILE_HEADER = Buffer.from([
+  0x46, 0x4c, 0x56, 0x01, 0x04, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00,
+]);
+
+/**
+ * The tags of an FLV byte stream after its 13-byte file header, each as its tag type, body, timestamp, stream id,
+ * and whether the size that closes it matches the tag.
+ */
+function flvTags(stream: Buffer) {
+  const tags: Array<{ type: number; body: Buffer; timestamp: number; streamId: number; closed: boolean }> = [];
+  let offset = 13;
+  while (offset + 11 <= stream.length) {
+    const size = stream.readUIntBE(offset + 1, 3);
+    tags.push({
+      type: stream[offset]!,
+      body: stream.subarray(offset + 11, offset + 11 + size),
+      timestamp: stream.readUIntBE(offset + 4, 3) | (stream[offset + 7]! << 24),
+      streamId: stream.readUIntBE(offset + 8, 3),
+      closed: stream.readUInt32BE(offset + 11 + size) === 11 + size,
+    });
+    offset += 11 + size + 4;
+  }
+  return tags;
+}
+
 /** One adaptation process whose input is observable as `input`, whichever kind of sink it was given. */
 function process(stdin?: StallingAdaptationInput): SyntheticProcess {
   const events = new EventEmitter();
@@ -161,24 +191,45 @@ function process(stdin?: StallingAdaptationInput): SyntheticProcess {
   };
 }
 
-type SyntheticReturnAudioProcess = SyntheticProcess & { stdout: PassThrough };
+type SyntheticReturnAudioProcess = SyntheticProcess & { stdout: PassThrough; eld: PassThrough };
 
 function returnAudioProcess(): SyntheticReturnAudioProcess {
   const child = process() as SyntheticReturnAudioProcess;
   child.stdout = new PassThrough();
+  child.eld = new PassThrough();
   return child;
 }
 
+/** An FLV byte stream carrying `config` and then each access unit, built from the FLV tag layout. */
+function flvStream(config: Buffer, units: Buffer[]): Buffer {
+  const tag = (body: Buffer): Buffer => {
+    const header = Buffer.alloc(11);
+    header[0] = 8;
+    header.writeUIntBE(body.length, 1, 3);
+    const size = Buffer.alloc(4);
+    size.writeUInt32BE(11 + body.length);
+    return Buffer.concat([header, body, size]);
+  };
+  return Buffer.concat([
+    Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x04, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00]),
+    tag(Buffer.concat([Buffer.from([0xaf, 0x00]), config])),
+    ...units.map((unit) => tag(Buffer.concat([Buffer.from([0xaf, 0x01]), unit]))),
+  ]);
+}
+
+const ELD_TALKBACK_CONFIG = Buffer.from('f8f0212c00bc00', 'hex');
+
 class SyntheticTalkback extends EventEmitter implements TalkbackHandle {
   readonly written: Buffer[] = [];
-  readonly sink = new PassThrough();
+  readonly sink: PassThrough;
   readonly stop = vi.fn(async () => {
     this.emit('stop');
   });
   readonly pending = 0;
 
-  constructor() {
+  constructor(readonly codec: TalkbackCodec = 'aac-lc') {
     super();
+    this.sink = codec === 'aac-eld' ? new PassThrough({ objectMode: true, highWaterMark: 4 }) : new PassThrough();
     this.sink.on('data', (chunk: Buffer) => this.written.push(Buffer.from(chunk)));
   }
 
@@ -928,15 +979,19 @@ describe('live media adaptation', () => {
     const alaw = await liveSession(undefined, { audio: AAC_ELD_16 });
     await alaw.start();
     alaw.stream.audio({ codec: 'g711a', data: Buffer.from([1, 2, 3]) });
+    const eld = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await eld.start();
+    eld.stream.audio({ codec: 'aac-eld', data: Buffer.from([1, 2, 3]), config: ELD_CONFIG });
 
-    const inputs = [...video.spawned, ...aac.spawned, ...alaw.spawned].map(inputOptions);
-    expect(inputs).toHaveLength(4);
+    const inputs = [...video.spawned, ...aac.spawned, ...alaw.spawned, ...eld.spawned].map(inputOptions);
+    expect(inputs).toHaveLength(5);
     for (const options of inputs) {
       expect(options).toEqual(expect.arrayContaining(['-use_wallclock_as_timestamps', '1']));
     }
     video.prepared.stop();
     aac.prepared.stop();
     alaw.prepared.stop();
+    eld.prepared.stop();
   });
 
   /**
@@ -948,10 +1003,14 @@ describe('live media adaptation', () => {
    * resampler is what bounds the output to real time however much content a source hands over at once, and it
    * belongs on every audio input format rather than one.
    */
-  it.each(['aac-lc', 'g711a'] as const)('resolves a live %s output against arrival', async (codec) => {
+  it.each(['aac-lc', 'g711a', 'aac-eld'] as const)('resolves a live %s output against arrival', async (codec) => {
     const session = await liveSession(undefined, { audio: AAC_ELD_16 });
     await session.start();
-    session.stream.audio({ codec, data: Buffer.from([0xff, 0xf1, 1]) });
+    session.stream.audio({
+      codec,
+      data: Buffer.from([0xff, 0xf1, 1]),
+      ...(codec === 'aac-eld' ? { config: ELD_CONFIG } : {}),
+    });
 
     expect(session.spawned[0]!).toEqual(expect.arrayContaining(['-af', 'aresample=async=1']));
     session.prepared.stop();
@@ -974,9 +1033,12 @@ describe('live media adaptation', () => {
     const alaw = await liveSession(undefined, { audio: AAC_ELD_16 });
     await alaw.start();
     alaw.stream.audio({ codec: 'g711a', data: Buffer.from([0xd5]) });
+    const eld = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await eld.start();
+    eld.stream.audio({ codec: 'aac-eld', data: Buffer.from([0x73]), config: ELD_CONFIG });
 
-    const inputs = [...video.spawned, ...audio.spawned, ...alaw.spawned].map(inputOptions);
-    expect(inputs).toHaveLength(4);
+    const inputs = [...video.spawned, ...audio.spawned, ...alaw.spawned, ...eld.spawned].map(inputOptions);
+    expect(inputs).toHaveLength(5);
     for (const options of inputs) {
       expect(options).toEqual(expect.arrayContaining(['-probesize', '32', '-analyzeduration', '1']));
       for (const forbidden of ['nobuffer', 'discardcorrupt', 'genpts', 'gendts', 'igndts']) {
@@ -986,6 +1048,7 @@ describe('live media adaptation', () => {
     video.prepared.stop();
     audio.prepared.stop();
     alaw.prepared.stop();
+    eld.prepared.stop();
   });
 
   /**
@@ -1711,6 +1774,33 @@ describe('live media adaptation', () => {
     expect(children[1].kill).not.toHaveBeenCalled();
   });
 
+  /**
+   * Audio that carries its decoder config apart from its access units reaches FFmpeg as FLV holding exactly that
+   * config and those bytes, in tags that carry no timeline of their own.
+   */
+  it('hands audio that carries its own decoder config to FFmpeg as FLV with that config', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+    const first = Buffer.from([0x73, 0x69, 0xa0]);
+    const second = Buffer.from([0x72, 0x6a]);
+
+    session.stream.audio({ codec: 'aac-eld', data: first, config: ELD_CONFIG });
+    session.stream.audio({ codec: 'aac-eld', data: second, config: ELD_CONFIG });
+    await settle();
+
+    expect(session.children).toHaveLength(1);
+    expect(inputOptions(session.spawned[0]!)).toEqual(expect.arrayContaining(['-f', 'flv', '-c:a', 'libfdk_aac']));
+    const written = Buffer.concat(session.children[0]!.input);
+    expect(written.subarray(0, 13)).toEqual(FLV_AUDIO_FILE_HEADER);
+    const tag = (body: Buffer) => ({ type: 8, body, timestamp: 0, streamId: 0, closed: true });
+    expect(flvTags(written)).toEqual([
+      tag(Buffer.concat([Buffer.from([0xaf, 0]), ELD_CONFIG])),
+      tag(Buffer.concat([Buffer.from([0xaf, 1]), first])),
+      tag(Buffer.concat([Buffer.from([0xaf, 1]), second])),
+    ]);
+    session.prepared.stop();
+  });
+
   it('tells only a raw a-law input the sample rate assumption its format cannot carry', async () => {
     const session = await liveSession(undefined, { audio: AAC_ELD_16 });
     await session.start();
@@ -1721,6 +1811,14 @@ describe('live media adaptation', () => {
 
     session.stream.audio({ codec: 'g711a', data: Buffer.from([1, 2, 3]) });
     expect(inputOptions(session.spawned[1]!)).toEqual(expect.arrayContaining(['-ar', '16k', '-ac', '1']));
+
+    session.stream.audio({ codec: 'aac-eld', data: Buffer.from([1, 2, 3]), config: ELD_CONFIG });
+    expect(inputOptions(session.spawned[2]!)).not.toContain('-ar');
+    expect(inputOptions(session.spawned[2]!)).not.toContain('-ac');
+    expect(inputOptions(session.spawned[2]!)).toEqual(expect.arrayContaining(['-f', 'flv']));
+    expect(flvTags(Buffer.concat(session.children[2]!.input))[0]!.body).toEqual(
+      Buffer.concat([Buffer.from([0xaf, 0]), ELD_CONFIG]),
+    );
     session.prepared.stop();
   });
 
@@ -1946,6 +2044,139 @@ describe('isolated return-audio adaptation', () => {
     session.prepared.stop();
     await settle();
     expect(handle.stop).toHaveBeenCalledOnce();
+  });
+
+  it('copies HomeKit return audio, unchanged AAC-ELD, into FLV on fd 3', async () => {
+    const session = await talkbackSession(async () => new SyntheticTalkback());
+    const args = session.returnedArgs[0]!;
+    const fd3 = args.slice(args.lastIndexOf('-map'));
+    expect(fd3).toEqual([
+      '-map',
+      '0:a:0',
+      '-vn',
+      '-c:a',
+      'copy',
+      '-flvflags',
+      'no_duration_filesize',
+      '-f',
+      'flv',
+      'pipe:3',
+    ]);
+    session.prepared.stop();
+  });
+
+  it('feeds an aac-eld speaker the ELD access units, not the ADTS output', async () => {
+    const handle = new SyntheticTalkback('aac-eld');
+    const session = await talkbackSession(async () => handle);
+    const child = session.returned[0]!;
+    child.stdout.write(Buffer.from([0xff, 0xf1, 0x60, 0x40]));
+    await settle();
+    const units = [Buffer.alloc(120, 1), Buffer.alloc(118, 2)];
+    child.eld.write(flvStream(ELD_TALKBACK_CONFIG, units));
+    await settle();
+
+    expect(handle.written).toEqual(units);
+    expect(session.talkbackOutcomes).toEqual([{ outcome: 'talking' }]);
+    session.prepared.stop();
+  });
+
+  it('reassembles an FLV tag split across pipe reads', async () => {
+    const handle = new SyntheticTalkback('aac-eld');
+    const session = await talkbackSession(async () => handle);
+    const child = session.returned[0]!;
+    child.stdout.write(Buffer.from([0xff, 0xf1]));
+    await settle();
+    const bytes = flvStream(ELD_TALKBACK_CONFIG, [Buffer.alloc(130, 7)]);
+    for (let at = 0; at < bytes.length; at += 17) {
+      child.eld.write(bytes.subarray(at, at + 17));
+      await settle();
+    }
+    expect(handle.written).toEqual([Buffer.alloc(130, 7)]);
+    session.prepared.stop();
+  });
+
+  it('drains the unused ELD output once an aac-lc speaker is chosen, so FFmpeg cannot stall on it', async () => {
+    const handle = new SyntheticTalkback('aac-lc');
+    const session = await talkbackSession(async () => handle);
+    const child = session.returned[0]!;
+    child.stdout.write(Buffer.from([0xff, 0xf1, 0x60]));
+    await settle();
+    expect(child.eld.readableFlowing).toBe(true);
+    child.eld.write(flvStream(ELD_TALKBACK_CONFIG, [Buffer.alloc(120, 1)]));
+    await settle();
+    expect(Buffer.concat(handle.written)).toEqual(Buffer.from([0xff, 0xf1, 0x60]));
+    session.prepared.stop();
+  });
+
+  it('fails the talkback once, without throwing, when an ELD unit is refused with a synchronous error', async () => {
+    const handle = new SyntheticTalkback('aac-eld');
+    const refusing = new Writable({
+      objectMode: true,
+      highWaterMark: 1,
+      write(chunk: Buffer, _encoding, callback) {
+        if (chunk.length > 640) {
+          handle.emit('error', new Error('access unit too long'));
+          return;
+        }
+        callback();
+      },
+    });
+    (handle as { sink: Writable }).sink = refusing;
+    const session = await talkbackSession(async () => handle);
+    const child = session.returned[0]!;
+    child.stdout.write(Buffer.from([0xff, 0xf1]));
+    await settle();
+    expect(() =>
+      child.eld.write(flvStream(ELD_TALKBACK_CONFIG, [Buffer.alloc(700, 1), Buffer.alloc(100, 2)])),
+    ).not.toThrow();
+    await settle();
+
+    expect(session.talkbackOutcomes.filter((outcome) => outcome.outcome === 'failed')).toEqual([
+      { outcome: 'failed', reason: 'device-audio-failed' },
+    ]);
+    session.prepared.stop();
+  });
+
+  it('closes both return-audio outputs when the session stops, even while they are held', async () => {
+    const handle = new SyntheticTalkback('aac-eld');
+    handle.sink.pause();
+    const session = await talkbackSession(async () => handle);
+    const child = session.returned[0]!;
+    child.stdout.write(Buffer.from([0xff, 0xf1]));
+    await settle();
+    child.eld.write(
+      flvStream(
+        ELD_TALKBACK_CONFIG,
+        Array.from({ length: 12 }, () => Buffer.alloc(100, 3)),
+      ),
+    );
+    await settle();
+    session.prepared.stop();
+    await settle();
+    expect(child.stdout.destroyed).toBe(true);
+    expect(child.eld.destroyed).toBe(true);
+  });
+
+  it('holds the ELD output, with one drain wait, while the SDK refuses more frames', async () => {
+    const handle = new SyntheticTalkback('aac-eld');
+    handle.sink.pause();
+    const session = await talkbackSession(async () => handle);
+    const child = session.returned[0]!;
+    child.stdout.write(Buffer.from([0xff, 0xf1]));
+    await settle();
+    child.eld.write(
+      flvStream(
+        ELD_TALKBACK_CONFIG,
+        Array.from({ length: 133 }, () => Buffer.alloc(100, 3)),
+      ),
+    );
+    await settle();
+    expect(child.eld.isPaused()).toBe(true);
+    expect(handle.sink.listenerCount('drain')).toBeLessThanOrEqual(1);
+    handle.sink.resume();
+    await settle();
+    expect(child.eld.isPaused()).toBe(false);
+    session.prepared.stop();
   });
 
   it('extends a source budget only while HomeKit return audio is being consumed', async () => {
