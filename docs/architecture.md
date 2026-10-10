@@ -743,9 +743,19 @@ held by the argument-list measurement above rather than by a fleet reproduction.
 switched off and answers a live start with audio and no video at all, which is a separate fact and remains
 untested here.
 
-The SDK reports neither a sample rate nor a channel count, because a station sends neither. Only raw
-A-law has to be told the 16 kHz mono assumption every Eufy client applies; telling an ADTS demuxer the
-same thing fails the process before it reads a byte.
+Outside a decoder config the SDK reports neither a sample rate nor a channel count, because a station sends
+neither. Only raw A-law has to be told the 16 kHz mono assumption every Eufy client applies; telling an ADTS
+demuxer the same thing fails the process before it reads a byte.
+
+A source whose access units carry no framing of their own, which the SDK reports for AAC-ELD, arrives with the
+decoder config the SDK attaches to each frame. ADTS cannot describe ELD, and fed as ADTS those access units
+failed before the first frame: in one measured minute 1944 audio adaptations started and none produced output.
+Such a stream is therefore written to its adaptation as FLV, which carries the AudioSpecificConfig once in a
+sequence-header tag, frames each access unit in a tag of its own, and is read by FFmpeg from a pipe. The tags
+carry no timestamps, so the input is read on the arrival clock like every other. It is decoded by
+`libfdk_aac`, because FFmpeg's built-in AAC decoder does not implement the LD-SBR in the config the SDK
+declares for ELD. The input format is chosen by whether a frame carries a config, never by the codec name, so
+the choice depends on no fact about ELD.
 
 Return audio is the exception, and deliberately so. It carries an RTP timeline the controller supplied and
 feeds an SDK writable that owns its own 64 ms pacing, so imposing a second clock there would fight the
@@ -759,10 +769,11 @@ therefore stated over the access unit count rather than over the argument list, 
 two places that can hold each half of it.
 
 The hermetic contract holds the half that needs no encoder. No adapted input — video of either codec, ADTS
-audio, or raw A-law — may carry an option that discards what it analysed or fabricates a timeline, and every
-one bounds its analysis window; and every access unit a session accepts reaches the process that codes it,
-byte for byte and in order. Access units between a source codec change and the keyframe a replacement
-process can start from are the only ones a session may withhold, because no running process can code them.
+audio, raw A-law, or FLV-framed audio — may carry an option that discards what it analysed or fabricates a
+timeline, and every one bounds its analysis window; and every access unit a session accepts reaches the
+process that codes it, byte for byte and in order. Access units between a source codec change and the keyframe
+a replacement process can start from are the only ones a session may withhold, because no running process can
+code them.
 
 A replacement is bounded per session. It costs a process, an analysis window, the encoder's state and the
 wait for another keyframe, so a source alternating between two inputs would ask for one at every keyframe and
@@ -936,6 +947,10 @@ carries.
 The SDK's own fragments are Eufy source truth and cannot be passed through: they carry the camera's codec,
 profile, level, geometry, frame rate and keyframe cadence unchanged, so no negotiated recording contract can
 be satisfied without recoding.
+
+A recorded audio track is decoded by `libfdk_aac` whatever its profile. The fragments carry AAC-LC or AAC-ELD,
+the plugin cannot know which before FFmpeg reads the init segment, and FFmpeg's built-in decoder cannot read
+the LD-SBR in the config the SDK declares for ELD. The output encoder already requires a `libfdk_aac` build.
 
 Fragmentation is driven only by keyframes. A HomeKit fragment must open on one and must not be longer than
 the selected fragment length, and a duration-driven cut is free to land between keyframes, so a

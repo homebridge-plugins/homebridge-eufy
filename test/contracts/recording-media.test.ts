@@ -488,6 +488,15 @@ describe('recording media adaptation', () => {
     await session.consumed.iteration;
   });
 
+  /** A recorded audio track is decoded by libfdk_aac, which reads the AAC-LC and AAC-ELD tracks a source can carry. */
+  it('decodes the recorded audio track with libfdk_aac', async () => {
+    const session = recordingSession();
+    await settle();
+    expect(inputArguments(session.spawned[0]!)).toEqual(expect.arrayContaining(['-c:a', 'libfdk_aac']));
+    session.recording.stop();
+    await session.consumed.iteration;
+  });
+
   it('codes the recorded audio profile and sample rate the controller selected', async () => {
     const low = recordingSession();
     await settle();
