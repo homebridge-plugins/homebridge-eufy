@@ -59,9 +59,9 @@ or dependency edge requires updating this section and the architecture contract 
   camera bundles share: issuing a bounded HomeKit-initiated SDK operation and reading an authoritative
   observation fail-closed. Adapters keep their own policy.
 - `platform.ts` and `ui/server.ts` are composition roots. The UI server may consume diagnostics to
-  manage explicitly initiated support sessions and media retention to clear account-bound images after
-  successful account replacement, and the `ui/` dashboard projection may consume
-  HomeKit admission policy so the browser does not recreate a second capability model. They construct and connect modules but do not
+  manage explicitly initiated support sessions, media retention to clear account-bound images after
+  successful account replacement, and the media encoder probe the support environment records, and the `ui/`
+  dashboard projection may consume HomeKit admission policy so the browser does not recreate a second capability model. They construct and connect modules but do not
   absorb their behavior. `index.ts` only registers the platform.
 
 Only `runtime/sdk-client.ts` and `ui/server.ts` may create a concrete SDK client. HomeKit adapters may

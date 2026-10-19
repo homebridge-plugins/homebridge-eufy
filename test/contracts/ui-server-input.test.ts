@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { describe, expect, it, vi } from 'vitest';
 
 import {
+  EufyAuthenticationUiServer,
   parseAuthenticationAnswer,
   parseAuthenticationStart,
   parseDiagnosticsAuthorization,
@@ -9,6 +14,7 @@ import {
   parseDeviceSettingWriteRequest,
   parseDiagnosticsUiEvent,
 } from '../../src/ui/server.js';
+import { resolveStorageRoot } from '../../src/storage.js';
 
 const SUBMITTED_PASSWORD = 'synthetic-password-must-never-be-echoed';
 const SUBMITTED_ANSWER = 'synthetic-challenge-answer-must-never-be-echoed';
@@ -242,6 +248,69 @@ describe('custom UI device settings input', () => {
       { serial: 'T8000P0000000000', setting: 'nightVision', value: 1, extra: true },
     ]) {
       expect(() => parseDeviceSettingWriteRequest(value)).toThrow('Invalid device setting write');
+    }
+  });
+});
+
+describe('custom UI encoder probe endpoints', () => {
+  /**
+   * The read endpoint answers what host.json records and runs nothing; the probe endpoint runs the probe over the
+   * hardware encoders that failed `bytes` with the recorded binary, stores its outcome beside host.json, and
+   * answers with it.
+   */
+  it('probes the encoders turned down for size with the recorded binary', async () => {
+    const storage = mkdtempSync(join(tmpdir(), 'homebridge-eufy-ui-'));
+    const diagnostics = join(resolveStorageRoot(storage), 'diagnostics');
+    mkdirSync(diagnostics, { recursive: true });
+    const qualification = {
+      h264_videotoolbox: { 'main@3.1': ['bytes', 442_368, 336_375] },
+      h264_qsv: { 'main@3.1': 'encode' },
+    };
+    writeFileSync(
+      join(diagnostics, 'host.json'),
+      JSON.stringify({
+        version: 2,
+        ffmpeg: { path: join(storage, 'missing-ffmpeg'), source: 'configured', encoders: qualification },
+      }),
+    );
+    const events = ['message', 'disconnect', 'SIGHUP', 'SIGINT', 'SIGTERM'] as const;
+    const before = new Map(events.map((event) => [event, process.rawListeners(event)]));
+    const sent: Array<{ payload?: { requestId?: string; data?: unknown } }> = [];
+    const send = process.send;
+    process.send = (message: (typeof sent)[number]) => sent.push(message) > 0;
+    vi.stubEnv('HOMEBRIDGE_STORAGE_PATH', storage);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const request = async (path: string) => {
+      process.emit('message', { action: 'request', requestId: path, path } as never);
+      await vi.waitFor(() => expect(sent.some(({ payload }) => payload?.requestId === path)).toBe(true));
+      return sent.find(({ payload }) => payload?.requestId === path)!.payload!.data;
+    };
+
+    try {
+      new EufyAuthenticationUiServer();
+      expect(await request('/diagnostics/encoders')).toEqual({ qualification, probeable: ['h264_videotoolbox'] });
+      const encode = Object.fromEntries(
+        ['as-is', 'qmax-51', 'constant-bit-rate', 'smptebars', '10s'].map((variant) => [variant, 'encode']),
+      );
+      expect(await request('/diagnostics/encoders/probe')).toEqual({
+        qualification,
+        probeable: ['h264_videotoolbox'],
+        probe: { h264_videotoolbox: encode },
+      });
+      expect(JSON.parse(readFileSync(join(diagnostics, 'encoder-probe.json'), 'utf8'))).toEqual({
+        version: 1,
+        encoders: { h264_videotoolbox: encode },
+      });
+    } finally {
+      for (const event of events) {
+        for (const listener of process.rawListeners(event)) {
+          if (!before.get(event)!.includes(listener)) process.removeListener(event, listener as () => void);
+        }
+      }
+      process.send = send;
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+      rmSync(storage, { force: true, recursive: true });
     }
   });
 });

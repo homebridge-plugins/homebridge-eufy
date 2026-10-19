@@ -283,5 +283,22 @@
   "wizardEufyHelp": "Sent to the camera itself, the same settings as in the eufy app.",
   "wizardMapLabel": "Your devices",
   "wizardMapBase": "HomeBase",
-  "wizardMapStandalone": "Standalone"
+  "wizardMapStandalone": "Standalone",
+  "wizardEncodersTitle": "Live video encoder",
+  "wizardEncodersHelp": "What turns your cameras' video into the stream the Home app plays. A hardware encoder is used only once it has passed a test when Homebridge starts; otherwise the processor codes the video.",
+  "wizardEncodersUsed": "Live video is coded by: {encoders}.",
+  "wizardEncodersUnavailable": "Could not read the encoder test. Try again.",
+  "wizardEncoderTurnedDown": "{encoder} is not used: {reason}.",
+  "wizardEncoderWorks": "it works",
+  "wizardEncoderBytes": "it made {coded} KB of video where {bound} KB fits the bit rate the Home app asks for",
+  "wizardEncoderFailed": "it did not finish the test",
+  "wizardEncoderFormat": "its video is not what the Home app asked for",
+  "wizardProbeRun": "Test it again with other settings",
+  "wizardProbeRunning": "Testing. This can take up to a minute.",
+  "wizardProbeNothing": "Nothing to test: no encoder was turned down for size",
+  "wizardProbe_as-is": "As tested",
+  "wizardProbe_qmax-51": "Allowing lower quality",
+  "wizardProbe_constant-bit-rate": "Holding a steady bit rate",
+  "wizardProbe_smptebars": "A simpler picture",
+  "wizardProbe_10s": "A longer clip"
 }

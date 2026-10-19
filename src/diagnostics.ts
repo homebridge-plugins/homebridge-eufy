@@ -1,5 +1,5 @@
 import { constants, createCipheriv, createHash, publicEncrypt, randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { appendFile, chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -241,6 +241,7 @@ const REPRODUCTION_MARKERS_FILE = 'reproduction-markers.jsonl';
 const UI_EVENTS_FILE = 'ui-events.jsonl';
 const HOST_ENVIRONMENT_FILE = 'host.json';
 const FLEET_FILE = 'fleet.json';
+const ENCODER_PROBE_FILE = 'encoder-probe.json';
 /** The longest device model or adapter key retained, which bounds values this plugin does not choose alone. */
 const MAX_DEVICE_MODEL_LENGTH = 64;
 /** How many HomeKit services one fleet entry names, which is above what any single device is represented by. */
@@ -790,7 +791,8 @@ interface PersistedHostEnvironment {
  * It is persisted rather than held in memory because the process that knows these facts is not the one that
  * assembles an archive, and it is rewritten on every start so a host or binary that changed between runs
  * cannot be reported as the one in use. Each call replaces the record whole, so a caller states everything it
- * knows rather than accumulating into a file two writers would race for.
+ * knows rather than accumulating into a file two writers would race for, and discards the encoder probe record,
+ * which describes a binary and a qualification this record no longer states.
  *
  * A write that fails is dropped: the archive then declares the environment without these facts, which is
  * honest, whereas failing startup over a diagnostic file would cost the user their cameras.
@@ -800,6 +802,7 @@ export function recordHostEnvironment(storageRoot: string, host: PersistedHostEn
     const path = hostEnvironmentPath(storageRoot);
     mkdirSync(dirname(path), { mode: 0o700, recursive: true });
     writeFileSync(path, `${JSON.stringify({ version: 2, ...host })}\n`, { mode: 0o600 });
+    rmSync(encoderProbePath(storageRoot), { force: true });
   } catch {}
 }
 
@@ -850,7 +853,14 @@ function readFfmpegIdentity(value: unknown): PersistedFfmpegEnvironment | undefi
     typeof recorded.version === 'string' ? boundedText(recorded.version, MAX_FFMPEG_IDENTITY_LENGTH) : undefined;
   const encoders =
     recorded.encoders && typeof recorded.encoders === 'object' && !Array.isArray(recorded.encoders)
-      ? readEncoderQualification(recorded.encoders as Record<string, unknown>)
+      ? readEncoderOutcomes(recorded.encoders as Record<string, unknown>, (selection) => {
+          const [profile, level] = selection.split('@');
+          return (
+            HOMEKIT_LIVE_VIDEO_PROFILES.has(profile!) &&
+            HOMEKIT_LIVE_VIDEO_LEVELS.has(level!) &&
+            selection === `${profile}@${level}`
+          );
+        })
       : undefined;
   return path === undefined
     ? undefined
@@ -863,11 +873,12 @@ function readFfmpegIdentity(value: unknown): PersistedFfmpegEnvironment | undefi
 }
 
 /**
- * The recorded encoder qualification, keeping only encoder names, `profile@level` selections and outcomes this
+ * Recorded encoder outcomes, keeping only encoder names this build names, keys `keyed` admits, and outcomes this
  * build names, so the record is bounded by those three closed sets, and a `bytes` outcome's two integers.
  */
-function readEncoderQualification(
+function readEncoderOutcomes(
   recorded: Record<string, unknown>,
+  keyed: (key: string) => boolean,
 ): NonNullable<PersistedFfmpegEnvironment['encoders']> {
   return Object.fromEntries(
     LIVE_VIDEO_ENCODERS.filter((name) => Object.hasOwn(recorded, name)).map((name) => {
@@ -875,8 +886,7 @@ function readEncoderQualification(
       return [
         name,
         Object.fromEntries(
-          outcomes.flatMap(([selection, value]) => {
-            const [profile, level] = selection.split('@');
+          outcomes.flatMap(([key, value]) => {
             const outcome =
               Array.isArray(value) &&
               value.length === 3 &&
@@ -884,18 +894,37 @@ function readEncoderQualification(
               value.slice(1).every(Number.isSafeInteger)
                 ? (value as ['bytes', number, number])
                 : allowlistedLabel(value, QUALIFICATION_OUTCOMES);
-            return HOMEKIT_LIVE_VIDEO_PROFILES.has(profile!) &&
-              HOMEKIT_LIVE_VIDEO_LEVELS.has(level!) &&
-              selection === `${profile}@${level}` &&
-              outcome
-              ? [[selection, outcome]]
-              : [];
+            return keyed(key) && outcome ? [[key, outcome]] : [];
           }),
         ),
       ];
     }),
   );
 }
+
+function encoderProbePath(storageRoot: string): string {
+  return join(storageRoot, DIAGNOSTICS_DIRECTORY, ENCODER_PROBE_FILE);
+}
+
+/** The recorded encoder probe, keeping only encoder names, variant names and outcomes this build names. */
+function readEncoderProbe(storageRoot: string): PersistedFfmpegEnvironment['encoders'] {
+  try {
+    const candidate = JSON.parse(readFileSync(encoderProbePath(storageRoot), 'utf8')) as Record<string, unknown>;
+    return candidate.version === 1 && candidate.encoders && typeof candidate.encoders === 'object'
+      ? readEncoderOutcomes(candidate.encoders as Record<string, unknown>, (name) =>
+          (PROBE_VARIANTS as readonly string[]).includes(name),
+        )
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Codes each named hardware encoder once per probe variant with `executable`, and returns each outcome. */
+export type EncoderProbe = (
+  executable: string,
+  encoders: readonly string[],
+) => Promise<Readonly<Record<string, Readonly<Record<string, unknown>>>>>;
 
 /**
  * The one log evidence class a retained record belongs to.
@@ -973,6 +1002,30 @@ export class GuidedDiagnostics {
     } finally {
       this.uiEventsClosing = false;
     }
+  }
+
+  /**
+   * The recorded encoder qualification, the hardware encoders in it that failed `bytes`, and the last probe of
+   * them. Given `probe`, first runs it over those encoders with the recorded binary and replaces the probe
+   * record whole; with none to probe, nothing runs.
+   */
+  async encoders(probe?: EncoderProbe): Promise<{
+    qualification: NonNullable<PersistedFfmpegEnvironment['encoders']>;
+    probeable: string[];
+    probe?: PersistedFfmpegEnvironment['encoders'];
+  }> {
+    const ffmpeg = readHostEnvironment(this.storageRoot)?.ffmpeg;
+    const qualification = ffmpeg?.encoders ?? {};
+    const probeable = Object.keys(qualification).filter((name) =>
+      Object.values(qualification[name]!).some(Array.isArray),
+    );
+    if (probe && ffmpeg && probeable.length > 0) {
+      const path = encoderProbePath(this.storageRoot);
+      const encoders = await probe(ffmpeg.path, probeable);
+      await mkdir(dirname(path), { mode: 0o700, recursive: true });
+      await this.replaceOwnedFile(path, `${JSON.stringify({ version: 1, encoders })}\n`);
+    }
+    return { qualification, probeable, probe: readEncoderProbe(this.storageRoot) };
   }
 
   async status(): Promise<GuidedDiagnosticsStatus> {
@@ -1217,6 +1270,7 @@ export class GuidedDiagnostics {
 
   private async collectSupportEvidence(session: PersistedDiagnosticsSession): Promise<SupportArchiveEvidence[]> {
     const host = readHostEnvironment(this.storageRoot);
+    const probe = readEncoderProbe(this.storageRoot);
     const fleet = readFleet(this.storageRoot);
     const evidence: SupportArchiveEvidence[] = [
       ...(session.affectedDevices === undefined
@@ -1261,7 +1315,7 @@ export class GuidedDiagnostics {
         evidence: 'environment',
         privacyClass: 'operational',
         contentType: 'application/json',
-        content: `${JSON.stringify({ version: 3, plugin: PLUGIN_VERSION, sdk: SDK_VERSION, node: process.version, ...(host?.homebridge ? { homebridge: host.homebridge } : {}), platform: process.platform, arch: process.arch, ...(host?.ffmpeg ? { ffmpeg: host.ffmpeg } : {}) })}\n`,
+        content: `${JSON.stringify({ version: 3, plugin: PLUGIN_VERSION, sdk: SDK_VERSION, node: process.version, ...(host?.homebridge ? { homebridge: host.homebridge } : {}), platform: process.platform, arch: process.arch, ...(host?.ffmpeg ? { ffmpeg: { ...host.ffmpeg, ...(probe ? { probe } : {}) } } : {}) })}\n`,
         /**
          * The record is operational and one field is classified above it: a resolved FFmpeg path is an
          * environment fact, but it can carry the home directory of the account Homebridge runs as, so it is
@@ -2371,6 +2425,8 @@ const QUALIFICATION_OUTCOMES = [
   'geometry',
   'frames',
 ] as const;
+/** The variations an encoder probe codes, by the name its record carries. */
+const PROBE_VARIANTS = ['as-is', 'qmax-51', 'constant-bit-rate', 'smptebars', '10s'] as const;
 /** The codec a live video source delivers. */
 const LIVE_VIDEO_SOURCES = ['h264', 'h265', 'av1'] as const;
 /**

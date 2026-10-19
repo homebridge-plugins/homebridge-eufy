@@ -24,6 +24,7 @@ import type {
 } from '../../src/media/contracts.js';
 import {
   FfmpegLiveMedia,
+  probeEncoders,
   resolveFfmpegIdentity,
   SMALL_VIDEO_PACKET_SIZE,
   type EncoderHost,
@@ -2674,6 +2675,43 @@ describe('hardware encoder qualification', () => {
       runs.find(({ args }) => args.includes('testsrc2=size=1920x1080:rate=30:duration=2'))?.args,
       'level 4.0 is qualified at the largest advertised geometry',
     ).toEqual(expect.arrayContaining(['-level:v', '4.0', '-f', 'h264', 'pipe:1']));
+  });
+
+  /**
+   * The probe codes the Main 3.1 selection through qualification once per variant, each changing only its own
+   * argument, source or length, with the frame count and byte bound that length implies, and runs no name this
+   * build carries no hardware encoder for.
+   */
+  it('probes a named encoder with every variant through qualification', async () => {
+    const { run, runs } = qualificationRun((_encoder, _selection, honest) => ({ ...honest, bytes: 200_000 }));
+    const probed = await probeEncoders('/synthetic/bin/ffmpeg', ['h264_videotoolbox', 'libx264'], run);
+
+    const over = ['bytes', 200_000, 107_625];
+    expect(probed).toEqual({
+      h264_videotoolbox: {
+        'as-is': over,
+        'qmax-51': over,
+        'constant-bit-rate': over,
+        smptebars: over,
+        '10s': 'qualified',
+      },
+    });
+    const coded = runs.filter(({ args }) => args.includes('-c:v')).map(({ args }) => args);
+    expect(coded.map((args) => args.slice(args.indexOf('-c:v') + 1, args.indexOf('-c:v') + 6))).toEqual(
+      Array(5).fill(['h264_videotoolbox', '-profile:v', 'main', '-level:v', '3.1']),
+    );
+    expect(coded.map((args) => args[args.indexOf('-i') + 1])).toEqual([
+      ...Array(3).fill('testsrc2=size=1280x720:rate=30:duration=2'),
+      'smptebars=size=1280x720:rate=30:duration=2',
+      'testsrc2=size=1280x720:rate=30:duration=10',
+    ]);
+    expect(coded.map((args) => args.slice(-5, -3))).toEqual([
+      ['-sc_threshold', '0'],
+      ['-qmax', '51'],
+      ['-constant_bit_rate', '1'],
+      ['-sc_threshold', '0'],
+      ['-sc_threshold', '0'],
+    ]);
   });
 
   /** A selection that fails qualification is recorded with the first check it failed. */

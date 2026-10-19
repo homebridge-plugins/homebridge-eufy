@@ -534,8 +534,15 @@ type QualificationOutcome =
   | 'frames'
   | readonly ['bytes', number, number];
 
+/** What one qualification run varies: arguments appended to the encoder's own, the lavfi source, and its seconds. */
+interface QualificationVariant {
+  readonly args?: readonly string[];
+  readonly source?: string;
+  readonly seconds?: number;
+}
+
 /**
- * Qualifies `encoder` for `selection` before `deadline`.
+ * Qualifies `encoder` for `selection`, as `variant` changes it, before `deadline`.
  *
  * The encoder codes {@link QUALIFICATION_SECONDS} of moving synthetic picture through the session's own
  * argument list, which proves it is named by the binary, accepts those arguments, and opens on this host's
@@ -549,6 +556,7 @@ async function qualification(
   selection: NegotiatedLiveVideo,
   run: QualificationRun,
   deadline: number,
+  { args = [], source = 'testsrc2', seconds = QUALIFICATION_SECONDS }: QualificationVariant = {},
 ): Promise<QualificationOutcome> {
   const within = (args: string[], input?: Buffer) => {
     const left = deadline - Date.now();
@@ -561,8 +569,9 @@ async function qualification(
     '-f',
     'lavfi',
     '-i',
-    `testsrc2=size=${selection.width}x${selection.height}:rate=${selection.fps}:duration=${QUALIFICATION_SECONDS}`,
+    `${source}=size=${selection.width}x${selection.height}:rate=${selection.fps}:duration=${seconds}`,
     ...encodeArguments(encoder, selection),
+    ...args,
     '-f',
     'h264',
     'pipe:1',
@@ -588,13 +597,44 @@ async function qualification(
       field('pic_width_in_mbs_minus1') + 1 === Math.ceil(selection.width / 16) &&
         field('pic_height_in_map_units_minus1') + 1 === Math.ceil(selection.height / 16),
     ],
-    ['frames', (traced.stderr.match(/\bPacket: /g)?.length ?? 0) === selection.fps * QUALIFICATION_SECONDS],
+    ['frames', (traced.stderr.match(/\bPacket: /g)?.length ?? 0) === selection.fps * seconds],
   ];
-  const bound = videoBudgetInsideCeiling(selection) * 125 * (QUALIFICATION_SECONDS + 1);
+  const bound = videoBudgetInsideCeiling(selection) * 125 * (seconds + 1);
   return (
     checks.find(([, passed]) => !passed)?.[0] ??
     (coded.stdout.length <= bound ? 'qualified' : ['bytes', coded.stdout.length, bound])
   );
+}
+
+/** The variations an encoder probe codes, by the name its record carries. */
+const PROBE_VARIANTS: Readonly<Record<string, QualificationVariant>> = {
+  'as-is': {},
+  'qmax-51': { args: ['-qmax', '51'] },
+  'constant-bit-rate': { args: ['-constant_bit_rate', '1'] },
+  smptebars: { source: 'smptebars' },
+  '10s': { seconds: 10 },
+};
+
+/**
+ * Qualifies each hardware encoder named in `encoders` for the Main 3.1 selection once per {@link PROBE_VARIANTS}
+ * entry, one run after another and within {@link QUALIFICATION_BUDGET_MS}, and returns each outcome by encoder
+ * and variant name. A name this build carries no hardware encoder for is not run.
+ */
+export async function probeEncoders(
+  executable: string,
+  encoders: readonly string[],
+  run: QualificationRun = runQualification,
+): Promise<Record<string, Record<string, QualificationOutcome>>> {
+  const deadline = Date.now() + QUALIFICATION_BUDGET_MS;
+  const selection = QUALIFICATION_SELECTIONS.find(({ profile, level }) => profile === 'main' && level === '3.1')!;
+  const outcomes: Record<string, Record<string, QualificationOutcome>> = {};
+  for (const encoder of HARDWARE_ENCODERS.filter(({ name }) => encoders.includes(name))) {
+    const tried: Record<string, QualificationOutcome> = (outcomes[encoder.name] = {});
+    for (const [name, variant] of Object.entries(PROBE_VARIANTS)) {
+      tried[name] = await qualification(executable, encoder, selection, run, deadline, variant);
+    }
+  }
+  return outcomes;
 }
 
 /** The live video packet size an administrator can choose for networks that drop the negotiated one. */

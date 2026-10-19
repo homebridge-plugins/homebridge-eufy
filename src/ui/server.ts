@@ -24,6 +24,7 @@ import {
   type DiagnosticsUiEvent,
 } from '../diagnostics.js';
 import { PersistedLastSuccessfulImages } from '../media/last-successful-image.js';
+import { probeEncoders } from '../media/live-stream.js';
 import { readDeviceImage } from './device-image.js';
 import {
   noticedDeviceSettingWrite,
@@ -362,6 +363,8 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
       return { stopped: true };
     });
     this.onRequest('/diagnostics/status', () => this.diagnostics.status());
+    this.onRequest('/diagnostics/encoders', () => this.diagnostics.encoders());
+    this.onRequest('/diagnostics/encoders/probe', () => this.diagnostics.encoders(probeEncoders));
     this.onRequest('/diagnostics/authorize', async (payload) => {
       const authorization = parseDiagnosticsAuthorization(payload);
       const status = await this.diagnostics.authorize(

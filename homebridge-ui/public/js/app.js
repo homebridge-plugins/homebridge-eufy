@@ -109,6 +109,8 @@ const wizardMap = document.querySelector('[data-wizard-map]');
 const wizardStage = document.querySelector('[data-wizard-stage]');
 const wizardHomeKit = document.querySelector('[data-wizard-homekit]');
 const wizardEufy = document.querySelector('[data-wizard-eufy]');
+const wizardEncoders = document.querySelector('[data-wizard-encoders]');
+const wizardEncodersBody = document.querySelector('[data-wizard-encoders-body]');
 
 let messages = {};
 let pluginConfig = [];
@@ -851,6 +853,9 @@ let wizardSteps = [];
 let wizardIndex = 0;
 let wizardLiveSerial;
 let wizardLivePictures = 0;
+/** The wizard's last step, after every device: which encoder codes live video, and a test of those turned down. */
+const ENCODER_STEP = {};
+let wizardEncoderReport;
 const wizardElements = {
   deviceSettingsTitle: wizardTitle,
   deviceSettingsEyebrow: wizardEyebrow,
@@ -880,7 +885,8 @@ function wizardPending(pending) {
 }
 
 async function openSetupWizard(trigger) {
-  wizardSteps = setupWizard.steps(dashboardDevices);
+  const devices = setupWizard.steps(dashboardDevices);
+  wizardSteps = devices.length > 0 ? [...devices, ENCODER_STEP] : [];
   wizardIndex = 0;
   openDashboardPanel(wizardPanel, trigger);
   await renderWizardStep();
@@ -1013,7 +1019,10 @@ function wizardMapEntry(device, current) {
  * is a step too where it has HomeKit choices, so its name opens it like any other device.
  */
 function renderWizardMap(current) {
-  const { bases, standalone } = setupWizard.topology(wizardSteps, dashboardDevices);
+  const { bases, standalone } = setupWizard.topology(
+    wizardSteps.filter((step) => step !== ENCODER_STEP),
+    dashboardDevices,
+  );
   const group = (title, members, base) => {
     const section = document.createElement('div');
     section.className = 'wizard-map-group';
@@ -1052,6 +1061,68 @@ wizardSettings.addEventListener('change', async (event) => {
   }
 });
 
+/** One encoder outcome in plain words: it works, the sizes it coded against what fits, or what went wrong. */
+function encoderOutcome(outcome) {
+  if (outcome === 'qualified') return messages.wizardEncoderWorks ?? '';
+  if (Array.isArray(outcome)) {
+    return (messages.wizardEncoderBytes ?? '')
+      .replace('{coded}', String(Math.round(outcome[1] / 1000)))
+      .replace('{bound}', String(Math.round(outcome[2] / 1000)));
+  }
+  return messages[['budget', 'encode', 'trace'].includes(outcome) ? 'wizardEncoderFailed' : 'wizardEncoderFormat'] ?? '';
+}
+
+/**
+ * Draws which encoders code live video, why each hardware encoder with no working selection is turned down, the
+ * last test of the ones turned down for size, and the button that runs it, which says when there is none to test.
+ */
+function renderWizardEncoders(report, running = false) {
+  const qualification = report?.qualification ?? {};
+  const outcomes = (name) => Object.values(qualification[name]);
+  const used = Object.keys(qualification).filter((name) => outcomes(name).includes('qualified'));
+  const line = (text) => {
+    const paragraph = document.createElement('p');
+    paragraph.textContent = text;
+    return paragraph;
+  };
+  const test = document.createElement('button');
+  test.type = 'button';
+  test.dataset.wizardProbe = '';
+  test.disabled = running || (report !== undefined && report.probeable.length === 0);
+  test.textContent = messages[running ? 'wizardProbeRunning' : test.disabled ? 'wizardProbeNothing' : 'wizardProbeRun'] ?? '';
+  wizardEncodersBody.replaceChildren(
+    ...(report === undefined && !running
+      ? [line(messages.wizardEncodersUnavailable ?? '')]
+      : [
+          line((messages.wizardEncodersUsed ?? '').replace('{encoders}', [...used, 'libx264'].join(', '))),
+          ...Object.keys(qualification)
+            .filter((name) => !used.includes(name) && outcomes(name).length > 0)
+            .map((name) =>
+              line(
+                (messages.wizardEncoderTurnedDown ?? '')
+                  .replace('{encoder}', name)
+                  .replace('{reason}', encoderOutcome(outcomes(name).find(Array.isArray) ?? outcomes(name)[0])),
+              ),
+            ),
+          ...Object.entries(report?.probe ?? {}).flatMap(([name, variants]) =>
+            Object.entries(variants).map(([variant, outcome]) =>
+              line(`${name} · ${messages[`wizardProbe_${variant}`] ?? variant}: ${encoderOutcome(outcome)}`),
+            ),
+          ),
+        ]),
+    test,
+  );
+}
+
+wizardEncodersBody.addEventListener('click', async (event) => {
+  if (event.target?.dataset?.wizardProbe === undefined) return;
+  renderWizardEncoders(wizardEncoderReport, true);
+  wizardEncoderReport = await requestWithinDeadline('/diagnostics/encoders/probe', undefined, 120000).catch(
+    () => undefined,
+  );
+  if (wizardSteps[wizardIndex] === ENCODER_STEP) renderWizardEncoders(wizardEncoderReport);
+});
+
 /** A device that is not a camera shows its product picture in the box, with nothing to play. */
 function showWizardArtwork(device) {
   wizardLivePlay.hidden = true;
@@ -1066,6 +1137,7 @@ async function renderWizardStep() {
   wizardSettings.replaceChildren();
   wizardControls.replaceChildren();
   wizardEufy.hidden = true;
+  wizardEncoders.hidden = true;
   const restart = !wizardPluginUp();
   const empty = restart || wizardSteps.length === 0;
   wizardRestart.hidden = !restart;
@@ -1081,11 +1153,22 @@ async function renderWizardStep() {
   }
   const device = wizardSteps[wizardIndex];
   renderWizardMap(device.serial);
-  dashboardView.renderDeviceSettings(device, configuredBlock() ?? {}, messages, wizardElements);
-  wizardHomeKit.hidden = !(device.preferences?.length > 0);
-  wizardProgress.textContent = setupWizard.progress(messages.wizardProgress, wizardIndex, wizardSteps.length);
   wizardBack.disabled = wizardIndex === 0;
   wizardNext.disabled = wizardIndex === wizardSteps.length - 1;
+  wizardLive.hidden = device === ENCODER_STEP;
+  if (device === ENCODER_STEP) {
+    wizardEncoders.hidden = false;
+    wizardHomeKit.hidden = true;
+    wizardProgress.textContent = '';
+    wizardTitle.textContent = messages.wizardEncodersTitle ?? '';
+    wizardEyebrow.textContent = '';
+    wizardEncoderReport = await requestWithinDeadline('/diagnostics/encoders', undefined, 12000).catch(() => undefined);
+    if (wizardSteps[wizardIndex] === ENCODER_STEP) renderWizardEncoders(wizardEncoderReport);
+    return;
+  }
+  dashboardView.renderDeviceSettings(device, configuredBlock() ?? {}, messages, wizardElements);
+  wizardHomeKit.hidden = !(device.preferences?.length > 0);
+  wizardProgress.textContent = setupWizard.progress(messages.wizardProgress, wizardIndex, wizardSteps.length - 1);
   if (device.deviceClass === 'camera') void showWizardCamera(device.serial);
   else showWizardArtwork(device);
   await renderWizardSettings(device.serial);

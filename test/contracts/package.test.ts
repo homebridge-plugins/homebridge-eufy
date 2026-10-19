@@ -248,6 +248,13 @@ async function renderUi(
   const wizardStage = { hidden: false };
   const wizardHomeKit = { hidden: false };
   const wizardEufy = { hidden: true };
+  const wizardEncoders = { hidden: true };
+  const wizardEncodersBody = interactiveElement({
+    children: [] as Array<{ textContent: string }>,
+    replaceChildren(...children: Array<{ textContent: string }>) {
+      this.children = children;
+    },
+  });
   const wizardSettingsStatus = { textContent: '' };
   const wizardSettings = interactiveElement({
     children: [] as unknown[],
@@ -457,6 +464,8 @@ async function renderUi(
           '[data-wizard-stage]': wizardStage,
           '[data-wizard-homekit]': wizardHomeKit,
           '[data-wizard-eufy]': wizardEufy,
+          '[data-wizard-encoders]': wizardEncoders,
+          '[data-wizard-encoders-body]': wizardEncodersBody,
           '[data-wizard-settings]': wizardSettings,
           '[data-wizard-controls]': wizardControls,
           '[data-wizard-back]': wizardBack,
@@ -529,6 +538,12 @@ async function renderUi(
         if (path === '/device/settings/write') return { ok: true };
         if (path === '/device/live/start') return { started: true };
         if (path === '/device/live/stop') return { stopped: true };
+        if (path === '/diagnostics/encoders') {
+          return {
+            qualification: { h264_videotoolbox: { 'main@3.1': ['bytes', 442_368, 336_375], 'high@4.0': 'encode' } },
+            probeable: ['h264_videotoolbox'],
+          };
+        }
         if (path === '/diagnostics/authorize') {
           const payload = body as { profile?: unknown };
           if (Object.keys(payload ?? {}).join(',') !== 'profile' || typeof payload.profile !== 'string') {
@@ -663,6 +678,8 @@ async function renderUi(
     wizardFinish,
     wizardMap,
     wizardEufy,
+    wizardEncoders,
+    wizardEncodersBody,
     wizardSettings,
     wizardSettingsStatus,
     wizardControls,
@@ -1133,6 +1150,8 @@ describe('packed plugin', () => {
           'trustedDeviceLabel',
           'updatePendingAction',
           'updatePendingTitle',
+          'wizardEncodersHelp',
+          'wizardEncodersTitle',
           'wizardEufyHelp',
           'wizardEufySettings',
           'wizardHomeKitHelp',
@@ -1204,6 +1223,21 @@ describe('packed plugin', () => {
         'twoFactorLabel',
         'twoFactorSent',
         'wizardClose',
+        'wizardEncoderBytes',
+        'wizardEncoderFailed',
+        'wizardEncoderFormat',
+        'wizardEncoderTurnedDown',
+        'wizardEncoderWorks',
+        'wizardEncodersUnavailable',
+        'wizardEncodersUsed',
+        'wizardProbeNothing',
+        'wizardProbeRun',
+        'wizardProbeRunning',
+        'wizardProbe_10s',
+        'wizardProbe_as-is',
+        'wizardProbe_constant-bit-rate',
+        'wizardProbe_qmax-51',
+        'wizardProbe_smptebars',
         'wizardFinish',
         'wizardLiveFailed',
         'wizardLiveStarting',
@@ -2890,7 +2924,20 @@ describe('setup wizard', () => {
       'leaving a camera stops its stream',
     ).toHaveLength(2);
     expect(ui.wizardTitle.textContent).toBe('Synthetic Solo');
+
+    await ui.wizardNext.dispatch('click');
+    expect(ui.wizardTitle.textContent, 'the last step shows which encoder codes live video').toBe(
+      en.wizardEncodersTitle,
+    );
     expect(ui.wizardNext.disabled).toBe(true);
+    expect(ui.wizardEncoders.hidden).toBe(false);
+    await vi.waitFor(() => expect(ui.wizardEncodersBody.children).toHaveLength(3));
+    expect(ui.wizardEncodersBody.children.map(({ textContent }) => textContent)).toEqual([
+      'Live video is coded by: libx264.',
+      'h264_videotoolbox is not used: it made 442 KB of video where 336 KB fits the bit rate the Home app asks for.',
+      en.wizardProbeRun,
+    ]);
+    await ui.wizardBack.dispatch('click');
 
     await ui.wizardBack.dispatch('click');
     expect(ui.wizardTitle.textContent).toBe('Synthetic Sensor');

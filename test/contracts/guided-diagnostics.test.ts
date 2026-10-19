@@ -1552,7 +1552,20 @@ describe('guided diagnostics session', () => {
    * encoder this build names, a profile and level a controller can negotiate, and an outcome qualification
    * reports. Anything else in the record is dropped rather than carried into an archive.
    */
-  it('keeps the encoder qualification this build names, and nothing else', async () => {
+  /** A new host record states another binary or qualification, so the probe of the previous one does not survive it. */
+  it('discards the encoder probe when the host record is replaced', () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-guided-'));
+    try {
+      mkdirSync(join(root, 'diagnostics'), { recursive: true });
+      writeFileSync(join(root, 'diagnostics', 'encoder-probe.json'), '{"version":1,"encoders":{}}\n');
+      recordHostEnvironment(root, { ffmpeg: { path: '/synthetic/bin/ffmpeg', source: 'bundled', encoders: {} } });
+      expect(existsSync(join(root, 'diagnostics', 'encoder-probe.json'))).toBe(false);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('keeps the encoder qualification and probe this build names, and nothing else', async () => {
     const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-guided-'));
     const { publicKey, privateKey } = generateKeyPairSync('rsa', {
       modulusLength: 2048,
@@ -1593,6 +1606,23 @@ describe('guided diagnostics session', () => {
           },
         })}\n`,
       );
+      writeFileSync(
+        join(root, 'diagnostics', 'encoder-probe.json'),
+        `${JSON.stringify({
+          version: 1,
+          encoders: {
+            h264_videotoolbox: {
+              'as-is': ['bytes', 442_368, 336_375],
+              'qmax-51': 'qualified',
+              smptebars: ['bytes', 1.5, 336_375],
+              '10s': 'invented',
+              'main@3.1': 'qualified',
+              '/synthetic/home/user': 'qualified',
+            },
+            h264_invented: { 'as-is': 'qualified' },
+          },
+        })}\n`,
+      );
       await diagnostics.authorize('live-media', 'now');
       await diagnostics.startReproduction();
       now += 5_000;
@@ -1611,6 +1641,7 @@ describe('guided diagnostics session', () => {
           h264_videotoolbox: { 'main@3.1': 'qualified', 'high@4.0': ['bytes', 442_368, 336_375] },
           h264_amf: {},
         },
+        probe: { h264_videotoolbox: { 'as-is': ['bytes', 442_368, 336_375], 'qmax-51': 'qualified' } },
       });
     } finally {
       rmSync(root, { force: true, recursive: true });

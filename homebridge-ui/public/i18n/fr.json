@@ -283,5 +283,22 @@
   "wizardEufyHelp": "Envoyé à la caméra elle-même, les mêmes réglages que dans l’app eufy.",
   "wizardMapLabel": "Vos appareils",
   "wizardMapBase": "HomeBase",
-  "wizardMapStandalone": "Autonomes"
+  "wizardMapStandalone": "Autonomes",
+  "wizardEncodersTitle": "Encodeur de la vidéo en direct",
+  "wizardEncodersHelp": "Ce qui transforme la vidéo de vos caméras en flux lu par l’app Maison. Un encodeur matériel n’est utilisé qu’après avoir réussi un test au démarrage de Homebridge ; sinon, le processeur encode la vidéo.",
+  "wizardEncodersUsed": "La vidéo en direct est encodée par : {encoders}.",
+  "wizardEncodersUnavailable": "Impossible de lire le test des encodeurs. Réessayez.",
+  "wizardEncoderTurnedDown": "{encoder} n’est pas utilisé : {reason}.",
+  "wizardEncoderWorks": "il fonctionne",
+  "wizardEncoderBytes": "il a produit {coded} Ko de vidéo là où {bound} Ko tiennent dans le débit demandé par l’app Maison",
+  "wizardEncoderFailed": "il n’a pas terminé le test",
+  "wizardEncoderFormat": "sa vidéo n’est pas celle demandée par l’app Maison",
+  "wizardProbeRun": "Le tester à nouveau avec d’autres réglages",
+  "wizardProbeRunning": "Test en cours. Cela peut prendre jusqu’à une minute.",
+  "wizardProbeNothing": "Rien à tester : aucun encodeur n’a été écarté pour sa taille",
+  "wizardProbe_as-is": "Tel que testé",
+  "wizardProbe_qmax-51": "En acceptant une qualité moindre",
+  "wizardProbe_constant-bit-rate": "En tenant un débit constant",
+  "wizardProbe_smptebars": "Avec une image plus simple",
+  "wizardProbe_10s": "Avec une séquence plus longue"
 }
