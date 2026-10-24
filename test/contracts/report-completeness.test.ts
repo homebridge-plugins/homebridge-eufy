@@ -40,6 +40,8 @@ interface Report {
   closed?: boolean;
   upload?: string;
   by?: string;
+  held?: boolean;
+  note?: string;
 }
 
 async function outcomeOf({
@@ -51,12 +53,14 @@ async function outcomeOf({
   closed = false,
   upload,
   by = 'reporter',
+  held = false,
+  note,
 }: Report): Promise<string> {
   const acted: string[] = [];
   const issue = {
     number: 1,
     body: bugForm ? bugReport({ flow, version }) : '### Model\n\nT8000P0000000000',
-    labels: [{ name: 'needs-triage' }],
+    labels: [{ name: held ? 'needs-info' : 'needs-triage' }],
     state: closed ? 'closed' : 'open',
     user: { login: 'reporter' },
   };
@@ -69,9 +73,9 @@ async function outcomeOf({
       body: '<!-- report-completeness -->\n**This report was not opened from the plugin, so it is closed as it stands.**',
     });
   }
-  const comment = upload && {
+  const comment = (upload || note) && {
     id: 10,
-    body: `https://github.com/user-attachments/files/2/${upload}`,
+    body: note ?? `https://github.com/user-attachments/files/2/${upload}`,
     user: { login: by },
   };
   if (comment) {
@@ -172,6 +176,16 @@ const CASES: [string, Report, string][] = [
     'a renamed archive does not reopen it',
     { action: 'created', closed: true, upload: 'homebridge-eufy-support-1.eufysupport.zip' },
     'deleted a comment, told the name changed',
+  ],
+  [
+    'an archive answering the ask puts the report back to triage',
+    { action: 'created', flow: true, held: true, upload: 'homebridge-eufy-support-1.eufysupport.gz' },
+    'unlabelled needs-info, labelled needs-triage',
+  ],
+  [
+    'a reply on a report that already holds an older archive leaves the ask standing',
+    { action: 'created', flow: true, archive: true, held: true, note: 'Please run this and paste the line.' },
+    'nothing',
   ],
 ];
 
