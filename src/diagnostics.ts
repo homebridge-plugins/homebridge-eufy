@@ -336,6 +336,7 @@ const SDK_EVENT_KEYS = new Set([
   'protocol-command',
   'protocol-unhandled',
   'realtime-readiness',
+  'rtc-sign-refused',
   'session-connecting',
   'session-idle',
   'session-resumed',
@@ -1740,6 +1741,7 @@ export function createDiagnosticLogger(
 /** The class an SDK message belongs to, or nothing when its text matches none of them. */
 function classifySdkEvent(message: string): string | undefined {
   const normalized = message.toLowerCase();
+  if (normalized.includes('rtc sign for') && normalized.includes('refused')) return 'rtc-sign-refused';
   if (normalized.includes('restored persisted session')) return 'session-restored';
   if (normalized.includes('retrying') || normalized.includes('reconnecting')) return 'connection-retrying';
   if (normalized.includes('close') || normalized.includes('disconnect')) return 'connection-closed';
