@@ -249,7 +249,10 @@ jobs:
               }
               return;
             }
-            if (attached && labels.includes('needs-info')) {
+            // Only the event that brings an archive answers an ask: a maintainer's own reply on an issue that
+            // already holds an older archive is not one.
+            const arrived = ATTACHED_ARCHIVE.test(comment ? comments.find(({ id }) => id === comment.id)?.body || '' : body);
+            if (arrived && labels.includes('needs-info')) {
               await github.rest.issues.removeLabel({ ...request, name: 'needs-info' });
               await github.rest.issues.addLabels({ ...request, labels: ['needs-triage'] });
             }
