@@ -105,9 +105,12 @@ export const CLASSIFIED_LOCK_CODES: ReadonlySet<number> = new Set([
 /** The identity-free trace one lock announcement records. */
 const LOCK_STATE_TRACE = 'lock-state';
 
+/** Lock controls whose `lock` and `unlock` the adapter checked before admitting the accessory. */
+type AdmittedLockActions = LockActions & Required<Pick<LockActions, 'lock' | 'unlock'>>;
+
 interface LockState {
   owner: symbol;
-  actions: LockActions;
+  actions: AdmittedLockActions;
   diagnose: (
     code: 'lock-operation-failed' | 'lock-reconciliation-expired',
     active: boolean,
@@ -214,13 +217,14 @@ function attachLock(context: AdapterAttachmentContext): AttachedAdapter | undefi
   const service = ownService(accessory, hap.Service.LockMechanism, accessory.displayName, LOCK_ADAPTER_KEY);
   const previousState = LOCK_STATES.get(service);
   const owner = Symbol('lock-owner');
+  const admitted = actions as AdmittedLockActions;
   const state: LockState = previousState ?? {
     owner,
-    actions,
+    actions: admitted,
     diagnose: () => undefined,
   };
   state.owner = owner;
-  state.actions = actions;
+  state.actions = admitted;
   LOCK_STATES.set(service, state);
 
   const current = service.getCharacteristic(hap.Characteristic.LockCurrentState);

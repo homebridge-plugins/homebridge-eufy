@@ -1881,6 +1881,7 @@ const LIVE_TRACE_PHASES = {
   'sequence-restart': retainedInteger('dataType', 3),
   'level2-wait': retainedInteger('waitMs', MAX_STARTUP_WINDOW_MS),
   'level2-ready': retainedInteger('cipherId', 65535),
+  'level2-set-payload-only': retainedInteger('cipherId', 65535),
   'session-connect-wait': retainedInteger('waitMs', MAX_STARTUP_WINDOW_MS),
   'session-connected': retainedInteger('waitedMs', MAX_STARTUP_WINDOW_MS),
   'session-unreachable': retainedInteger('waitedMs', MAX_STARTUP_WINDOW_MS),
@@ -1971,6 +1972,13 @@ const LIVE_TRACE_PHASES = {
   'media-command-unsent': (c) => {
     const reason = allowlistedLabel(c.reason, ['level2-key', 'address']);
     return reason ? { reason } : undefined;
+  },
+  /** `errorName` is an upstream class name, so it stays out of the archive; reason and stage say enough. */
+  'start-failed': (c) => {
+    const reason = allowlistedLabel(c.reason, ['warm-timeout', 'source-error', 'source-ended']);
+    const stage = allowlistedLabel(c.stage, ['awaiting-first-frame', 'audio-only', 'awaiting-keyframe']);
+    const attempts = boundedInteger(c.attempts, 1000);
+    return reason && stage && attempts !== undefined ? { reason, stage, attempts } : undefined;
   },
   warming: (c) => {
     const retryMs = boundedInteger(c.retryMs, MAX_STARTUP_WINDOW_MS);
