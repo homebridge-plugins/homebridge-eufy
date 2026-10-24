@@ -87,6 +87,7 @@ export type LiveSessionFailure =
   | 'source-acquisition-timeout'
   | 'no-video-within-backstop'
   | 'source-audio-only'
+  | 'source-warm-timeout'
   | 'source-error'
   | 'source-stopped'
   | 'source-input-unstable'

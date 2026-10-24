@@ -611,7 +611,7 @@ describe('live media adaptation', () => {
     expect(session.outcomes).toEqual([
       {
         outcome: 'failed',
-        reason: 'source-error',
+        reason: 'source-warm-timeout',
         stage: 'first-source-keyframe',
         sourceStage: 'awaiting-keyframe',
         sourceReason: 'warm-timeout',

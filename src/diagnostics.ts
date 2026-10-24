@@ -2222,6 +2222,7 @@ const REASONS = new Set([
   'source-input-unstable',
   'source-stopped',
   'source-unavailable',
+  'source-warm-timeout',
   'station-key-unavailable',
   'station-unreachable',
   'stored-download-failed',
@@ -2531,6 +2532,7 @@ const HOMEKIT_REASON_ACTIONS: Readonly<Record<string, string>> = {
   'smart-light-operation-failed:timeout': 'log.action.controlTimedOut',
   'camera-control-operation-failed:timeout': 'log.action.controlTimedOut',
   'camera-live-session-failed:station-unreachable': 'log.action.checkStation',
+  'camera-live-session-failed:source-warm-timeout': 'log.action.retryLiveViewNoPicture',
   'camera-snapshot-unavailable:live-station-unreachable': 'log.action.checkStation',
   'camera-talkback-failed:no-controller-audio': 'log.action.trySmallVideoPackets',
 };
