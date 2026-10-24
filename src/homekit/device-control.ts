@@ -1,6 +1,6 @@
 import { CapabilityNotSupportedError, type AnyDeviceEvent } from '@mega-yfue/eufy-sdk';
 
-import type { AdapterAttachmentContext } from './adapter.js';
+import type { AdapterAttachmentContext, AdapterEventTrace } from './adapter.js';
 
 /**
  * How long one HomeKit-initiated SDK operation is given before HomeKit is told it failed.
@@ -57,8 +57,8 @@ export const CAMERA_ENABLED_WRITE = {
 export function enablementAnnouncement(
   context: Pick<AdapterAttachmentContext, 'evidence'>,
   event: AnyDeviceEvent,
-  observe: () => 'valid' | 'missing' | 'malformed',
-): { event: string; observation: 'valid' | 'missing' | 'malformed'; announcedBy: 'write' | 'poll' } | undefined {
+  observe: () => AdapterEventTrace['observation'],
+): (AdapterEventTrace & { announcedBy: 'write' | 'poll' }) | undefined {
   const announcedProperty = context.evidence.get(CAMERA_ENABLED_READ_ROW)?.property;
   const announcedBy =
     event.eventName === 'cameraEnabledChanged'

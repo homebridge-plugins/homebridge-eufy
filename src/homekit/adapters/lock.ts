@@ -378,8 +378,8 @@ function attachLock(context: AdapterAttachmentContext): AttachedAdapter | undefi
      * announcement will carry, and a lock is the wrong accessory on which to trust a shape.
      *
      * A code this build has read and deliberately presents nothing for — a battery warning, a tamper, a
-     * firmware update — is not this member reporting at all, so it records no trace and leaves the state
-     * alone. Anything else in the range is unread: the state is withdrawn rather than kept, because the
+     * firmware update — is not this member reporting at all, so it leaves the state alone and records only
+     * its code. Anything else in the range is unread: the state is withdrawn rather than kept, because the
      * announcement was about this lock and this build cannot say what it meant.
      *
      * The SDK's property announcement of the reported state is presented the same way, recorded as `poll`: it
@@ -406,12 +406,12 @@ function attachLock(context: AdapterAttachmentContext): AttachedAdapter | undefi
         return { event: LOCK_STATE_TRACE, observation: 'missing' };
       }
       if (typeof code === 'number' && NON_STATE_LOCK_CODES.has(code)) {
-        return undefined;
+        return { event: LOCK_STATE_TRACE, observation: 'ignored', code };
       }
       const announced = typeof code === 'number' ? ANNOUNCED_LOCK_STATES.get(code) : undefined;
       if (announced === undefined) {
         withdraw('malformed');
-        return { event: LOCK_STATE_TRACE, observation: 'malformed' };
+        return { event: LOCK_STATE_TRACE, observation: 'malformed', ...(typeof code === 'number' ? { code } : {}) };
       }
       present(announced);
       diagnoseState(false, 'recovered');
