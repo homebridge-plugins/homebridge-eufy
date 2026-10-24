@@ -2272,6 +2272,18 @@ describe('isolated return-audio adaptation', () => {
     expect(session.onVideoFailure).not.toHaveBeenCalled();
   });
 
+  /** The same timeout with no video yet from the camera is the source's failure, not the controller's. */
+  it('reports a return-audio input that timed out before any camera video as the source being unavailable', async () => {
+    const session = await talkbackSession(vi.fn(async () => new SyntheticTalkback()));
+    session.returned[0]!.stderr.write('[in#0/sdp @ 0x0] Error during demuxing: Operation timed out\n');
+    await settle();
+
+    session.returned[0]!.emit('exit', 0, null);
+    await settle();
+
+    expect(session.talkbackOutcomes).toEqual([{ outcome: 'failed', reason: 'source-unavailable' }]);
+  });
+
   /**
    * A return-audio adaptation that stops accepting the media it is being given has ended the talkback, and
    * says so on the pipe rather than in an exit status. It is reported in its own right, because the exit that

@@ -1325,9 +1325,11 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
             signal,
           );
           failTalkback(
-            stderr.tail().some((line) => line.includes('Error during demuxing: Operation timed out'))
-              ? 'no-controller-audio'
-              : 'adaptation-failed',
+            !stderr.tail().some((line) => line.includes('Error during demuxing: Operation timed out'))
+              ? 'adaptation-failed'
+              : receivedVideoKeyframe
+                ? 'no-controller-audio'
+                : 'source-unavailable',
           );
         });
         child.stdin.end(returnAudioSdp(audioPort.port, selection, transport.audio, transport.addressVersion));
