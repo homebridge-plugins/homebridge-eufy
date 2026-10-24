@@ -464,6 +464,7 @@ describe('diagnostic conditions', () => {
       'sequence-restart': { dataType: 1 },
       'level2-wait': { waitMs: 7599 },
       'level2-ready': { cipherId: 209 },
+      'level2-set-payload-only': { cipherId: 196 },
       'session-connect-wait': { waitMs: 5000 },
       'session-connected': { waitedMs: 320 },
       'session-unreachable': { waitedMs: 25000 },
@@ -477,6 +478,7 @@ describe('diagnostic conditions', () => {
       'media-command-unsent': { reason: 'level2-key' },
       'path-stale': { silentMs: 15000 },
       'channel-silent': { silentMs: 6000, outcome: 'reasserted' },
+      'start-failed': { reason: 'source-error', stage: 'awaiting-first-frame', attempts: 3, errorName: 'TypeError' },
     } satisfies { [P in LiveTrace['phase']]: Omit<Extract<LiveTrace, { phase: P }>, 'phase'> };
 
     const phases = Object.keys(traces);
@@ -502,6 +504,12 @@ describe('diagnostic conditions', () => {
       .map(([message]) => JSON.parse(message))
       .find((record) => record.phase === 'lookup-channels');
     expect(lookup?.cloudMissing, 'a connect with no cloud lookup must say what the lookup lacked').toBe('dsk-key');
+
+    const failed = debug.mock.calls
+      .map(([message]) => JSON.parse(message))
+      .find((record) => record.phase === 'start-failed');
+    expect(failed).toMatchObject({ reason: 'source-error', stage: 'awaiting-first-frame', attempts: 3 });
+    expect(failed, 'an upstream error class name is not retained').not.toHaveProperty('errorName');
   });
 
   /**
