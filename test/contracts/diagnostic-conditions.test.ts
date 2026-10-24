@@ -385,6 +385,17 @@ describe('diagnostic conditions', () => {
     expect(JSON.stringify(records)).not.toContain('synthetic-property');
   });
 
+  it('names a refused RTC sign apart from a generic WebRTC failure', () => {
+    const debug = vi.fn();
+    const sdk = createSdkLogger({ debug })!;
+
+    sdk.warn('[rtc-call] RTC sign for T8223P0000000000 refused: HTTP 200 code 26052 synthetic-close-error');
+
+    const records = debug.mock.calls.map(([message]) => JSON.parse(message));
+    expect(records.map(({ event }) => event)).toEqual(['rtc-sign-refused']);
+    expect(JSON.stringify(records)).not.toContain('T8223P0000000000');
+  });
+
   it('retains only bounded identity-free live startup details from SDK debug records', () => {
     const debug = vi.fn();
     const sdk = createSdkLogger({ debug })!;
