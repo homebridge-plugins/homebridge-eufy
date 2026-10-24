@@ -155,25 +155,28 @@ describe('T8531 lock capability adapter', () => {
     ['STATUS_CHANGE', LockPushEvent.STATUS_CHANGE],
     ['OTA_STATUS', LockPushEvent.OTA_STATUS],
     ['LOCK_ONLINE', LockPushEvent.LOCK_ONLINE],
-  ])('leaves the known state alone for the %s announcement, which carries none', (_name, eventType) => {
-    const target = accessory();
-    const diagnostics: LockDiagnostic[] = [];
-    const adapter = attach(lockDevice(workingLock()), target, (diagnostic) => diagnostics.push(diagnostic))!;
-    const current = target
-      .getServiceById(Service.LockMechanism, LOCK_ADAPTER_KEY)!
-      .getCharacteristic(Characteristic.LockCurrentState);
+  ])(
+    'leaves the known state alone for the %s announcement, which carries none, and records its code',
+    (_name, eventType) => {
+      const target = accessory();
+      const diagnostics: LockDiagnostic[] = [];
+      const adapter = attach(lockDevice(workingLock()), target, (diagnostic) => diagnostics.push(diagnostic))!;
+      const current = target
+        .getServiceById(Service.LockMechanism, LOCK_ADAPTER_KEY)!
+        .getCharacteristic(Characteristic.LockCurrentState);
 
-    adapter.event?.(announced(LockPushEvent.APP_LOCK));
-    expect(
-      adapter.event?.(announced(eventType)),
-      'this member did not report, so there is nothing to record about it',
-    ).toBeUndefined();
+      adapter.event?.(announced(LockPushEvent.APP_LOCK));
+      expect(
+        adapter.event?.(announced(eventType)),
+        'the code is recorded so a lock that moved without a state code still leaves the code it sent',
+      ).toEqual({ event: 'lock-state', observation: 'ignored', code: eventType });
 
-    expect(current.value, 'this lock is still locked; the announcement was about something else').toBe(
-      Characteristic.LockCurrentState.SECURED,
-    );
-    expect(diagnostics.filter(({ member, active }) => member === 'state' && active)).toEqual([]);
-  });
+      expect(current.value, 'this lock is still locked; the announcement was about something else').toBe(
+        Characteristic.LockCurrentState.SECURED,
+      );
+      expect(diagnostics.filter(({ member, active }) => member === 'state' && active)).toEqual([]);
+    },
+  );
 
   it('reads every lock push code the SDK names, so a code it has not is a failure and not a guess', () => {
     const unread = Object.values(LockPushEvent)
@@ -206,6 +209,7 @@ describe('T8531 lock capability adapter', () => {
     expect(adapter.event?.({ eventName: 'lockState', eventType } as never)).toEqual({
       event: 'lock-state',
       observation: reason === 'missing' ? 'missing' : 'malformed',
+      ...(typeof eventType === 'number' ? { code: eventType } : {}),
     });
 
     expect(

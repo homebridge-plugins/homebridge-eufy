@@ -2243,7 +2243,7 @@ const HOMEKIT_EVENT_ROUTES: Readonly<Record<string, ReadonlySet<string>>> = {
   'camera.streaming': new Set(['camera-enabled-changed']),
   'camera.controls': new Set(['camera-enabled-changed']),
 };
-const HOMEKIT_OBSERVATIONS = new Set(['malformed', 'missing', 'valid']);
+const HOMEKIT_OBSERVATIONS = new Set(['malformed', 'missing', 'valid', 'ignored']);
 /**
  * What announced a change, for an adapter that follows more than one announcement for the same state.
  *
@@ -2873,6 +2873,9 @@ function sanitizeHomeKitEvent(value: Record<string, unknown>): Record<string, un
     observation: value.observation,
     ...(typeof value.announcedBy === 'string' && HOMEKIT_ANNOUNCEMENTS.has(value.announcedBy)
       ? { announcedBy: value.announcedBy }
+      : {}),
+    ...(typeof value.code === 'number' && Number.isInteger(value.code) && value.code >= 0 && value.code <= 0xffff
+      ? { code: value.code }
       : {}),
     ...(alias === undefined ? {} : { accessory: alias }),
   };

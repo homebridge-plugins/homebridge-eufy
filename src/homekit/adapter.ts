@@ -50,7 +50,10 @@ export interface AdapterDiagnostic {
 /** A redacted account of one capability event handled in debug mode. */
 export interface AdapterEventTrace {
   event: string;
-  observation: 'valid' | 'missing' | 'malformed';
+  /** `ignored` is an announcement the adapter read and deliberately presents nothing for. */
+  observation: 'valid' | 'missing' | 'malformed' | 'ignored';
+  /** The device's own numeric event code, where the announcement carries one and it decided the observation. */
+  code?: number;
   /**
    * What announced the change, where the adapter follows more than one announcement for the same state.
    *

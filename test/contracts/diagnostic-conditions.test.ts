@@ -1814,6 +1814,22 @@ describe('diagnostic conditions', () => {
     }
   });
 
+  /** A lock code the adapter ignores is retained as its bounded number, so a support case can name it. */
+  it('records the code of an ignored lock announcement, and drops one out of range', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent(
+      { debug },
+      { adapter: 'lock.mechanism', event: 'lock-state', observation: 'ignored', code: 769 },
+    );
+    reportHomeKitEvent(
+      { debug },
+      { adapter: 'lock.mechanism', event: 'lock-state', observation: 'ignored', code: 1e9 },
+    );
+    const records = debug.mock.calls.map(([message]) => JSON.parse(message));
+    expect(records[0]).toMatchObject({ event: 'lock-state', observation: 'ignored', code: 769 });
+    expect(records[1]).not.toHaveProperty('code');
+  });
+
   it('records which announcement moved the camera power, and refuses one it does not know', () => {
     const debug = vi.fn();
 
