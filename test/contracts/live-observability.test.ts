@@ -412,6 +412,18 @@ describe('what a recording reports about the media it was handed', () => {
   });
 });
 
+/** A live video adaptation records the picture size its source announced, which tells a portrait camera apart. */
+describe('what a live video adaptation reports about its source picture', () => {
+  it('carries the source width and height together, and neither when one is not a size', () => {
+    const debug = vi.fn();
+    const started = { role: 'live-video', event: 'started', source: 'h265' } as const;
+    reportAdaptationNotice({ debug }, { ...started, sourceWidth: 1600, sourceHeight: 2200 });
+    reportAdaptationNotice({ debug }, { ...started, sourceWidth: 1600, sourceHeight: -1 } as never);
+    expect(records(debug)[0]).toMatchObject({ sourceWidth: 1600, sourceHeight: 2200 });
+    expect(records(debug)[1]).not.toHaveProperty('sourceWidth');
+  });
+});
+
 /**
  * Which pull a live trace belongs to, so several cameras' records can be told apart.
  *

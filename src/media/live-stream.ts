@@ -1040,6 +1040,8 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
           cause: videoCause,
           encoder: encoderName,
           source: videoConfig.codec,
+          sourceWidth: videoConfig.width,
+          sourceHeight: videoConfig.height,
         });
         const stderr = new AdaptationStderr();
         let producedOutput = false;
