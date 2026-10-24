@@ -717,8 +717,8 @@ describe('persisted runtime owner', () => {
     expect(getDevices).toHaveBeenCalledOnce();
   });
 
-  /** Push startup is recorded by its counts, which a ready-or-degraded outcome alone cannot tell apart. */
-  it('records how push startup settled', async () => {
+  /** Each plane's startup is recorded by its counts, which a ready-or-degraded outcome alone cannot tell apart. */
+  it('records how each realtime plane settled', async () => {
     const { persistence } = await activeRuntime();
     const active = await persistence.active();
     const debug = vi.fn();
@@ -729,6 +729,7 @@ describe('persisted runtime owner', () => {
         ...realtimeReady(),
         state: 'partial' as const,
         push: { required: 1, ready: 0, failed: 1, pending: 0 },
+        mqtt: { required: 1, ready: 0, failed: 0, pending: 1 },
       })),
       on: vi.fn(),
       off: vi.fn(),
@@ -749,6 +750,8 @@ describe('persisted runtime owner', () => {
       ready: 0,
       failed: 1,
       pending: 0,
+      mqtt: { required: 1, ready: 0, failed: 0, pending: 1 },
+      wiredP2p: { required: 1, ready: 1, failed: 0, pending: 0 },
     });
   });
 
