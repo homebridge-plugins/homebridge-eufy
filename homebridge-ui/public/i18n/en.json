@@ -173,6 +173,7 @@
   "log.action.retryCameraControl": "Try the control again; the camera did not confirm the change.",
   "log.action.retryLight": "Retry the smart-light control manually.",
   "log.action.retryLiveView": "Open live view again, and check network access between Homebridge and the camera.",
+  "log.action.retryLiveViewNoPicture": "The camera answered but sent no picture in time. Open live view again; if it keeps happening, send a diagnostics file.",
   "log.action.retryLock": "Retry the lock control manually.",
   "log.action.retryRecording": "No action is needed; recording is attempted again on the next trigger.",
   "log.action.retryTalkback": "Close and reopen the camera, then try speaking again.",

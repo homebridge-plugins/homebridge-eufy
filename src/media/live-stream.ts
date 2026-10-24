@@ -114,11 +114,18 @@ const SOURCE_ACQUISITION_TIMEOUT = Symbol('source-acquisition-timeout');
  * The SDK stages a start that produced no keyframe by what the source delivered, and a start that carried
  * audio and never a single video frame is the one signature worth naming apart: measured on a real camera
  * that had been switched off, the source accepted the start, delivered audio for the whole warm-up window,
- * and reported `audio-only`. Every other stage is a source error, because nothing else distinguishes it
- * from a transport that failed.
+ * and reported `audio-only`. Any other warm-up that ran out of time is `source-warm-timeout`: the camera answered
+ * and the transport worked, it just sent no usable picture. Everything else is a source error, because nothing
+ * else distinguishes it from a transport that failed.
  */
 function liveSourceFailure(error: unknown): LiveSessionFailure {
-  return error instanceof LiveStreamStartError && error.stage === 'audio-only' ? 'source-audio-only' : sourceFailure(error);
+  if (!(error instanceof LiveStreamStartError)) {
+    return sourceFailure(error);
+  }
+  if (error.stage === 'audio-only') {
+    return 'source-audio-only';
+  }
+  return error.reason === 'warm-timeout' ? 'source-warm-timeout' : sourceFailure(error);
 }
 
 /**

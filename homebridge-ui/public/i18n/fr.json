@@ -173,6 +173,7 @@
   "log.action.retryCameraControl": "Réessayez la commande ; la caméra n’a pas confirmé le changement.",
   "log.action.retryLight": "Relancez manuellement la commande de l’éclairage.",
   "log.action.retryLiveView": "Rouvrez la vue en direct et vérifiez l’accès réseau entre Homebridge et la caméra.",
+  "log.action.retryLiveViewNoPicture": "La caméra a répondu mais n’a envoyé aucune image à temps. Rouvrez la vue en direct ; si cela se reproduit, envoyez un fichier de diagnostic.",
   "log.action.retryLock": "Relancez manuellement la commande de la serrure.",
   "log.action.retryRecording": "Aucune action n’est nécessaire ; l’enregistrement sera retenté au prochain déclenchement.",
   "log.action.retryTalkback": "Fermez et rouvrez la caméra, puis essayez de parler de nouveau.",

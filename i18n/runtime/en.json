@@ -19,6 +19,7 @@
   "log.action.setFfmpegPath": "Set a custom FFmpeg path in Advanced settings in the Homebridge Eufy dashboard",
   "log.action.checkFfmpegPath": "FFmpeg could not be started; check the custom FFmpeg path in Advanced settings in the Homebridge Eufy dashboard",
   "log.action.checkStation": "Check that the station or HomeBase this camera uses is powered and online, and network access between Homebridge and it, then open live view again",
+  "log.action.retryLiveViewNoPicture": "The camera answered but sent no picture in time. Open live view again; if it keeps happening, send a diagnostics file",
   "log.action.retryLock": "Retry the lock control manually",
   "log.action.retryTalkback": "Close and reopen the camera, then try speaking again",
   "log.action.trySmallVideoPackets": "If the live view never shows in the Home app, turn on Smaller live video packets in Advanced settings in the Homebridge Eufy dashboard",

@@ -1031,6 +1031,13 @@ describe('diagnostic conditions', () => {
         'log.action.retryLiveView',
       ],
       [
+        'camera-live-session-failed',
+        { capability: 'camera', member: 'live' },
+        'source-warm-timeout',
+        'warn',
+        'log.action.retryLiveViewNoPicture',
+      ],
+      [
         'lock-operation-failed',
         { capability: 'lock', member: 'target' },
         'timeout',
