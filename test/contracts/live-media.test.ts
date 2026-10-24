@@ -808,6 +808,23 @@ describe('live media adaptation', () => {
     ]);
   });
 
+  it('does not restart an audio adaptation that exited before any output for the rest of the session', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac', data: Buffer.alloc(4) });
+    await settle();
+    session.children[1]!.emit('exit', 183, null);
+    await settle();
+
+    session.stream.audio({ codec: 'aac', data: Buffer.alloc(4) });
+    session.stream.video(KEYFRAME);
+    await settle();
+
+    expect(session.children, 'a broken audio input respawned FFmpeg on every frame').toHaveLength(2);
+    expect(session.onVideoFailure).not.toHaveBeenCalled();
+  });
+
   /**
    * A live adaptation that stops accepting the frames it is still being given has ended what it was serving,
    * and says so on the pipe rather than in an exit status. It is reported in its own right, because it carries
