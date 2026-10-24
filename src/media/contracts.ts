@@ -213,6 +213,9 @@ export interface AdaptationNotice {
   readonly encoder?: string;
   /** The codec the source delivers to a live video process, on `started`. */
   readonly source?: VideoCodec;
+  /** The picture size the source announced to a live video process, on `started`. */
+  readonly sourceWidth?: number;
+  readonly sourceHeight?: number;
   readonly code?: number;
   readonly signal?: string;
   readonly stderr?: readonly string[];

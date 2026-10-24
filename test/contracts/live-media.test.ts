@@ -705,7 +705,15 @@ describe('live media adaptation', () => {
       { outcome: 'failed', reason: 'adaptation-spawn-failed', stage: 'first-adapted-output' },
     ]);
     expect(spawnFailed.notices).toEqual([
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'libx264', source: 'h264' },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
       { role: 'live-video', event: 'spawn-failed' },
     ]);
 
@@ -721,7 +729,15 @@ describe('live media adaptation', () => {
       { outcome: 'failed', reason: 'adaptation-exited-before-output', stage: 'first-adapted-output' },
     ]);
     expect(exited.notices).toEqual([
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'libx264', source: 'h264' },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
       { role: 'live-video', event: 'exited-before-output', code: 234, stderr: ["Unknown encoder 'libx264'"] },
     ]);
   });
@@ -740,7 +756,15 @@ describe('live media adaptation', () => {
       { outcome: 'failed', reason: 'adaptation-exited-while-streaming', stage: 'first-adapted-output' },
     ]);
     expect(session.notices).toEqual([
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'libx264', source: 'h264' },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
       { role: 'live-video', event: 'exited-while-streaming', signal: 'SIGSEGV' },
     ]);
   });
@@ -764,7 +788,15 @@ describe('live media adaptation', () => {
     await settle();
 
     expect(session.notices).toEqual([
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'libx264', source: 'h264' },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
       {
         role: 'live-video',
         event: 'exited-while-streaming',
@@ -797,7 +829,15 @@ describe('live media adaptation', () => {
     expect(session.outcomes, 'a silent camera is not a broken one, so audio never fails the session').toEqual([]);
     expect(session.onVideoFailure).not.toHaveBeenCalled();
     expect(session.notices).toEqual([
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'libx264', source: 'h264' },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
       { role: 'live-audio', event: 'started' },
       {
         role: 'live-audio',
@@ -832,7 +872,15 @@ describe('live media adaptation', () => {
       { outcome: 'failed', reason: 'adaptation-failed', stage: 'first-adapted-output' },
     ]);
     expect(session.notices).toEqual([
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'libx264', source: 'h264' },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
       { role: 'live-audio', event: 'started' },
       { role: 'live-audio', event: 'input-failed', stderr: ['Audio encoding failed'] },
       { role: 'live-video', event: 'input-failed', stderr: ['av_interleaved_write_frame(): Broken pipe'] },
@@ -857,7 +905,15 @@ describe('live media adaptation', () => {
     await settle();
 
     expect(session.notices).toEqual([
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'libx264', source: 'h264' },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
       { role: 'live-audio', event: 'started' },
       { role: 'live-audio', event: 'started' },
     ]);
@@ -883,7 +939,15 @@ describe('live media adaptation', () => {
     await settle();
 
     expect(session.notices).toEqual([
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'libx264', source: 'h264' },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
       { role: 'live-audio', event: 'started' },
       { role: 'live-audio', event: 'exited-before-output', code: 1, stderr: ['Audio encoding failed'] },
     ]);
@@ -908,7 +972,15 @@ describe('live media adaptation', () => {
     expect(noisy.outcomes, 'a stopped session is not a failed one').toEqual([{ outcome: 'streaming' }]);
     expect(noisy.onVideoFailure).not.toHaveBeenCalled();
     expect(noisy.notices).toEqual([
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'libx264', source: 'h264' },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
       { role: 'live-video', event: 'output', code: 0, signal: 'SIGTERM', stderr: ['Past duration 0.799995 too large'] },
     ]);
 
@@ -922,7 +994,15 @@ describe('live media adaptation', () => {
     await settle();
 
     expect(silent.notices, 'a process that said nothing has nothing to attribute beyond having started').toEqual([
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'libx264', source: 'h264' },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
     ]);
   });
 
@@ -2253,7 +2333,15 @@ describe('isolated return-audio adaptation', () => {
       session.notices,
       'return audio fails only talkback, so without a report of its own its stderr has no account anywhere',
     ).toEqual([
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'libx264', source: 'h264' },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
       { role: 'return-audio', event: 'spawn-failed' },
     ]);
   });
@@ -2781,8 +2869,24 @@ describe('a live session on a qualified encoder', () => {
     high.prepared.stop();
 
     expect(notices.filter(({ event }) => event === 'started')).toEqual([
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'h264_nvenc', source: 'h264' },
-      { role: 'live-video', event: 'started', cause: 'first', encoder: 'libx264', source: 'h264' },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'h264_nvenc',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
     ]);
   });
 
@@ -2828,6 +2932,8 @@ describe('a live session on a qualified encoder', () => {
       cause: 'first',
       encoder: 'copy',
       source: 'h264',
+      sourceWidth: 1280,
+      sourceHeight: 720,
     });
 
     const quality = hardwareMedia({ constantQuality: true });

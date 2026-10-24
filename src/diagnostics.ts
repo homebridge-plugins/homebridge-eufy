@@ -2930,6 +2930,8 @@ interface AdaptationTrace {
    * FFmpeg words identically as `moov atom not found`.
    */
   sourceFragments?: number;
+  sourceWidth?: number;
+  sourceHeight?: number;
   stderr?: readonly string[];
 }
 
@@ -3033,6 +3035,8 @@ function sanitizeAdaptationNotice(value: Record<string, unknown>, level: string)
     .filter((line): line is string => line !== undefined)
     .slice(-MAX_ADAPTATION_STDERR_LINES);
   const sourceFragments = nonNegativeInteger(value.sourceFragments);
+  const sourceWidth = nonNegativeInteger(value.sourceWidth);
+  const sourceHeight = nonNegativeInteger(value.sourceHeight);
   const cause = allowlistedLabel(value.cause, ADAPTATION_CAUSES);
   const encoder = allowlistedLabel(value.encoder, LIVE_VIDEO_ENCODERS);
   const source = allowlistedLabel(value.source, LIVE_VIDEO_SOURCES);
@@ -3044,6 +3048,7 @@ function sanitizeAdaptationNotice(value: Record<string, unknown>, level: string)
     ...(cause === undefined ? {} : { cause }),
     ...(encoder === undefined ? {} : { encoder }),
     ...(source === undefined ? {} : { source }),
+    ...(sourceWidth === undefined || sourceHeight === undefined ? {} : { sourceWidth, sourceHeight }),
     ...(code === undefined ? {} : { code }),
     ...(signal === undefined ? {} : { signal }),
     ...(sourceFragments === undefined ? {} : { sourceFragments }),
