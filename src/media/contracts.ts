@@ -122,8 +122,9 @@ export type LiveSessionOutcome =
 /**
  * Why one return-audio lifecycle ended without usable device audio.
  *
- * `no-controller-audio` is a controller that sent no audio before FFmpeg's input timed out. A controller presenting
- * the live view sends audio throughout, so this one never presented it.
+ * `no-controller-audio` is a controller that sent no audio before FFmpeg's input timed out although the camera's
+ * video had reached it. A controller presenting the live view sends audio throughout, so this one never presented
+ * it. The same timeout before any video arrived is `source-unavailable`: there was nothing to present.
  */
 export type TalkbackFailure =
   | 'source-unavailable'
