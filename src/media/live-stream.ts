@@ -785,6 +785,8 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
     /** How many adaptation replacements the source's own changes have asked this session for. */
     let sourceInputReplacements = 0;
     let audioInputCodec: LiveAudioFrame['codec'] | undefined;
+    /** An audio adaptation that exited before any output cannot code this source, so none is started again. */
+    let audioFailed = false;
     let rtcpDeadline: ReturnType<typeof setTimeout> | undefined;
     let initialRtcpGrace: ReturnType<typeof setTimeout> | undefined;
     let videoStartBackstop: ReturnType<typeof setTimeout> | undefined;
@@ -1082,7 +1084,7 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
     };
 
     const writeAudio = (frame: LiveAudioFrame): void => {
-      if (stopped || !negotiated?.audio || !transport.audio || !audioPort) {
+      if (stopped || audioFailed || !negotiated?.audio || !transport.audio || !audioPort) {
         return;
       }
       if (!audioProcess) {
@@ -1130,17 +1132,14 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
           clearChild();
         });
         child.on('exit', (code, signal) => {
-          reportAdaptation(
-            'live-audio',
+          const event =
             stopped || stoppingProcesses.has(child)
               ? 'output'
               : producedOutput
                 ? 'exited-while-streaming'
-                : 'exited-before-output',
-            stderr,
-            code,
-            signal,
-          );
+                : 'exited-before-output';
+          audioFailed ||= event === 'exited-before-output';
+          reportAdaptation('live-audio', event, stderr, code, signal);
           clearChild();
         });
       }
