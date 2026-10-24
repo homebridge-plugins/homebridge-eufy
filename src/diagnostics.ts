@@ -2022,33 +2022,42 @@ function opaqueAccessoryAlias(value: unknown): string | undefined {
 }
 
 /**
- * Narrows one realtime startup outcome to its state and push start counts, or nothing where the state is unknown.
+ * Narrows one realtime startup outcome to its state, the push plane's start counts, and the mqtt and wired P2P
+ * planes' counts nested under their names, or nothing where the state is unknown.
  *
  * Read by both halves of the path — {@link reportRealtimeReadiness} builds the record and the file sink rebuilds it.
  */
 function sanitizeRealtimeReadiness(value: Record<string, unknown>): Record<string, unknown> | undefined {
   const state = allowlistedLabel(value.state, ['ready', 'partial', 'disabled', 'superseded', 'timed-out']);
   if (!state) return undefined;
-  const counts = Object.fromEntries(
-    (['required', 'ready', 'failed', 'pending'] as const).flatMap((key) => {
-      const count = nonNegativeInteger(value[key]);
-      return count === undefined ? [] : [[key, count]];
+  const counts = (plane: unknown): Record<string, number> =>
+    Object.fromEntries(
+      (['required', 'ready', 'failed', 'pending'] as const).flatMap((key) => {
+        const count = isRecord(plane) ? nonNegativeInteger(plane[key]) : undefined;
+        return count === undefined ? [] : [[key, count]];
+      }),
+    );
+  const planes = Object.fromEntries(
+    (['mqtt', 'wiredP2p'] as const).flatMap((plane) => {
+      const planeCounts = counts(value[plane]);
+      return Object.keys(planeCounts).length ? [[plane, planeCounts]] : [];
     }),
   );
-  return { event: 'realtime-readiness', state, ...counts };
+  return { event: 'realtime-readiness', state, ...counts(value), ...planes };
 }
 
 /**
- * Records how the SDK's realtime startup settled, with the push plane's start counts, as `sdk-log` evidence.
+ * Records how the SDK's realtime startup settled, with each plane's start counts, as `sdk-log` evidence.
  *
- * Carries the state and the counts alone, which separate a push plane that failed or never settled from one that
- * started.
+ * Carries the state and the counts alone, which name the plane — push, mqtt or wired P2P — that failed or never
+ * settled behind a `partial` start.
  */
 export function reportRealtimeReadiness(
   target: Partial<Pick<PlatformLogger, 'debug'>> | undefined,
-  readiness: { state: string; push?: object },
+  readiness: { state: string; push?: object; mqtt?: object; wiredP2p?: object },
 ): void {
-  const record = sanitizeRealtimeReadiness({ ...readiness.push, state: readiness.state });
+  const { state, push, mqtt, wiredP2p } = readiness;
+  const record = sanitizeRealtimeReadiness({ ...push, state, mqtt, wiredP2p });
   if (target?.debug && record) {
     target.debug(JSON.stringify({ scope: 'sdk', level: 'debug', subsystem: 'push', ...record }));
   }

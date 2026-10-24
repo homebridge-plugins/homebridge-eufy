@@ -595,9 +595,11 @@ describe('a live record that reached the support archive', () => {
     );
   });
 
-  it('keeps how push startup settled, by state and counts alone', async () => {
+  it('keeps how each realtime plane settled, by state and counts alone', async () => {
     const record = { scope: 'sdk', level: 'debug', subsystem: 'push', event: 'realtime-readiness', state: 'partial' };
-    await expect(retained({ ...record, failed: 1, token: 'synthetic' })).resolves.toEqual([{ ...record, failed: 1 }]);
+    await expect(
+      retained({ ...record, failed: 1, token: 'synthetic', mqtt: { failed: 1, host: 'synthetic' }, wiredP2p: 'x' }),
+    ).resolves.toEqual([{ ...record, failed: 1, mqtt: { failed: 1 } }]);
   });
 
   it('keeps a request refused before the source, the badge an operator saw having no other counterpart', async () => {
