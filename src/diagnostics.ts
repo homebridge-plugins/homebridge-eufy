@@ -335,6 +335,7 @@ const SDK_EVENT_KEYS = new Set([
   'observation-invalid',
   'protocol-command',
   'protocol-unhandled',
+  'push-received',
   'realtime-readiness',
   'rtc-sign-refused',
   'session-connecting',
@@ -1989,6 +1990,19 @@ const LIVE_TRACE_PHASES = {
   },
 } satisfies Record<LiveTrace['phase'], (candidate: Record<string, unknown>) => Record<string, unknown> | undefined>;
 
+/**
+ * Narrows one push the SDK received to its wire event type, whether it knew the device, and how many events it
+ * decoded: a push that decoded into none is the code a device sends that the library does not map yet.
+ */
+function sanitizeSdkPush(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  const eventType = boundedInteger(value.eventType, 0xffff);
+  const device = allowlistedLabel(value.device, ['known', 'unknown', 'none']);
+  const events = boundedInteger(value.events, 64);
+  return eventType === undefined || !device || events === undefined
+    ? undefined
+    : { scope: 'sdk', level: 'debug', subsystem: 'push', event: 'push-received', eventType, device, events };
+}
+
 function sanitizeSdkLiveStartTrace(candidate: unknown): Record<string, unknown> | undefined {
   if (!isRecord(candidate)) return undefined;
   const phase = String(candidate.phase);
@@ -2085,6 +2099,8 @@ export function createSdkLogger(target: Partial<PlatformLogger> | undefined): Lo
       const trace = sanitizeSdkLiveStartTrace(args[0]);
       if (trace) return { scope: 'sdk', subsystem: 'p2p', event: 'live-start-trace', ...trace };
     }
+    const push = /^\[push\] in: eventType=(\d+) device=(\w+) events=(\d+)$/.exec(message);
+    if (push) return sanitizeSdkPush({ eventType: Number(push[1]), device: push[2], events: Number(push[3]) });
     const requestedSubsystem = /^\[([a-z0-9-]+)(?:\s+[^\]]+)?\]/i.exec(message)?.[1]?.toLowerCase();
     if (requestedSubsystem === 'ffmpeg') {
       const stderr = message.slice(message.indexOf(']') + 1).split(/\r?\n/);
@@ -2625,6 +2641,9 @@ function sanitizeStructuredEvent(message: string): Record<string, unknown> | und
     if (value.event === 'realtime-readiness') {
       const readiness = sanitizeRealtimeReadiness(value);
       return readiness ? { scope: 'sdk', level: 'debug', subsystem: 'push', ...readiness } : undefined;
+    }
+    if (value.event === 'push-received') {
+      return level === 'debug' ? sanitizeSdkPush(value) : undefined;
     }
     if (value.event === 'live-start-trace') {
       if (level !== 'debug') return undefined;
