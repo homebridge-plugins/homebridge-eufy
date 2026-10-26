@@ -607,6 +607,14 @@ describe('a live record that reached the support archive', () => {
     );
   });
 
+  it('keeps a received push by its event type, device knowledge and decoded count alone', async () => {
+    const record = { scope: 'sdk', level: 'debug', subsystem: 'push', event: 'push-received', eventType: 3101 };
+    await expect(retained({ ...record, device: 'known', events: 0, deviceSn: 'synthetic' })).resolves.toEqual([
+      { ...record, device: 'known', events: 0 },
+    ]);
+    await expect(retained({ ...record, device: 'synthetic', events: 0 })).resolves.toEqual([]);
+  });
+
   it('keeps how each realtime plane settled, by state and counts alone', async () => {
     const record = { scope: 'sdk', level: 'debug', subsystem: 'push', event: 'realtime-readiness', state: 'partial' };
     await expect(

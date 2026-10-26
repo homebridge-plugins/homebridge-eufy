@@ -396,6 +396,28 @@ describe('diagnostic conditions', () => {
     expect(JSON.stringify(records)).not.toContain('T8223P0000000000');
   });
 
+  /** A push that decoded into no event is the code a device sends that the library does not map yet. */
+  it('records a received push by its event type, device knowledge and decoded count', () => {
+    const debug = vi.fn();
+    const sdk = createSdkLogger({ debug })!;
+
+    sdk.debug('[push] in: eventType=3101 device=known events=0');
+    sdk.debug('[push] in: eventType=3101 device=T8224P0000000000 events=0');
+
+    const records = debug.mock.calls.map(([message]) => JSON.parse(message));
+    expect(records).toEqual([
+      {
+        scope: 'sdk',
+        level: 'debug',
+        subsystem: 'push',
+        event: 'push-received',
+        eventType: 3101,
+        device: 'known',
+        events: 0,
+      },
+    ]);
+  });
+
   it('retains only bounded identity-free live startup details from SDK debug records', () => {
     const debug = vi.fn();
     const sdk = createSdkLogger({ debug })!;
