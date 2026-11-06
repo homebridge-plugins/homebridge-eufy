@@ -301,6 +301,7 @@ function renderDiagnostics(state) {
   const screen = diagnosticsScreen(state);
   const choosing = screen === 'choose';
   const reviewing = screen === 'review';
+  const nothingRecorded = isNothingRecorded(state);
   renderDiagnosticsEntries();
   diagnosticsWizardPanel.hidden = !choosing;
   diagnosticsGuidance.hidden = screen !== 'reproduce';
@@ -324,7 +325,8 @@ function renderDiagnostics(state) {
   diagnosticsHandoffNote.hidden = !diagnosticsArchiveDownloaded;
   if (!offering) diagnosticsResultStatus.textContent = '';
   else if (!diagnosticsArchiveDownloaded && state.missingEvidence?.length) {
-    diagnosticsResultStatus.textContent = messages.diagnosticsMissingEvidence ?? '';
+    diagnosticsResultStatus.textContent =
+      messages[nothingRecorded ? 'diagnosticsNothingRecorded' : 'diagnosticsMissingEvidence'] ?? '';
   }
   diagnosticsDownloadAgain.hidden = !diagnosticsArchiveDownloaded;
   if (!reviewed) {
@@ -342,6 +344,12 @@ function renderDiagnostics(state) {
     diagnosticsCaptureNote.textContent = (messages.diagnosticsCaptureKeepsRunning ?? '').replace('{time}', stopsAt);
   }
   diagnosticsStatus.textContent = '';
+}
+
+/** Whether a finished capture holds no record of any log it selected, so its file carries nothing to diagnose. */
+function isNothingRecorded(state) {
+  return state.status === 'complete' && state.selectedEvidence?.length > 0 &&
+    state.missingEvidence?.length === state.selectedEvidence.length;
 }
 
 /**
@@ -505,7 +513,7 @@ diagnosticsReproduction.addEventListener('click', async () => {
   } finally {
     diagnosticsReproduction.disabled = diagnosticsState.status !== 'reproducing';
   }
-  if (diagnosticsState.partialExportAvailable) {
+  if (diagnosticsState.partialExportAvailable && !isNothingRecorded(diagnosticsState)) {
     diagnosticsResultHeading.focus?.();
     await downloadDiagnosticsArchive();
   }

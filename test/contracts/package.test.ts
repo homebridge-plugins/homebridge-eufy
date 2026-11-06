@@ -1241,6 +1241,7 @@ describe('packed plugin', () => {
       'diagnosticsFailed',
       'diagnosticsLiveAction',
       'diagnosticsMissingEvidence',
+      'diagnosticsNothingRecorded',
       'diagnosticsOtherAction',
       'diagnosticsRecordingAction',
       'diagnosticsStartupAction',

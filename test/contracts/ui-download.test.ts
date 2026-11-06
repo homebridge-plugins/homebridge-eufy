@@ -52,6 +52,20 @@ describe('custom UI downloads', () => {
     expect(script).toContain('document.body.removeChild(download)');
   });
 
+  /** A finished capture that recorded none of its selected logs says so and offers another capture instead of downloading. */
+  it('warns when a finished capture recorded nothing, rather than handing over an empty file', () => {
+    const script = readFileSync(new URL('../../homebridge-ui/public/js/app.js', import.meta.url), 'utf8');
+    for (const language of ['en', 'fr']) {
+      const catalog = JSON.parse(
+        readFileSync(new URL(`../../homebridge-ui/public/i18n/${language}.json`, import.meta.url), 'utf8'),
+      );
+      expect(catalog.diagnosticsNothingRecorded, language).toBeTruthy();
+    }
+    expect(script).toContain('state.missingEvidence?.length === state.selectedEvidence.length');
+    expect(script).toContain("nothingRecorded ? 'diagnosticsNothingRecorded'");
+    expect(script).toContain('diagnosticsState.partialExportAvailable && !isNothingRecorded(diagnosticsState)');
+  });
+
   it('downloads the archive without a confirmation to tick first', () => {
     const document = readFileSync(new URL('../../homebridge-ui/public/index.html', import.meta.url), 'utf8');
     const stylesheet = readFileSync(new URL('../../homebridge-ui/public/app.css', import.meta.url), 'utf8');
