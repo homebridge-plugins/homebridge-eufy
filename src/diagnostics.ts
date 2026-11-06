@@ -380,12 +380,27 @@ function countedAffectedDevices(affected: AffectedDevices): 'all' | number {
   return affected === 'all' ? 'all' : new Set(affected).size;
 }
 
-/** The bounded UI events a support session may record, and the only vocabulary the sink accepts. */
+/**
+ * The bounded UI events a support session may record, and the only vocabulary the sink accepts.
+ *
+ * A settings-page sign-in records each step it took and the kind of outcome it reached, one event per
+ * temporary-authentication result status. Nothing typed or shown travels with them.
+ */
 const DIAGNOSTICS_UI_EVENTS = [
   'background-started',
   'dashboard-opened',
   'authentication-opened',
   'request-failed',
+  'authentication-submitted',
+  'authentication-captcha',
+  'authentication-two-factor',
+  'authentication-restart-required',
+  'authentication-blocked',
+  'authentication-plugin-running',
+  'authentication-failed',
+  'authentication-commit-failed',
+  'authentication-timed-out',
+  'authentication-closed',
 ] as const;
 
 export type DiagnosticsUiEvent = (typeof DIAGNOSTICS_UI_EVENTS)[number];
@@ -539,7 +554,7 @@ function bugReportUrl(
 }
 
 const DIAGNOSTICS_PROFILES: Readonly<Record<DiagnosticsProfile, readonly DiagnosticEvidence[]>> = {
-  'startup-authentication': ['plugin-log', 'sdk-log'],
+  'startup-authentication': ['plugin-log', 'sdk-log', 'ui-log'],
   'device-representation': ['plugin-log', 'sdk-log', 'homekit-log'],
   'control-state': ['plugin-log', 'sdk-log', 'homekit-log'],
   'live-media': ['plugin-log', 'sdk-log', 'homekit-log', 'ffmpeg-log'],
@@ -1048,8 +1063,12 @@ export class GuidedDiagnostics {
     this.pendingUiEvents += 1;
     const write = this.uiEventWrites.then(async () => {
       const session = this.requireAuthorized();
-      if (session.profile !== 'dashboard-ui' || !session.reproductionStartedAt || session.reproductionEndedAt) {
-        throw new Error('An active dashboard reproduction is required');
+      if (
+        !DIAGNOSTICS_PROFILES[session.profile].includes('ui-log') ||
+        !session.reproductionStartedAt ||
+        session.reproductionEndedAt
+      ) {
+        throw new Error('An active dashboard or sign-in reproduction is required');
       }
       const directory = join(this.storageRoot, DIAGNOSTICS_DIRECTORY);
       const path = join(directory, UI_EVENTS_FILE);

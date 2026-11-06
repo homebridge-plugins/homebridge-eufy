@@ -393,24 +393,35 @@ export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
         this.runtimeTracker,
         this.runtimeChannel,
       );
-      return await this.authentication.start(parseAuthenticationStart(payload));
+      return await this.recordSignIn(this.authentication.start(parseAuthenticationStart(payload)));
     } finally {
       this.startPending = false;
     }
   }
 
   private continueCaptcha(payload: unknown): Promise<TemporaryAuthenticationResult> {
-    return (
+    return this.recordSignIn(
       this.authentication?.submitCaptcha(parseAuthenticationAnswer(payload, 'answer')) ??
-      Promise.resolve({ status: 'failed' })
+        Promise.resolve({ status: 'failed' }),
     );
   }
 
   private continueTwoFactor(payload: unknown): Promise<TemporaryAuthenticationResult> {
-    return (
+    return this.recordSignIn(
       this.authentication?.submitTwoFactor(parseAuthenticationAnswer(payload, 'code')) ??
-      Promise.resolve({ status: 'failed' })
+        Promise.resolve({ status: 'failed' }),
     );
+  }
+
+  /**
+   * Records a settings-page sign-in step and the kind of outcome it reached for a support session collecting
+   * UI events. Best effort: no session, or one collecting none, records nothing and changes no outcome.
+   */
+  private async recordSignIn(step: Promise<TemporaryAuthenticationResult>): Promise<TemporaryAuthenticationResult> {
+    void this.diagnostics.recordUiEvent('authentication-submitted').catch(() => undefined);
+    const result = await step;
+    void this.diagnostics.recordUiEvent(`authentication-${result.status}`).catch(() => undefined);
+    return result;
   }
 
   private async closeAuthentication(): Promise<TemporaryAuthenticationResult> {
