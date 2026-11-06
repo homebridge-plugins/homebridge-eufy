@@ -386,6 +386,16 @@ const DIAGNOSTICS_UI_EVENTS = [
   'dashboard-opened',
   'authentication-opened',
   'request-failed',
+  'authentication-submitted',
+  'authentication-captcha',
+  'authentication-two-factor',
+  'authentication-restart-required',
+  'authentication-blocked',
+  'authentication-plugin-running',
+  'authentication-failed',
+  'authentication-commit-failed',
+  'authentication-timed-out',
+  'authentication-closed',
 ] as const;
 
 export type DiagnosticsUiEvent = (typeof DIAGNOSTICS_UI_EVENTS)[number];
@@ -539,7 +549,7 @@ function bugReportUrl(
 }
 
 const DIAGNOSTICS_PROFILES: Readonly<Record<DiagnosticsProfile, readonly DiagnosticEvidence[]>> = {
-  'startup-authentication': ['plugin-log', 'sdk-log'],
+  'startup-authentication': ['plugin-log', 'sdk-log', 'ui-log'],
   'device-representation': ['plugin-log', 'sdk-log', 'homekit-log'],
   'control-state': ['plugin-log', 'sdk-log', 'homekit-log'],
   'live-media': ['plugin-log', 'sdk-log', 'homekit-log', 'ffmpeg-log'],
@@ -1048,8 +1058,12 @@ export class GuidedDiagnostics {
     this.pendingUiEvents += 1;
     const write = this.uiEventWrites.then(async () => {
       const session = this.requireAuthorized();
-      if (session.profile !== 'dashboard-ui' || !session.reproductionStartedAt || session.reproductionEndedAt) {
-        throw new Error('An active dashboard reproduction is required');
+      if (
+        !DIAGNOSTICS_PROFILES[session.profile].includes('ui-log') ||
+        !session.reproductionStartedAt ||
+        session.reproductionEndedAt
+      ) {
+        throw new Error('An active dashboard or sign-in reproduction is required');
       }
       const directory = join(this.storageRoot, DIAGNOSTICS_DIRECTORY);
       const path = join(directory, UI_EVENTS_FILE);

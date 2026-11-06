@@ -143,6 +143,29 @@ describe('guided diagnostics session', () => {
     }
   });
 
+  it('collects settings-page sign-in steps in a startup-authentication session', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-guided-'));
+    const diagnostics = new GuidedDiagnostics(root);
+
+    try {
+      await diagnostics.authorize('startup-authentication', 'now');
+      await diagnostics.startReproduction();
+      await diagnostics.recordUiEvent('authentication-submitted');
+      await diagnostics.recordUiEvent('authentication-captcha');
+      await diagnostics.recordUiEvent('authentication-failed');
+      const completed = await diagnostics.endReproduction();
+
+      expect(completed.missingEvidence).not.toContain('ui-log');
+      const events = readFileSync(join(root, 'diagnostics', 'ui-events.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => (JSON.parse(line) as { event: string }).event);
+      expect(events).toEqual(['authentication-submitted', 'authentication-captcha', 'authentication-failed']);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it('starts another dashboard reproduction after completion and accepts UI events again', async () => {
     const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-guided-'));
     let now = Date.parse('2026-08-17T08:00:00.000Z');
