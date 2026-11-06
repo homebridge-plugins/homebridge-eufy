@@ -2561,7 +2561,7 @@ const HOMEKIT_REASON_ACTIONS: Readonly<Record<string, string>> = {
   'camera-live-session-failed:station-unreachable': 'log.action.checkStation',
   'camera-live-session-failed:source-warm-timeout': 'log.action.retryLiveViewNoPicture',
   'camera-snapshot-unavailable:live-station-unreachable': 'log.action.checkStation',
-  'camera-talkback-failed:no-controller-audio': 'log.action.trySmallVideoPackets',
+  'camera-talkback-failed:no-controller-audio': 'log.action.checkTalkbackMicrophone',
 };
 
 /**
