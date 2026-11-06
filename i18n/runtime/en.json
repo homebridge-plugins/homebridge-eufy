@@ -22,7 +22,7 @@
   "log.action.retryLiveViewNoPicture": "The camera answered but sent no picture in time. Open live view again; if it keeps happening, send a diagnostics file",
   "log.action.retryLock": "Retry the lock control manually",
   "log.action.retryTalkback": "Close and reopen the camera, then try speaking again",
-  "log.action.trySmallVideoPackets": "If the live view never shows in the Home app, turn on Smaller live video packets in Advanced settings in the Homebridge Eufy dashboard",
+  "log.action.checkTalkbackMicrophone": "The Home app sent no voice. Allow the Home app to use the microphone in iPhone Settings, then tap the microphone button in the live view and speak",
   "log.action.reviewRuntime": "Review Homebridge Eufy health in the dashboard and restart Homebridge",
   "log.action.stopOtherOwner": "Stop the other Homebridge Eufy owner before restarting Homebridge",
   "log.action.mapArmingMode": "Assign this mode to a HomeKit state under HomeKit guard modes in the device's settings in the Homebridge Eufy dashboard",

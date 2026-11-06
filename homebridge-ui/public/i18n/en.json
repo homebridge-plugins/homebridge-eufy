@@ -177,7 +177,7 @@
   "log.action.retryLock": "Retry the lock control manually.",
   "log.action.retryRecording": "No action is needed; recording is attempted again on the next trigger.",
   "log.action.retryTalkback": "Close and reopen the camera, then try speaking again.",
-  "log.action.trySmallVideoPackets": "If the live view never shows in the Home app, turn on Smaller live video packets in Advanced settings in the Homebridge Eufy dashboard.",
+  "log.action.checkTalkbackMicrophone": "The Home app sent no voice. Allow the Home app to use the microphone in iPhone Settings, then tap the microphone button in the live view and speak.",
   "log.action.setFfmpegPath": "Set a custom FFmpeg path in Advanced settings.",
   "log.homekit.armingCapabilityUnavailable": "Security-system information is unavailable",
   "log.homekit.armingOperationFailed": "A security-system control failed",

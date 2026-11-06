@@ -1071,7 +1071,7 @@ describe('diagnostic conditions', () => {
         { capability: 'camera', member: 'talkback' },
         'no-controller-audio',
         'warn',
-        'log.action.trySmallVideoPackets',
+        'log.action.checkTalkbackMicrophone',
       ],
     ] as const;
 

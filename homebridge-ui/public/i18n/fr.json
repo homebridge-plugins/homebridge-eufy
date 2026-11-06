@@ -177,7 +177,7 @@
   "log.action.retryLock": "Relancez manuellement la commande de la serrure.",
   "log.action.retryRecording": "Aucune action n’est nécessaire ; l’enregistrement sera retenté au prochain déclenchement.",
   "log.action.retryTalkback": "Fermez et rouvrez la caméra, puis essayez de parler de nouveau.",
-  "log.action.trySmallVideoPackets": "Si la vue en direct ne s’affiche jamais dans l’app Maison, activez Paquets vidéo en direct plus petits dans les réglages avancés du tableau de bord Homebridge Eufy.",
+  "log.action.checkTalkbackMicrophone": "L’app Maison n’a envoyé aucune voix. Autorisez l’app Maison à utiliser le micro dans les Réglages de l’iPhone, puis touchez le bouton du micro dans la vue en direct et parlez.",
   "log.action.setFfmpegPath": "Définissez un chemin FFmpeg personnalisé dans les Réglages avancés.",
   "log.homekit.armingCapabilityUnavailable": "Les informations du système de sécurité sont indisponibles",
   "log.homekit.armingOperationFailed": "Une commande du système de sécurité a échoué",
