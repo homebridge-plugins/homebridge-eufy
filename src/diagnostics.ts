@@ -380,12 +380,7 @@ function countedAffectedDevices(affected: AffectedDevices): 'all' | number {
   return affected === 'all' ? 'all' : new Set(affected).size;
 }
 
-/**
- * The bounded UI events a support session may record, and the only vocabulary the sink accepts.
- *
- * A settings-page sign-in records each step it took and the kind of outcome it reached, one event per
- * temporary-authentication result status. Nothing typed or shown travels with them.
- */
+/** The bounded UI events a support session may record, and the only vocabulary the sink accepts. */
 const DIAGNOSTICS_UI_EVENTS = [
   'background-started',
   'dashboard-opened',
