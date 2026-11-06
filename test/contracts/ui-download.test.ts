@@ -77,7 +77,9 @@ describe('custom UI downloads', () => {
       /<dialog[^>]+data-diagnostics-result/,
     );
     expect(document).toMatch(/data-diagnostics-guidance[^>]+hidden/);
-    expect(document).toContain('data-diagnostics-start-another');
+    expect(document, 'the archive dialog always offers a way out').toMatch(
+      /data-diagnostics-start-another\s+data-i18n/,
+    );
     expect(document, 'the heading takes focus and is the one the group is named by').toMatch(
       /id="diagnostics-question-heading"\s+tabindex="-1"\s+data-diagnostics-question-text/,
     );

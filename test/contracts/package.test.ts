@@ -1798,10 +1798,9 @@ describe('packed plugin', () => {
       'a completed session waits for the reporter to open diagnostics rather than blocking the page on load',
     ).toBe(false);
     await completedDiagnosticsUi.menuDiagnostics.dispatch('click');
-    expect(completedDiagnosticsUi, 'an archive not yet downloaded offers only its download').toMatchObject({
+    expect(completedDiagnosticsUi, 'an archive not yet downloaded offers its download').toMatchObject({
       diagnosticsExport: { disabled: false, hidden: false },
       diagnosticsHandoff: { hidden: true },
-      diagnosticsStartAnother: { hidden: true },
       diagnosticsResult: { open: true },
       diagnosticsWizardPanel: { hidden: true },
     });
@@ -1828,7 +1827,6 @@ describe('packed plugin', () => {
       diagnosticsResult: { open: true },
       diagnosticsResultHeading: { textContent: catalogs['i18n/en.json'].diagnosticsArchiveDownloaded },
       diagnosticsExport: { hidden: true },
-      diagnosticsStartAnother: { hidden: false },
       diagnosticsDownloadAgain: { hidden: false },
       diagnosticsHandoff: { hidden: false },
       diagnosticsHandoffNote: {
