@@ -326,7 +326,6 @@ function renderDiagnostics(state) {
   else if (!diagnosticsArchiveDownloaded && state.missingEvidence?.length) {
     diagnosticsResultStatus.textContent = messages.diagnosticsMissingEvidence ?? '';
   }
-  diagnosticsStartAnother.hidden = !diagnosticsArchiveDownloaded;
   diagnosticsDownloadAgain.hidden = !diagnosticsArchiveDownloaded;
   if (!reviewed) {
     diagnosticsExport.disabled = true;
