@@ -125,6 +125,7 @@
   "diagnosticsLiveAction": "Dans l’app Maison, ouvrez la vue en direct, demandez un instantané ou essayez l’audio bidirectionnel une fois. Si l’image reste noire ou que le problème apparaît, revenez ici et appuyez sur terminer. Si tout fonctionne, laissez la capture en cours et réessayez quand le problème revient.",
   "diagnosticsLiveSummary": "Vérifie un problème de vue en direct, d’instantané ou d’audio bidirectionnel.",
   "diagnosticsMissingEvidence": "Certains détails n’ont pas pu être capturés. Vous pouvez tout de même télécharger le fichier de diagnostic.",
+  "diagnosticsNothingRecorded": "Rien n’a été enregistré. Reproduisez le problème avant de terminer, ou lancez une nouvelle capture.",
   "diagnosticsNowFinish": "C’est arrivé — terminer",
   "diagnosticsOpenIssue": "Ouvrir un nouveau ticket GitHub",
   "diagnosticsOtherAction": "Essayez de faire survenir le problème et notez ce que vous voyez. Une fois qu’il s’est produit, revenez ici et appuyez sur terminer ; d’ici là, laissez la capture en cours.",

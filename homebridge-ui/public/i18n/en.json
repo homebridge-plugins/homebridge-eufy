@@ -125,6 +125,7 @@
   "diagnosticsLiveAction": "In the Home app, open the live view, request one snapshot, or try talkback once. If the image stays black or the problem shows, come back here and press finish. If it works, leave the capture running and try again when the problem returns.",
   "diagnosticsLiveSummary": "Checks one live view, snapshot, or talkback problem.",
   "diagnosticsMissingEvidence": "Some details could not be captured. You can still download the diagnostics file.",
+  "diagnosticsNothingRecorded": "Nothing was recorded. Reproduce the problem before finishing, or start another capture.",
   "diagnosticsNowFinish": "It happened — finish",
   "diagnosticsOpenIssue": "Open a new GitHub issue",
   "diagnosticsOtherAction": "Try to make the problem happen and note what you see. Once it has happened, come back here and press finish; until then, leave the capture running.",
