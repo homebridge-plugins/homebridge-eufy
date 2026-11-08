@@ -37,8 +37,18 @@ jobs:
       # `ffmpeg-for-homebridge` carries no binary in its tarball: its install script downloads the one the
       # plugin ships and hands to every media session. Without this the gate runs against a path that names a
       # file which is not there, so the one suite that reads a real banner off the shipped binary cannot.
+      # The install script exits 0 when its download or check fails, so the binary is run here to fail on it.
+      # It reuses an archive already in `.build`, so the cache serves later runs while the release host is down.
+      - name: Cache the bundled FFmpeg download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/ffmpeg-for-homebridge/.build
+          key: ffmpeg-for-homebridge-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+
       - name: Fetch the bundled FFmpeg binary
-        run: npm rebuild ffmpeg-for-homebridge
+        run: |
+          npm rebuild ffmpeg-for-homebridge --foreground-scripts
+          node_modules/ffmpeg-for-homebridge/ffmpeg -version
 
       - name: Verify
         run: npm run verify
