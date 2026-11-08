@@ -126,6 +126,20 @@
   "diagnosticsLiveSummary": "Checks one live view, snapshot, or talkback problem.",
   "diagnosticsMissingEvidence": "Some details could not be captured. You can still download the diagnostics file.",
   "diagnosticsNothingRecorded": "Nothing was recorded. Reproduce the problem before finishing, or start another capture.",
+  "diagnosticsEncodeCameras": "Which cameras show no picture in the Home app?",
+  "diagnosticsEncodeStart": "Start the capture",
+  "diagnosticsEncodeKeepOpen": "Keep this page open until every attempt is done.",
+  "diagnosticsEncodeNotListed": "Not in the list",
+  "diagnosticsEncodePreview": "First, the live video of {camera} plays below, straight from the camera. Do you see it?",
+  "diagnosticsEncodeNoVideo": "No camera showed its video here, so there is nothing to try in the Home app. Press finish to get the file.",
+  "diagnosticsEncodeOpen": "In the Home app, open the live view of {camera}. Attempt {attempt} of {attempts}. Close it after about 20 seconds, or as soon as the picture shows.",
+  "diagnosticsEncodeWatching": "{camera} is streaming, attempt {attempt} of {attempts}. Close the live view after about 20 seconds, or as soon as the picture shows.",
+  "diagnosticsEncodeAsk": "Attempt {attempt} of {attempts} on {camera} ended. Did you see the picture?",
+  "diagnosticsEncodeSeen": "Yes, I saw it",
+  "diagnosticsEncodeNotSeen": "No picture",
+  "diagnosticsEncodeWrongCamera": "That is not one of the cameras you chose. Close it and open {camera}.",
+  "diagnosticsEncodeReminder": "Nothing has started for a few minutes: open the live view in the Home app.",
+  "diagnosticsEncodeDone": "Every attempt is done. Press finish to get the file.",
   "diagnosticsNowFinish": "It happened — finish",
   "diagnosticsOpenIssue": "Open a new GitHub issue",
   "diagnosticsOtherAction": "Try to make the problem happen and note what you see. Once it has happened, come back here and press finish; until then, leave the capture running.",
@@ -297,5 +311,6 @@
   "wizardEufyHelp": "Sent to the camera itself, the same settings as in the eufy app.",
   "wizardMapLabel": "Your devices",
   "wizardMapBase": "HomeBase",
-  "wizardMapStandalone": "Standalone"
+  "wizardMapStandalone": "Standalone",
+  "diagnosticsBack": "Back"
 }

@@ -2640,7 +2640,11 @@ function hardwareMedia({ copy = false, constantQuality = false, small = false } 
     copy,
     constantQuality,
   );
-  const open = async (video: NegotiatedLiveVideo = QUALIFIED_MAIN, liveVideoSettings?: LiveVideoSettings) => {
+  const open = async (
+    video: NegotiatedLiveVideo = QUALIFIED_MAIN,
+    liveVideoSettings?: LiveVideoSettings,
+    encodeVariant?: number,
+  ) => {
     const stream = new SyntheticLiveStream();
     const prepared = await media.prepare({
       ...(liveVideoSettings ? { liveVideoSettings } : {}),
@@ -2653,7 +2657,10 @@ function hardwareMedia({ copy = false, constantQuality = false, small = false } 
         srtpSalt: Buffer.alloc(14),
       },
     });
-    await prepared.start({ live: async () => stream }, { video });
+    await prepared.start(
+      { live: async () => stream },
+      { video, ...(encodeVariant === undefined ? {} : { encodeVariant }) },
+    );
     stream.video(KEYFRAME);
     const args = spawned.at(-1)!;
     return { prepared, child: children.at(-1)!, encoder: args[args.indexOf('-c:v') + 1], args };
@@ -3093,6 +3100,45 @@ describe('live output frame rate', () => {
     expect(args).not.toContain('-r');
     expect(args, 'FFmpeg refuses a frame-rate mode beside -fpsmax').not.toContain('-fps_mode:v');
     session.prepared.stop();
+  });
+});
+
+/**
+ * A guided live-media capture codes each attempt of a `libx264` session with one fixed change to its arguments, by
+ * the attempt's index, and leaves every other encoder, and every index past the last, on its own arguments.
+ */
+describe('live encode variants', () => {
+  it('changes one fixed set of libx264 arguments per attempt', async () => {
+    const vf = ['-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2'];
+    const keyframes = ['30', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0'];
+    const libx264 = (preset: string, rate: string, buffer: string) => [
+      ...['-c:v', 'libx264', '-preset', preset, '-tune', 'zerolatency', '-profile:v', 'main', '-level:v', '3.1'],
+      ...['-pix_fmt', 'yuv420p', '-b:v', rate, '-maxrate', rate, '-bufsize', buffer],
+    ];
+    const { notices, open } = hardwareMedia();
+    const slices = [];
+    for (const variant of [undefined, 0, 1, 2, 3, 4, 5, 6]) {
+      slices.push(encoderSlice((await open(QUALIFIED_MAIN, undefined, variant)).args));
+    }
+    const unchanged = [...libx264('superfast', '287k', '287k'), ...vf, '-fpsmax', ...keyframes];
+    expect(slices).toEqual([
+      unchanged,
+      unchanged,
+      [...libx264('ultrafast', '1500k', '3000k'), '-color_range', 'mpeg', ...vf, '-r', ...keyframes],
+      [...libx264('superfast', '287k', '287k'), '-color_range', 'mpeg', ...vf, '-fpsmax', ...keyframes],
+      [...libx264('superfast', '287k', '287k'), ...vf, '-r', ...keyframes],
+      [...libx264('superfast', '287k', '574k'), ...vf, '-fpsmax', ...keyframes],
+      [...libx264('superfast', '1500k', '3000k'), ...vf, '-fpsmax', ...keyframes],
+      unchanged,
+    ]);
+    expect(notices.map(({ variant }) => variant)).toEqual([undefined, 0, 1, 2, 3, 4, 5, undefined]);
+
+    const quality = hardwareMedia({ constantQuality: true });
+    const constant = await quality.open(QUALIFIED_MAIN, undefined, 1);
+    expect(constant.args).toEqual((await quality.open()).args);
+    expect(quality.notices[0], 'a variant that changed nothing is not recorded as applied').not.toHaveProperty(
+      'variant',
+    );
   });
 });
 

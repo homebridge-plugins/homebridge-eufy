@@ -58,6 +58,7 @@ import type {
   AttachedAdapter,
   HomeKitAdapter,
   HomeKitDefinitions,
+  LiveEncodeAttempt,
 } from '../adapter.js';
 
 export const CAMERA_STREAMING_ADAPTER_KEY = 'camera.streaming';
@@ -389,6 +390,7 @@ function attachCameraStreaming(context: AdapterAttachmentContext): AttachedAdapt
     media: context.liveMedia,
     ...(context.snapshotMedia ? { snapshotMedia: context.snapshotMedia } : {}),
     ...(context.liveVideoSettings ? { liveVideoSettings: context.liveVideoSettings } : {}),
+    ...(context.liveEncodeAttempt ? { liveEncodeAttempt: context.liveEncodeAttempt } : {}),
     audioEnabled: context.audioEnabled !== false,
     snapshotMode,
     enablement,
@@ -1136,6 +1138,7 @@ interface LiveCameraBinding {
   readonly media: LiveMediaAdapter;
   readonly snapshotMedia?: SnapshotMediaAdapter;
   readonly liveVideoSettings?: LiveVideoSettings;
+  readonly liveEncodeAttempt?: AdapterAttachmentContext['liveEncodeAttempt'];
   readonly audioEnabled: boolean;
   readonly snapshotMode: SnapshotMode;
   readonly enablement: () => boolean | undefined;
@@ -1453,7 +1456,8 @@ class LiveCameraDelegate implements CameraStreamingDelegate {
     }
     session.selection = request;
     const video = negotiatedVideo(request.video, session.videoSsrc, this.hap);
-    this.traceSelection('start', video, session.addressVersion);
+    const attempt = this.binding.liveEncodeAttempt?.();
+    this.traceSelection('start', video, session.addressVersion, attempt);
     this.watchForOutcome(request.sessionID);
     const source = this.binding.source;
     session.source = source;
@@ -1461,6 +1465,7 @@ class LiveCameraDelegate implements CameraStreamingDelegate {
     void session.prepared
       .start(source, {
         video,
+        ...(attempt?.variant === undefined ? {} : { encodeVariant: attempt.variant }),
         ...(this.binding.audioEnabled && session.audioSsrc !== undefined
           ? {
               audio: {
@@ -1532,8 +1537,10 @@ class LiveCameraDelegate implements CameraStreamingDelegate {
     operation: 'start' | 'reconfigure',
     video: NegotiatedLiveVideo,
     addressVersion: 'ipv4' | 'ipv6',
+    attempt?: LiveEncodeAttempt,
   ): void {
     this.binding.reportSelection?.({
+      ...attempt,
       event: 'live-video-selected',
       operation,
       profile: video.profile,

@@ -78,7 +78,16 @@ type AdapterLiveVideoTrace = Pick<
   operation: 'start' | 'reconfigure';
   /** The family of address this selection's adapted output is sent to. The address itself is never recorded. */
   addressVersion: 'ipv4' | 'ipv6';
-};
+} & Partial<LiveEncodeAttempt>;
+
+/**
+ * Where a guided live-media capture places one live start: the camera's position among the cameras the reporter
+ * chose, and the encoder variant it is coded with while that camera has attempts left.
+ */
+export interface LiveEncodeAttempt {
+  readonly camera: number;
+  readonly variant?: number;
+}
 
 /** An identity-free live-session failure or release milestone. */
 type AdapterLiveSessionTrace =
@@ -135,6 +144,8 @@ export interface AdapterAttachmentContext {
   readonly hdLiveVideo?: boolean;
   /** The live video settings this camera is coded with, its own override of each else the global one. */
   readonly liveVideoSettings?: LiveVideoSettings;
+  /** Counts one live start of this camera in a guided live-media capture, or nothing outside one. */
+  readonly liveEncodeAttempt?: () => LiveEncodeAttempt | undefined;
   readonly audioEnabled?: boolean;
   readonly securitySystemEnabled?: boolean;
   readonly snapshotMode?: SnapshotMode;

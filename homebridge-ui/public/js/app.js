@@ -57,6 +57,13 @@ const diagnosticsGuidance = document.querySelector('[data-diagnostics-guidance]'
 const diagnosticsPhaseTitle = document.querySelector('[data-diagnostics-phase-title]');
 const diagnosticsGuidanceAction = document.querySelector('[data-diagnostics-guidance-action]');
 const diagnosticsCaptureNote = document.querySelector('[data-diagnostics-capture-note]');
+const diagnosticsCameras = document.querySelector('[data-diagnostics-cameras]');
+const diagnosticsCameraList = document.querySelector('[data-diagnostics-camera-list]');
+const diagnosticsCamerasStart = document.querySelector('[data-diagnostics-cameras-start]');
+const diagnosticsEncode = document.querySelector('[data-diagnostics-encode]');
+const diagnosticsEncodeStep = document.querySelector('[data-diagnostics-encode-step]');
+const diagnosticsEncodeAnswer = document.querySelector('[data-diagnostics-encode-answer]');
+const diagnosticsEncodePreview = document.querySelector('[data-diagnostics-encode-preview]');
 const diagnosticsHandoff = document.querySelector('[data-diagnostics-handoff]');
 const diagnosticsHandoffNote = document.querySelector('[data-diagnostics-handoff-note]');
 const diagnosticsResultStatus = document.querySelector('[data-diagnostics-result-status]');
@@ -343,7 +350,116 @@ function renderDiagnostics(state) {
     });
     diagnosticsCaptureNote.textContent = (messages.diagnosticsCaptureKeepsRunning ?? '').replace('{time}', stopsAt);
   }
+  renderLiveEncode(state);
   diagnosticsStatus.textContent = '';
+}
+
+let liveEncodePoll;
+/** How many live starts the guided encoder attempts had recorded, and when that last changed. */
+let liveEncodeProgress = { starts: -1, at: 0 };
+
+/** A guided encoder message with its `{camera}`, `{attempt}` and `{attempts}` filled. */
+function liveEncodeText(key, values) {
+  return Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, value), messages[key] ?? '');
+}
+
+/**
+ * Walks a reporter through the guided encoder attempts of a live-media capture that named cameras: which camera to
+ * open next and which attempt it is, read back from the starts the capture recorded; a camera it did not name; a
+ * reminder after three minutes without a start; the picture question once an attempt ended; and finishing once
+ * every camera made its attempts. Polls the capture's status while the panel shows it.
+ */
+function renderLiveEncode(state) {
+  clearTimeout(liveEncodePoll);
+  const live = state.status === 'reproducing' && !diagnosticsPanel.hidden ? state.liveEncode : undefined;
+  diagnosticsEncode.hidden = !live;
+  diagnosticsReproduction.textContent = messages[live ? 'wizardFinish' : 'diagnosticsNowFinish'] ?? '';
+  diagnosticsReproduction.hidden = Boolean(live);
+  const cameras = live ? state.affectedDevices : [];
+  const previewing = live && live.previews.length < cameras.length ? cameras[live.previews.length] : undefined;
+  previewLiveEncode(previewing);
+  if (!live) return;
+  diagnosticsCaptureNote.textContent = messages.diagnosticsEncodeKeepOpen ?? '';
+  liveEncodePoll = setTimeout(() => {
+    requestWithinDeadline('/diagnostics/status', undefined, 12000).then(renderDiagnostics, () =>
+      renderLiveEncode(diagnosticsState),
+    );
+  }, 3000);
+  const name = (index) => dashboardDevices.find(({ serial }) => serial === cameras[index])?.name ?? `#${index + 1}`;
+  if (previewing) {
+    const text = liveEncodeText('diagnosticsEncodePreview', { camera: name(live.previews.length) });
+    if (diagnosticsEncodeStep.textContent !== text) diagnosticsEncodeStep.textContent = text;
+    diagnosticsEncodeAnswer.hidden = false;
+    return;
+  }
+  const attempted = live.starts.filter(({ variant }) => variant !== undefined);
+  const made = cameras.map((_, index) =>
+    live.previews[index] ? attempted.filter(({ camera }) => camera === index).length : live.attempts,
+  );
+  const pending = attempted[live.answers];
+  const latest = live.starts.at(-1);
+  if (live.starts.length !== liveEncodeProgress.starts) liveEncodeProgress = { starts: live.starts.length, at: Date.now() };
+  const next = made.findIndex((count) => count < live.attempts);
+  const values = { attempts: live.attempts };
+  let text;
+  if (pending) {
+    Object.assign(values, { camera: name(pending.camera), attempt: pending.variant + 1 });
+    text = liveEncodeText(pending.state === 'ended' ? 'diagnosticsEncodeAsk' : 'diagnosticsEncodeWatching', values);
+  } else if (latest && latest.camera === undefined && latest.state !== 'ended') {
+    text = liveEncodeText('diagnosticsEncodeWrongCamera', { camera: name(Math.max(next, 0)) });
+  } else if (next < 0) {
+    diagnosticsReproduction.hidden = false;
+    text = messages[live.previews.some(Boolean) ? 'diagnosticsEncodeDone' : 'diagnosticsEncodeNoVideo'] ?? '';
+  } else {
+    text = liveEncodeText('diagnosticsEncodeOpen', { ...values, camera: name(next), attempt: made[next] + 1 });
+    if (Date.now() - liveEncodeProgress.at > 180000) text += ` ${messages.diagnosticsEncodeReminder ?? ''}`;
+  }
+  if (diagnosticsEncodeStep.textContent !== text) diagnosticsEncodeStep.textContent = text;
+  diagnosticsEncodeAnswer.hidden = pending?.state !== 'ended';
+}
+
+/** The camera whose own video the page shows before its attempts, so the reporter can say whether it plays at all. */
+let liveEncodePreviewSerial;
+
+/** Shows `serial`'s own video in the guided capture, stopping any other camera's first; nothing stops it. */
+function previewLiveEncode(serial) {
+  if (serial === liveEncodePreviewSerial) return;
+  if (liveEncodePreviewSerial) void requestWithinDeadline('/device/live/stop', {}, 12000).catch(() => undefined);
+  liveEncodePreviewSerial = serial;
+  diagnosticsEncodePreview.src = '';
+  diagnosticsEncodePreview.hidden = !serial;
+  if (!serial) return;
+  const config = configuredBlock() ?? {};
+  const own = config.entityPreferences?.[serial] ?? {};
+  const adaptation = {
+    ask: 'wifi',
+    smallVideoPackets: config.smallVideoPackets === true,
+    liveVideoPassthrough: (own.liveVideoPassthrough ?? config.liveVideoPassthrough) === true,
+    hardwareVideoEncoder: config.hardwareVideoEncoder !== false,
+    ignoreHomeBitRate: (own.ignoreHomeBitRate ?? config.ignoreHomeBitRate) === true,
+  };
+  void requestWithinDeadline('/device/live/start', { serial, adaptation }, 12000).catch(() => undefined);
+}
+
+homebridge.addEventListener('device-live', (event) => {
+  if (!event.data?.image || event.data.serial !== liveEncodePreviewSerial || event.data.side === 'homekit') return;
+  diagnosticsEncodePreview.src = `data:image/jpeg;base64,${event.data.image}`;
+  diagnosticsEncodePreview.hidden = false;
+});
+
+for (const answer of document.querySelectorAll('[data-encode-answer]')) {
+  answer.addEventListener('click', async () => {
+    diagnosticsEncodeAnswer.hidden = true;
+    const event = liveEncodePreviewSerial
+      ? answer.dataset.encodeAnswer.replace('picture', 'preview')
+      : answer.dataset.encodeAnswer;
+    try {
+      await requestWithinDeadline('/diagnostics/ui-event', { event }, 12000);
+      renderDiagnostics(await requestWithinDeadline('/diagnostics/status', undefined, 12000));
+    } catch {
+      diagnosticsStatus.textContent = messages.diagnosticsFailed ?? '';
+    }
+  });
 }
 
 /** Whether a finished capture holds no record of any log it selected, so its file carries nothing to diagnose. */
@@ -469,10 +585,15 @@ async function settleDiagnostics() {
  * Captures the area picked. The area is the only answer a capture needs, so the pick opens the session and starts
  * it in one go.
  */
-async function startDiagnosticsCapture(profile) {
+async function startDiagnosticsCapture(profile, affectedDevices) {
   for (const tile of diagnosticsTiles) tile.disabled = true;
+  diagnosticsCameras.hidden = true;
   try {
-    await requestWithinDeadline('/diagnostics/authorize', { profile }, 12000);
+    await requestWithinDeadline(
+      '/diagnostics/authorize',
+      affectedDevices?.length ? { profile, reproductionMode: 'now', affectedDevices } : { profile },
+      12000,
+    );
     const state = await requestWithinDeadline('/diagnostics/reproduction/start', undefined, 12000);
     renderDiagnostics(state);
     if (isDashboardUiReproducing(state)) {
@@ -488,9 +609,55 @@ async function startDiagnosticsCapture(profile) {
   }
 }
 
+/**
+ * A live-media capture first asks which cameras show no picture, each of which then makes the guided encoder
+ * attempts. The last tile, a camera not in the list, excludes the others and captures the area as any other; the
+ * capture starts once a tile is picked.
+ */
 for (const tile of diagnosticsTiles) {
-  tile.addEventListener('click', () => startDiagnosticsCapture(tile.dataset.diagnosticsTile));
+  tile.addEventListener('click', () => {
+    const cameras = dashboardDevices.filter((device) => device.deviceClass === 'camera' && !device.diagnosticOnly);
+    if (tile.dataset.diagnosticsTile !== 'live-media' || cameras.length === 0) {
+      return startDiagnosticsCapture(tile.dataset.diagnosticsTile);
+    }
+    const choices = [...cameras, { serial: '', name: messages.diagnosticsEncodeNotListed ?? '' }].map((camera) => {
+      const choice = Object.assign(document.createElement('button'), { type: 'button', textContent: camera.name });
+      choice.dataset.serial = camera.serial;
+      choice.setAttribute('aria-pressed', 'false');
+      return choice;
+    });
+    for (const choice of choices) {
+      choice.addEventListener('click', () => {
+        const pressed = choice.getAttribute('aria-pressed') !== 'true';
+        for (const other of choices) {
+          if (other === choice) other.setAttribute('aria-pressed', String(pressed));
+          else if (pressed && (choice.dataset.serial === '' || other.dataset.serial === '')) {
+            other.setAttribute('aria-pressed', 'false');
+          }
+        }
+        diagnosticsCamerasStart.disabled = !choices.some((each) => each.getAttribute('aria-pressed') === 'true');
+      });
+    }
+    diagnosticsCameraList.replaceChildren(...choices);
+    diagnosticsCamerasStart.disabled = true;
+    diagnosticsCameras.hidden = false;
+    choices[0].focus?.();
+  });
 }
+
+diagnosticsCamerasStart.addEventListener('click', () =>
+  startDiagnosticsCapture(
+    'live-media',
+    [...diagnosticsCameraList.querySelectorAll('[aria-pressed="true"]')]
+      .map((tile) => tile.dataset.serial)
+      .filter(Boolean),
+  ),
+);
+
+document.querySelector('[data-diagnostics-cameras-back]').addEventListener('click', () => {
+  diagnosticsCameras.hidden = true;
+  diagnosticsQuestionText.focus?.();
+});
 
 diagnosticsStartAnother.addEventListener('click', endDiagnosticsCase);
 /** Escape leaves the archive dialog only once its file is downloaded, and leaving it finishes the session. */

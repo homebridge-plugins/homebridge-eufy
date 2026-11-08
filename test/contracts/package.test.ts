@@ -201,6 +201,14 @@ async function renderUi(
   });
   const diagnosticsActions = { hidden: true };
   const diagnosticsGuidance = { hidden: true };
+  const diagnosticsCameras = { hidden: true };
+  const diagnosticsCameraList = interactiveElement({ replaceChildren() {}, querySelectorAll: () => [] });
+  const diagnosticsCamerasStart = interactiveElement({});
+  const diagnosticsCamerasBack = interactiveElement({});
+  const diagnosticsEncode = { hidden: true };
+  const diagnosticsEncodeStep = { textContent: '' };
+  const diagnosticsEncodeAnswer = { hidden: true };
+  const diagnosticsEncodePreview = { hidden: true, src: '' };
   const diagnosticsPhaseTitle = {
     focused: false,
     textContent: '',
@@ -427,6 +435,14 @@ async function renderUi(
           '[data-diagnostics-result]': diagnosticsResult,
           '[data-diagnostics-actions]': diagnosticsActions,
           '[data-diagnostics-guidance]': diagnosticsGuidance,
+          '[data-diagnostics-cameras]': diagnosticsCameras,
+          '[data-diagnostics-camera-list]': diagnosticsCameraList,
+          '[data-diagnostics-cameras-start]': diagnosticsCamerasStart,
+          '[data-diagnostics-cameras-back]': diagnosticsCamerasBack,
+          '[data-diagnostics-encode]': diagnosticsEncode,
+          '[data-diagnostics-encode-step]': diagnosticsEncodeStep,
+          '[data-diagnostics-encode-answer]': diagnosticsEncodeAnswer,
+          '[data-diagnostics-encode-preview]': diagnosticsEncodePreview,
           '[data-diagnostics-phase-title]': diagnosticsPhaseTitle,
           '[data-diagnostics-guidance-action]': diagnosticsGuidanceAction,
           '[data-diagnostics-capture-note]': diagnosticsCaptureNote,
@@ -491,6 +507,7 @@ async function renderUi(
       },
       querySelectorAll(selector: string) {
         if (selector === '[data-diagnostics-tile]') return diagnosticsTiles;
+        if (selector === '[data-encode-answer]') return [];
         return selector === '[data-i18n]' ? translatedNodes : translatedLabels;
       },
       createElement() {
@@ -1081,6 +1098,11 @@ describe('packed plugin', () => {
         'diagnosticsRecordingSummary',
         'diagnosticsDashboardSummary',
         'diagnosticsOtherSummary',
+        'diagnosticsEncodeCameras',
+        'diagnosticsEncodeStart',
+        'diagnosticsBack',
+        'diagnosticsEncodeSeen',
+        'diagnosticsEncodeNotSeen',
         'diagnosticsStartAnother',
         'diagnosticsDownloadAgain',
         'diagnosticsTitle',
@@ -1238,6 +1260,16 @@ describe('packed plugin', () => {
       'diagnosticsControlAction',
       'diagnosticsDashboardAction',
       'diagnosticsDevicesAction',
+      'diagnosticsEncodeAsk',
+      'diagnosticsEncodeDone',
+      'diagnosticsEncodeKeepOpen',
+      'diagnosticsEncodeNoVideo',
+      'diagnosticsEncodeNotListed',
+      'diagnosticsEncodePreview',
+      'diagnosticsEncodeOpen',
+      'diagnosticsEncodeReminder',
+      'diagnosticsEncodeWatching',
+      'diagnosticsEncodeWrongCamera',
       'diagnosticsFailed',
       'diagnosticsLiveAction',
       'diagnosticsMissingEvidence',

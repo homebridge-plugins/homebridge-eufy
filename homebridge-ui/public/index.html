@@ -362,17 +362,38 @@
               <small data-i18n="diagnosticsOtherSummary"></small>
             </button>
           </div>
+          <div class="diagnostics-cameras" data-diagnostics-cameras hidden>
+            <h3 id="diagnostics-cameras-heading" data-i18n="diagnosticsEncodeCameras"></h3>
+            <div
+              class="diagnostics-tiles diagnostics-camera-tiles"
+              role="group"
+              aria-labelledby="diagnostics-cameras-heading"
+              data-diagnostics-camera-list
+            ></div>
+            <div class="diagnostics-actions">
+              <button type="button" data-diagnostics-cameras-back data-i18n="diagnosticsBack"></button>
+              <button type="button" data-diagnostics-cameras-start data-i18n="diagnosticsEncodeStart"></button>
+            </div>
+          </div>
         </div>
       </div>
       <div class="diagnostics-guidance diagnostics-surface" data-diagnostics-guidance hidden>
         <h3 tabindex="-1" data-diagnostics-phase-title></h3>
+        <div class="diagnostics-encode" data-diagnostics-encode hidden>
+          <p aria-live="polite" data-diagnostics-encode-step></p>
+          <img class="diagnostics-encode-preview" alt="" data-diagnostics-encode-preview hidden />
+          <div class="diagnostics-actions" data-diagnostics-encode-answer hidden>
+            <button type="button" data-encode-answer="live-picture-seen" data-i18n="diagnosticsEncodeSeen"></button>
+            <button type="button" data-encode-answer="live-picture-not-seen" data-i18n="diagnosticsEncodeNotSeen"></button>
+          </div>
+        </div>
         <div>
           <span class="guidance-label" data-i18n="diagnosticsActionLabel"></span>
           <p data-diagnostics-guidance-action></p>
         </div>
         <div class="diagnostics-actions" data-diagnostics-actions hidden>
+          <button type="button" data-diagnostics-cancel data-i18n="diagnosticsCancel"></button>
           <button type="button" data-diagnostics-reproduction disabled data-i18n="diagnosticsNowFinish"></button>
-          <button type="button" class="diagnostics-quiet-action" data-diagnostics-cancel data-i18n="diagnosticsCancel"></button>
         </div>
         <p class="diagnostics-note" data-diagnostics-capture-note></p>
       </div>
