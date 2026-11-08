@@ -4,6 +4,7 @@ import { ffmpegPathSource, parseConfig, resolveLiveVideoSettings } from './confi
 import {
   createDiagnosticLogger,
   DiagnosticConditions,
+  liveEncodeAttempts,
   recordFleet,
   recordHostEnvironment,
   reportAdaptationNotice,
@@ -221,6 +222,7 @@ export function createEufyPlatform(
             stationLiveSessions,
             configuredConfig.hdLiveVideo,
             (serial) => resolveLiveVideoSettings(configuredConfig, serial),
+            storageRoot ? liveEncodeAttempts(storageRoot) : undefined,
           );
           this.reconciler.start();
         }

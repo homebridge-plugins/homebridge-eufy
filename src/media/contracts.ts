@@ -48,6 +48,8 @@ export interface NegotiatedLiveAudio {
 export interface NegotiatedLiveMedia {
   readonly video: NegotiatedLiveVideo;
   readonly audio?: NegotiatedLiveAudio;
+  /** The guided live-media capture attempt a `libx264` session codes for, which changes its encoder arguments. */
+  readonly encodeVariant?: number;
 }
 
 /**
@@ -211,6 +213,8 @@ export interface AdaptationNotice {
   readonly cause?: AdaptationCause;
   /** The encoder a live video process codes with, `copy` where it codes nothing, on `started` and `encoder-disqualified`. */
   readonly encoder?: string;
+  /** The guided capture attempt whose encoder arguments a `libx264` live video process codes with, on `started`. */
+  readonly variant?: number;
   /** The codec the source delivers to a live video process, on `started`. */
   readonly source?: VideoCodec;
   /** The picture size the source announced to a live video process, on `started`. */

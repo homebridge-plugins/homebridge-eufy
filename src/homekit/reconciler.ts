@@ -18,6 +18,7 @@ import type {
   AdapterTrace,
   AttachedAdapter,
   HomeKitDefinitions,
+  LiveEncodeAttempt,
 } from './adapter.js';
 import { admittedHomeKitAdapters } from './representation.js';
 
@@ -132,6 +133,7 @@ export class HomeKitReconciler {
     private readonly stationLiveSessions?: StationLiveSessionRegistry,
     private readonly hdLiveVideo = false,
     private readonly liveVideoSettings?: (serial: string) => LiveVideoSettings,
+    private readonly liveEncodeAttempt?: (serial: string) => LiveEncodeAttempt | undefined,
   ) {
     for (const accessory of cachedAccessories) {
       this.accessories.set(accessory.UUID, accessory);
@@ -229,6 +231,7 @@ export class HomeKitReconciler {
           ...(this.stationLiveSessions ? { stationLiveSessions: this.stationLiveSessions } : {}),
           ...(this.hdLiveVideo ? { hdLiveVideo: true } : {}),
           ...(this.liveVideoSettings ? { liveVideoSettings: this.liveVideoSettings(serial) } : {}),
+          ...(this.liveEncodeAttempt ? { liveEncodeAttempt: () => this.liveEncodeAttempt!(serial) } : {}),
           audioEnabled: this.entityPreferences[serial]?.audio !== false,
           securitySystemEnabled: this.entityPreferences[serial]?.securitySystem !== false,
           snapshotMode: this.entityPreferences[serial]?.snapshotMode ?? 'Refresh',

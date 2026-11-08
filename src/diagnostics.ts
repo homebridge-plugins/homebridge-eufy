@@ -80,6 +80,8 @@ type HomeKitEventTrace = { adapter: string; serial?: string } & (
       mtu: number;
       maxBitRate: number;
       addressVersion: (typeof HOMEKIT_LIVE_ADDRESS_VERSIONS)[number];
+      camera?: number;
+      variant?: number;
     }
   | {
       event: 'live-session-failed';
@@ -396,6 +398,10 @@ const DIAGNOSTICS_UI_EVENTS = [
   'authentication-commit-failed',
   'authentication-timed-out',
   'authentication-closed',
+  'live-picture-seen',
+  'live-picture-not-seen',
+  'live-preview-seen',
+  'live-preview-not-seen',
 ] as const;
 
 export type DiagnosticsUiEvent = (typeof DIAGNOSTICS_UI_EVENTS)[number];
@@ -558,6 +564,22 @@ const DIAGNOSTICS_PROFILES: Readonly<Record<DiagnosticsProfile, readonly Diagnos
   other: ['plugin-log', 'sdk-log', 'homekit-log', 'ffmpeg-log'],
 };
 
+/**
+ * The evidence a session collects: its profile's, and the UI log too for a live-media capture that named cameras,
+ * whose guided encoder attempts record the reporter's picture answers.
+ */
+function selectedEvidence(session: {
+  profile: DiagnosticsProfile;
+  affectedDevices?: AffectedDevices;
+}): readonly DiagnosticEvidence[] {
+  const evidence = DIAGNOSTICS_PROFILES[session.profile];
+  return session.profile === 'live-media' &&
+    Array.isArray(session.affectedDevices) &&
+    session.affectedDevices.length > 0
+    ? [...evidence, 'ui-log']
+    : evidence;
+}
+
 /** Narrows external profile input against the diagnostics-owned profile registry. */
 export function isDiagnosticsProfile(value: unknown): value is DiagnosticsProfile {
   return typeof value === 'string' && Object.hasOwn(DIAGNOSTICS_PROFILES, value);
@@ -599,6 +621,12 @@ interface GuidedDiagnosticsStatus {
   partialExportAvailable: boolean;
   affectedDevices?: AffectedDevices;
   issueUrl?: string;
+  /**
+   * The guided encoder attempts of a reproducing live-media capture that named cameras: how many each camera
+   * makes, every live start recorded so far in order, how many picture answers were given, and, in camera order,
+   * whether the reporter saw each camera's own video in the page before its attempts.
+   */
+  liveEncode?: { attempts: number; starts: readonly LiveEncodeStart[]; answers: number; previews: readonly boolean[] };
 }
 
 function diagnosticsSessionPath(storageRoot: string): string {
@@ -642,6 +670,49 @@ function readDiagnosticsSession(storageRoot: string): PersistedDiagnosticsSessio
 function activeDiagnosticsSession(storageRoot: string, now: number): PersistedDiagnosticsSession | undefined {
   const session = readDiagnosticsSession(storageRoot);
   return session && Date.parse(session.expiresAt) > now ? session : undefined;
+}
+
+/** How many live starts of each named camera a guided live-media capture codes with an encoder variant. */
+const LIVE_ENCODE_ATTEMPTS = 6;
+
+/**
+ * Counts each live start of a camera that a reproducing live-media capture named, and returns where it falls: the
+ * camera's position among the named ones, and the start's index while it is below {@link LIVE_ENCODE_ATTEMPTS}.
+ * Counting restarts with each reproduction. Outside one, and for a camera it did not name, it counts nothing.
+ */
+export function liveEncodeAttempts(
+  storageRoot: string,
+  now: () => number = Date.now,
+): (serial: string) => { camera: number; variant?: number } | undefined {
+  let reproduction: string | undefined;
+  const starts = new Map<string, number>();
+  return (serial) => {
+    const session = activeDiagnosticsSession(storageRoot, now());
+    const named = session?.affectedDevices;
+    const camera = named === undefined || named === 'all' ? -1 : named.indexOf(serial);
+    if (
+      session?.profile !== 'live-media' ||
+      !session.reproductionStartedAt ||
+      session.reproductionEndedAt ||
+      camera < 0
+    ) {
+      return undefined;
+    }
+    if (reproduction !== `${session.supportCaseId}@${session.reproductionStartedAt}`) {
+      reproduction = `${session.supportCaseId}@${session.reproductionStartedAt}`;
+      starts.clear();
+    }
+    const started = starts.get(serial) ?? 0;
+    starts.set(serial, started + 1);
+    return { camera, ...(started < LIVE_ENCODE_ATTEMPTS ? { variant: started } : {}) };
+  };
+}
+
+/** One live start a reproducing live-media capture recorded, as far as its own records have followed it. */
+interface LiveEncodeStart {
+  camera?: number;
+  variant?: number;
+  state: 'started' | 'streaming' | 'ended';
 }
 
 /**
@@ -1059,7 +1130,7 @@ export class GuidedDiagnostics {
     const write = this.uiEventWrites.then(async () => {
       const session = this.requireAuthorized();
       if (
-        !DIAGNOSTICS_PROFILES[session.profile].includes('ui-log') ||
+        !selectedEvidence(session).includes('ui-log') ||
         !session.reproductionStartedAt ||
         session.reproductionEndedAt
       ) {
@@ -1112,7 +1183,7 @@ export class GuidedDiagnostics {
     }
     const collected = await this.collectSupportEvidence(session);
     const reproductionStartedAt = Date.parse(session.reproductionStartedAt);
-    const selected = DIAGNOSTICS_PROFILES[session.profile];
+    const selected = selectedEvidence(session);
     const createdAt = this.now();
     const manifest: SupportArchiveManifest = {
       version: 2,
@@ -1320,7 +1391,7 @@ export class GuidedDiagnostics {
       });
     }
     const log = await this.readReproductionLog(session.reproductionStartedAt!, session.reproductionEndedAt!);
-    for (const selected of DIAGNOSTICS_PROFILES[session.profile]) {
+    for (const selected of selectedEvidence(session)) {
       const carried = log.get(selected as LogEvidence);
       if (!carried) continue;
       const content = carried.records.map((record) => JSON.stringify(record)).join('\n');
@@ -1508,12 +1579,12 @@ export class GuidedDiagnostics {
       return { status: 'inactive', selectedEvidence: [], missingEvidence: [], partialExportAvailable: false };
     }
     const { session, exportable } = settledDiagnosticsSession(persisted, this.now());
-    const selectedEvidence = DIAGNOSTICS_PROFILES[session.profile];
+    const selected = selectedEvidence(session);
     const collected =
       session.reproductionStartedAt && session.reproductionEndedAt
         ? await this.collectSupportEvidence(session)
         : undefined;
-    const missingEvidence = collected ? missingEvidenceClasses(selectedEvidence, collected) : [];
+    const missingEvidence = collected ? missingEvidenceClasses(selected, collected) : [];
     const expired = Date.parse(session.expiresAt) <= this.now() && !exportable;
     const status = expired
       ? 'expired'
@@ -1527,7 +1598,7 @@ export class GuidedDiagnostics {
       supportCaseId: session.supportCaseId,
       profile: session.profile,
       reproductionMode: session.reproductionMode,
-      selectedEvidence,
+      selectedEvidence: selected,
       missingEvidence,
       authorizedAt: session.authorizedAt,
       expiresAt: session.expiresAt,
@@ -1536,7 +1607,74 @@ export class GuidedDiagnostics {
       partialExportAvailable: exportable,
       ...(session.affectedDevices === undefined ? {} : { affectedDevices: session.affectedDevices }),
       issueUrl: bugReportUrl(session, missingEvidence, readHostEnvironment(this.storageRoot)),
+      ...(status === 'reproducing' && session.profile === 'live-media' && Array.isArray(session.affectedDevices)
+        ? { liveEncode: await this.liveEncode(session) }
+        : {}),
     };
+  }
+
+  /** What {@link liveEncodeAttempts} was followed through so far, for one reproduction of one capture. */
+  private liveEncodeScan?: {
+    reproduction: string;
+    offset: number;
+    starts: LiveEncodeStart[];
+    byAccessory: Map<unknown, LiveEncodeStart>;
+  };
+
+  /**
+   * Follows the live starts a reproducing live-media capture recorded, reading only what the current plugin log
+   * gained since the last read. The starts are kept across a rotation; a process that restarts after one follows
+   * only what the new file holds.
+   */
+  private async liveEncode(session: PersistedDiagnosticsSession): Promise<GuidedDiagnosticsStatus['liveEncode']> {
+    const reproduction = `${session.supportCaseId}@${session.reproductionStartedAt}`;
+    if (this.liveEncodeScan?.reproduction !== reproduction) {
+      this.liveEncodeScan = { reproduction, offset: 0, starts: [], byAccessory: new Map() };
+    }
+    const scan = this.liveEncodeScan;
+    const startedAt = Date.parse(session.reproductionStartedAt!);
+    try {
+      const file = await open(join(this.storageRoot, LOG_DIRECTORY, LOG_FILE), 'r');
+      try {
+        const size = (await file.stat()).size;
+        if (size < scan.offset) scan.offset = 0;
+        const buffer = Buffer.alloc(size - scan.offset);
+        await file.read(buffer, 0, buffer.length, scan.offset);
+        const end = buffer.lastIndexOf(0x0a) + 1;
+        scan.offset += end;
+        for (const line of buffer.subarray(0, end).toString('utf8').split('\n')) {
+          let record: Record<string, unknown>;
+          try {
+            record = JSON.parse(line) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          if (record.adapter !== 'camera.streaming' || !(Date.parse(String(record.timestamp)) >= startedAt)) continue;
+          const known = scan.byAccessory.get(record.accessory);
+          if (record.event === 'live-video-selected' && record.operation === 'start') {
+            const start: LiveEncodeStart = {
+              ...(typeof record.camera === 'number' ? { camera: record.camera } : {}),
+              ...(typeof record.variant === 'number' ? { variant: record.variant } : {}),
+              state: 'started',
+            };
+            scan.starts.push(start);
+            scan.byAccessory.set(record.accessory, start);
+          } else if (record.event === 'live-session-streaming' && known?.state === 'started') {
+            known.state = 'streaming';
+          } else if (record.event === 'live-session-released' && known) {
+            known.state = 'ended';
+          }
+        }
+      } finally {
+        await file.close();
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const events = (await this.readUiEvents(session)).match(/"event":"live-(?:picture|preview)-[a-z-]+"/g) ?? [];
+    const answers = events.filter((event) => event.includes('picture')).length;
+    const previews = events.filter((event) => event.includes('preview')).map((event) => !event.includes('not-seen'));
+    return { attempts: LIVE_ENCODE_ATTEMPTS, starts: scan.starts, answers, previews };
   }
 
   /**
@@ -1737,7 +1875,7 @@ export function createDiagnosticLogger(
         if (!event) return;
         const session = activeDiagnosticsSession(storageRoot!, now());
         const verbose = VERBOSE_SCOPES.has(String(event.scope));
-        if (verbose && (!session || !DIAGNOSTICS_PROFILES[session.profile].includes(evidenceClassOf(event)))) {
+        if (verbose && (!session || !selectedEvidence(session).includes(evidenceClassOf(event)))) {
           return;
         }
         file.write(event);
@@ -2967,6 +3105,8 @@ interface AdaptationTrace {
   cause?: string;
   /** The encoder a live video process codes with. */
   encoder?: string;
+  /** The guided capture attempt whose encoder arguments it codes with. */
+  variant?: number;
   code?: number;
   signal?: string;
   /**
@@ -3085,6 +3225,7 @@ function sanitizeAdaptationNotice(value: Record<string, unknown>, level: string)
   const sourceHeight = nonNegativeInteger(value.sourceHeight);
   const cause = allowlistedLabel(value.cause, ADAPTATION_CAUSES);
   const encoder = allowlistedLabel(value.encoder, LIVE_VIDEO_ENCODERS);
+  const variant = boundedInteger(value.variant, LIVE_ENCODE_ATTEMPTS - 1);
   const source = allowlistedLabel(value.source, LIVE_VIDEO_SOURCES);
   return {
     scope: 'ffmpeg',
@@ -3093,6 +3234,7 @@ function sanitizeAdaptationNotice(value: Record<string, unknown>, level: string)
     event: value.event,
     ...(cause === undefined ? {} : { cause }),
     ...(encoder === undefined ? {} : { encoder }),
+    ...(variant === undefined ? {} : { variant }),
     ...(source === undefined ? {} : { source }),
     ...(sourceWidth === undefined || sourceHeight === undefined ? {} : { sourceWidth, sourceHeight }),
     ...(code === undefined ? {} : { code }),
@@ -3246,6 +3388,8 @@ function sanitizeLiveVideoSelection(value: Record<string, unknown>): Record<stri
   const mtu = boundedInteger(value.mtu, MAX_LIVE_VIDEO_MTU, MIN_LIVE_VIDEO_MTU);
   const maxBitRate = boundedInteger(value.maxBitRate, MAX_LIVE_VIDEO_BIT_RATE, 0);
   const addressVersion = allowlistedLabel(value.addressVersion, HOMEKIT_LIVE_ADDRESS_VERSIONS);
+  const camera = boundedInteger(value.camera, MAX_ACCESSORY_ALIASES);
+  const variant = boundedInteger(value.variant, LIVE_ENCODE_ATTEMPTS - 1);
   if (
     !operation ||
     !profile ||
@@ -3271,6 +3415,8 @@ function sanitizeLiveVideoSelection(value: Record<string, unknown>): Record<stri
     mtu,
     ...(maxBitRate === undefined ? {} : { maxBitRate }),
     addressVersion,
+    ...(camera === undefined ? {} : { camera }),
+    ...(variant === undefined ? {} : { variant }),
     ...(alias === undefined ? {} : { accessory: alias }),
   };
 }

@@ -374,6 +374,27 @@ const CONSTANT_QUALITY: LiveVideoEncoder = {
   args: (selection) => [...libx264Arguments(selection), '-crf', String(CONSTANT_QUALITY_CRF)],
 };
 
+/**
+ * What a `libx264` session changes from its own arguments for one guided live-media capture attempt, by the
+ * attempt's index: a fixed rate in kbps, a VBV buffer of that many seconds of the rate, a preset, `-r` in place of
+ * `-fpsmax`, and a declared limited colour range. Index 0 changes nothing, and so does an index past the last.
+ * The negotiated profile, level, geometry, frame rate and keyframe interval are never changed.
+ */
+const LIVE_ENCODE_VARIANTS: readonly {
+  kbps?: number;
+  bufferSeconds?: number;
+  preset?: string;
+  constantRate?: true;
+  colorRange?: true;
+}[] = [
+  {},
+  { preset: 'ultrafast', constantRate: true, colorRange: true, kbps: 1500, bufferSeconds: 2 },
+  { colorRange: true },
+  { constantRate: true },
+  { bufferSeconds: 2 },
+  { kbps: 1500, bufferSeconds: 2 },
+];
+
 /** The H.264 `profile_idc` of each negotiable profile. */
 const PROFILE_IDC = { baseline: 66, main: 77, high: 100 } as const;
 
@@ -1037,6 +1058,7 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
             video,
             encoder,
             outputArguments(targetAddress, transport.video, video.payloadType, video.ssrc, video.mtu, videoSequence),
+            negotiated.encodeVariant,
           ),
         );
         videoProcess = child;
@@ -1046,6 +1068,9 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
           event: 'started',
           cause: videoCause,
           encoder: encoderName,
+          ...(encoder === LIBX264 && LIVE_ENCODE_VARIANTS[negotiated.encodeVariant ?? -1]
+            ? { variant: negotiated.encodeVariant }
+            : {}),
           source: videoConfig.codec,
           sourceWidth: videoConfig.width,
           sourceHeight: videoConfig.height,
@@ -1532,23 +1557,37 @@ function videoArguments(
   selection: NegotiatedLiveVideo,
   encoder: LiveVideoEncoder | 'copy',
   output: readonly string[],
+  variant?: number,
 ): string[] {
   if (encoder === 'copy') {
     return [...commonArguments('h264'), '-an', '-c:v', 'copy', ...output];
   }
-  return [...commonArguments(codec === 'h265' ? 'hevc' : codec), ...encodeArguments(encoder, selection), ...output];
+  return [
+    ...commonArguments(codec === 'h265' ? 'hevc' : codec),
+    ...encodeArguments(encoder, selection, variant),
+    ...output,
+  ];
 }
 
-/** What one encoder is given to code `selection`, between its input and its output, in a session and in qualification alike. */
-function encodeArguments(encoder: LiveVideoEncoder, selection: NegotiatedLiveVideo): string[] {
+/**
+ * What one encoder is given to code `selection`, between its input and its output, in a session and in qualification
+ * alike. `variant` is a {@link LIVE_ENCODE_VARIANTS} index, and changes {@link LIBX264} alone.
+ */
+function encodeArguments(encoder: LiveVideoEncoder, selection: NegotiatedLiveVideo, variant?: number): string[] {
+  const changes = (encoder === LIBX264 && variant !== undefined && LIVE_ENCODE_VARIANTS[variant]) || {};
+  const kbps = changes.kbps ?? videoBudgetInsideCeiling(selection);
+  const args = encoder.args(selection, `${kbps}k`);
+  if (changes.preset) args[args.indexOf('-preset') + 1] = changes.preset;
+  if (changes.bufferSeconds) args[args.indexOf('-bufsize') + 1] = `${kbps * changes.bufferSeconds}k`;
   return [
     '-an',
     '-c:v',
     encoder.name,
-    ...encoder.args(selection, `${videoBudgetInsideCeiling(selection)}k`),
+    ...args,
+    ...(changes.colorRange ? ['-color_range', 'mpeg'] : []),
     '-vf',
     `scale=${selection.width}:${selection.height}:force_original_aspect_ratio=decrease,pad=${selection.width}:${selection.height}:(ow-iw)/2:(oh-ih)/2${encoder.upload ?? ''}`,
-    '-fpsmax',
+    changes.constantRate ? '-r' : '-fpsmax',
     String(selection.fps),
     '-g',
     String(selection.fps * 2),

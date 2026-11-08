@@ -126,6 +126,20 @@
   "diagnosticsLiveSummary": "Vérifie un problème de vue en direct, d’instantané ou d’audio bidirectionnel.",
   "diagnosticsMissingEvidence": "Certains détails n’ont pas pu être capturés. Vous pouvez tout de même télécharger le fichier de diagnostic.",
   "diagnosticsNothingRecorded": "Rien n’a été enregistré. Reproduisez le problème avant de terminer, ou lancez une nouvelle capture.",
+  "diagnosticsEncodeCameras": "Quelles caméras n’affichent pas d’image dans l’app Maison ?",
+  "diagnosticsEncodeStart": "Démarrer la capture",
+  "diagnosticsEncodeKeepOpen": "Gardez cette page ouverte jusqu’à la fin de tous les essais.",
+  "diagnosticsEncodeNotListed": "Pas dans la liste",
+  "diagnosticsEncodePreview": "D’abord, la vidéo en direct de {camera} s’affiche ci-dessous, directement depuis la caméra. La voyez-vous ?",
+  "diagnosticsEncodeNoVideo": "Aucune caméra n’a affiché sa vidéo ici, il n’y a donc rien à essayer dans l’app Maison. Appuyez sur terminer pour obtenir le fichier.",
+  "diagnosticsEncodeOpen": "Dans l’app Maison, ouvrez la vue en direct de {camera}. Essai {attempt} sur {attempts}. Fermez-la après environ 20 secondes, ou dès que l’image s’affiche.",
+  "diagnosticsEncodeWatching": "{camera} diffuse, essai {attempt} sur {attempts}. Fermez la vue en direct après environ 20 secondes, ou dès que l’image s’affiche.",
+  "diagnosticsEncodeAsk": "L’essai {attempt} sur {attempts} de {camera} est terminé. Avez-vous vu l’image ?",
+  "diagnosticsEncodeSeen": "Oui, je l’ai vue",
+  "diagnosticsEncodeNotSeen": "Pas d’image",
+  "diagnosticsEncodeWrongCamera": "Ce n’est pas une des caméras choisies. Fermez-la et ouvrez {camera}.",
+  "diagnosticsEncodeReminder": "Rien n’a démarré depuis quelques minutes : ouvrez la vue en direct dans l’app Maison.",
+  "diagnosticsEncodeDone": "Tous les essais sont faits. Appuyez sur terminer pour obtenir le fichier.",
   "diagnosticsNowFinish": "C’est arrivé — terminer",
   "diagnosticsOpenIssue": "Ouvrir un nouveau ticket GitHub",
   "diagnosticsOtherAction": "Essayez de faire survenir le problème et notez ce que vous voyez. Une fois qu’il s’est produit, revenez ici et appuyez sur terminer ; d’ici là, laissez la capture en cours.",
@@ -297,5 +311,6 @@
   "wizardEufyHelp": "Envoyé à la caméra elle-même, les mêmes réglages que dans l’app eufy.",
   "wizardMapLabel": "Vos appareils",
   "wizardMapBase": "HomeBase",
-  "wizardMapStandalone": "Autonomes"
+  "wizardMapStandalone": "Autonomes",
+  "diagnosticsBack": "Retour"
 }

@@ -22,6 +22,7 @@ import {
   createDiagnosticLogger,
   type DiagnosticsProfile,
   GuidedDiagnostics,
+  liveEncodeAttempts,
   recordFleet,
   recordHostEnvironment,
   reportAdaptationNotice,
@@ -138,6 +139,59 @@ describe('guided diagnostics session', () => {
       await diagnostics.authorize('dashboard-ui', 'intermittent');
       await diagnostics.startReproduction();
       await expect(diagnostics.recordUiEvent('dashboard-opened')).resolves.toBeUndefined();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /**
+   * A reproducing live-media capture codes the first six live starts of each camera it named with encoder variants
+   * 0 to 5, counted per camera from the reproduction's start, and follows each start and the picture answers.
+   */
+  it('counts guided live encode attempts per named camera', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-guided-'));
+    const diagnostics = new GuidedDiagnostics(root);
+    const attempt = liveEncodeAttempts(root);
+
+    try {
+      await diagnostics.authorize('live-media', 'now', ['T0000000000000A1', 'T0000000000000B2']);
+      expect(attempt('T0000000000000A1'), 'a start before the capture began is not an attempt').toBeUndefined();
+      await diagnostics.startReproduction();
+      const first = Array.from({ length: 7 }, () => attempt('T0000000000000A1'));
+      expect(first).toEqual([0, 1, 2, 3, 4, 5].map((variant) => ({ camera: 0, variant })).concat({ camera: 0 }));
+      expect(attempt('T0000000000000B2')).toEqual({ camera: 1, variant: 0 });
+      expect(attempt('T0000000000000C3'), 'an unnamed camera is not counted').toBeUndefined();
+
+      const logger = createDiagnosticLogger({ error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root);
+      reportHomeKitEvent(logger, {
+        adapter: 'camera.streaming',
+        event: 'live-video-selected',
+        operation: 'start',
+        profile: 'main',
+        level: '3.1',
+        width: 1280,
+        height: 720,
+        fps: 30,
+        mtu: 1378,
+        maxBitRate: 299,
+        addressVersion: 'ipv4',
+        camera: 1,
+        variant: 0,
+      });
+      reportHomeKitEvent(logger, { adapter: 'camera.streaming', event: 'live-session-streaming' });
+      reportHomeKitEvent(logger, { adapter: 'camera.streaming', event: 'live-session-released', release: 'requested' });
+      await logger.flush?.();
+      await diagnostics.recordUiEvent('live-preview-seen');
+      await diagnostics.recordUiEvent('live-picture-not-seen');
+      await diagnostics.recordUiEvent('live-preview-not-seen');
+
+      expect((await diagnostics.status()).liveEncode).toEqual({
+        attempts: 6,
+        starts: [{ camera: 1, variant: 0, state: 'ended' }],
+        answers: 1,
+        previews: [true, false],
+      });
+      expect((await diagnostics.endReproduction()).missingEvidence).not.toContain('ui-log');
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
