@@ -597,7 +597,6 @@ button.diagnostics-quiet-action {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
-  border-left: 4px solid var(--alert);
 }
 
 .notice-icon,
@@ -1559,26 +1558,11 @@ button.diagnostics-quiet-action {
 }
 
 .first-setup {
-  position: relative;
   margin-bottom: 16px;
   border: 1px solid var(--line);
-  border-left: 4px solid var(--accent);
   border-radius: var(--radius-card);
   background: var(--accent-soft);
   padding: 16px 20px;
-}
-
-.first-setup::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: -3px;
-  width: 10px;
-  height: 10px;
-  border-top: 4px solid var(--accent);
-  border-right: 4px solid var(--accent);
-  background: var(--accent-soft);
-  transform: translate(-50%, -50%) rotate(225deg);
 }
 
 .first-setup h2 {
@@ -1670,7 +1654,6 @@ button.diagnostics-quiet-action {
 
 .handoff {
   border: 1px solid var(--line);
-  border-left: 4px solid var(--accent);
   border-radius: var(--radius-card);
   background: var(--accent-soft);
   padding: 12px 16px;
