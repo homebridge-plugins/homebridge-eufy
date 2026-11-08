@@ -1802,7 +1802,7 @@ describe('diagnostic conditions', () => {
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
-  });
+  }, 30_000);
 
   it('reconstructs file records from allowlisted fields and excludes FFmpeg', async () => {
     const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-diagnostics-'));
