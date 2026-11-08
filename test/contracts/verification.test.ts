@@ -105,7 +105,9 @@ describe('verification gate', () => {
     expect(new Set(branches).size, 'and it is the same branch').toBe(1);
     expect(branches[0]).toMatch(/^beta-\d+\.\d+\.\d+$/);
     expect(ci).toContain('run: npm ci --ignore-scripts');
-    expect(ci).toContain('run: npm rebuild ffmpeg-for-homebridge');
+    expect(ci, 'the fetch shows the install script and fails when the binary does not run').toContain(
+      'npm rebuild ffmpeg-for-homebridge --foreground-scripts\n          node_modules/ffmpeg-for-homebridge/ffmpeg -version',
+    );
     expect(ci).toContain('run: npm run verify');
   });
 
@@ -161,7 +163,9 @@ describe('verification gate', () => {
 
     expect(npmScripts.prepublishOnly).toBe('npm run build && npm run qualify:release && npm run verify');
     expect(release).toContain('run: npm ci --ignore-scripts');
-    expect(release).toContain('run: npm rebuild ffmpeg-for-homebridge');
+    expect(release, 'the fetch shows the install script and fails when the binary does not run').toContain(
+      'npm rebuild ffmpeg-for-homebridge --foreground-scripts\n          node_modules/ffmpeg-for-homebridge/ffmpeg -version',
+    );
     expect(release).toContain('run: npm run verify');
     expect(release).toMatch(/run: npm publish --tag .+ --provenance --access public$/m);
     expect(release).not.toMatch(/npm publish.*--ignore-scripts/);
