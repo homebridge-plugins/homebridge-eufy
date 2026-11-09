@@ -763,6 +763,7 @@ async function renderUi(
     diagnosticsCancel,
     diagnosticsReproduction,
     diagnosticsStatus,
+    diagnosticsEncodeStep,
     diagnosticsIssue,
     diagnosticsExistingIssue,
     diagnosticsResult,
@@ -2624,6 +2625,31 @@ describe('packed plugin', () => {
       diagnosticsResultHeading: { textContent: catalogs['i18n/en.json'].diagnosticsArchiveDownloaded },
       diagnosticsStatus: { textContent: '' },
     });
+
+    /** A guided capture whose camera never sends video says so beside the question, rather than staying black. */
+    const previewUi = await renderUi(
+      script,
+      [{ platform: 'HomebridgeEufy', username: 'guest@example.invalid' }],
+      catalogs,
+      'en',
+      [],
+      undefined,
+      undefined,
+      {
+        status: 'reproducing',
+        profile: 'live-media',
+        reproductionMode: 'now',
+        expiresAt: '2026-08-20T10:18:42.832Z',
+        missingEvidence: [],
+        partialExportAvailable: false,
+        affectedDevices: ['synthetic-camera'],
+        liveEncode: { attempts: 6, starts: [], answers: 0, previews: [] },
+      },
+    );
+    await previewUi.mastheadDiagnostics.dispatch('click');
+    expect(previewUi.requests.map(({ path }) => path)).toContain('/device/live/start');
+    previewUi.pushListeners['device-live-end']?.({ data: { serial: 'synthetic-camera' } });
+    expect(previewUi.diagnosticsEncodeStep.textContent).toContain(catalogs['i18n/en.json'].wizardLiveFailed);
 
     /**
      * An authorization that outlives the page's deadline is reported as failed, and its late landing redraws the

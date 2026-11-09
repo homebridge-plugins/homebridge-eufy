@@ -387,7 +387,8 @@ function renderLiveEncode(state) {
   }, 3000);
   const name = (index) => dashboardDevices.find(({ serial }) => serial === cameras[index])?.name ?? `#${index + 1}`;
   if (previewing) {
-    const text = liveEncodeText('diagnosticsEncodePreview', { camera: name(live.previews.length) });
+    const asked = liveEncodeText('diagnosticsEncodePreview', { camera: name(live.previews.length) });
+    const text = liveEncodePreviewEnd ? `${asked} ${liveEncodePreviewEnd}` : asked;
     if (diagnosticsEncodeStep.textContent !== text) diagnosticsEncodeStep.textContent = text;
     diagnosticsEncodeAnswer.hidden = false;
     return;
@@ -420,12 +421,15 @@ function renderLiveEncode(state) {
 
 /** The camera whose own video the page shows before its attempts, so the reporter can say whether it plays at all. */
 let liveEncodePreviewSerial;
+/** Why that camera's video never showed, once its stream ended without a picture. */
+let liveEncodePreviewEnd = '';
 
 /** Shows `serial`'s own video in the guided capture, stopping any other camera's first; nothing stops it. */
 function previewLiveEncode(serial) {
   if (serial === liveEncodePreviewSerial) return;
   if (liveEncodePreviewSerial) void requestWithinDeadline('/device/live/stop', {}, 12000).catch(() => undefined);
   liveEncodePreviewSerial = serial;
+  liveEncodePreviewEnd = '';
   diagnosticsEncodePreview.src = '';
   diagnosticsEncodePreview.hidden = !serial;
   if (!serial) return;
@@ -1259,7 +1263,12 @@ wizardLiveSave.addEventListener('click', async () => {
   }
 });
 wizardLiveDiagnoseStart.addEventListener('click', () => openDiagnostics({ profile: 'live-media' }));
-homebridge.addEventListener('device-live-end', (event) => endWizardLive(event.data?.serial, event.data?.unplayable));
+homebridge.addEventListener('device-live-end', (event) => {
+  endWizardLive(event.data?.serial, event.data?.unplayable);
+  if (event.data?.serial !== liveEncodePreviewSerial || diagnosticsEncodePreview.src) return;
+  liveEncodePreviewEnd = messages.wizardLiveFailed ?? '';
+  renderLiveEncode(diagnosticsState);
+});
 
 /** One control per eufy setting the device states and can change, named and valued the way the camera describes it. */
 function eufySettingControl(setting) {
