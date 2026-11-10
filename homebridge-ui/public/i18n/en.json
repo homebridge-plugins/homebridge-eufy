@@ -189,6 +189,7 @@
   "log.action.retryLight": "Retry the smart-light control manually.",
   "log.action.retryLiveView": "Open live view again, and check network access between Homebridge and the camera.",
   "log.action.retryLiveViewNoPicture": "The camera answered but sent no picture in time. Open live view again; if it keeps happening, send a diagnostics file.",
+  "log.action.reportStationKey": "The plugin could not read the key that protects this HomeBase's video, so opening live view again will not help. Send a diagnostics file with \"Black screen or live video problem\".",
   "log.action.retryLock": "Retry the lock control manually.",
   "log.action.retryRecording": "No action is needed; recording is attempted again on the next trigger.",
   "log.action.retryTalkback": "Close and reopen the camera, then try speaking again.",

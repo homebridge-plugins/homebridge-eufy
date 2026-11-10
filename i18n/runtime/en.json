@@ -20,6 +20,7 @@
   "log.action.checkFfmpegPath": "FFmpeg could not be started; check the custom FFmpeg path in Advanced settings in the Homebridge Eufy dashboard",
   "log.action.checkStation": "Check that the station or HomeBase this camera uses is powered and online, and network access between Homebridge and it, then open live view again",
   "log.action.retryLiveViewNoPicture": "The camera answered but sent no picture in time. Open live view again; if it keeps happening, send a diagnostics file",
+  "log.action.reportStationKey": "The plugin could not read the key that protects this HomeBase's video, so opening live view again will not help. Send a diagnostics file with \"Black screen or live video problem\"",
   "log.action.retryLock": "Retry the lock control manually",
   "log.action.retryTalkback": "Close and reopen the camera, then try speaking again",
   "log.action.checkTalkbackMicrophone": "The Home app sent no voice. Allow the Home app to use the microphone in iPhone Settings, then tap the microphone button in the live view and speak",
