@@ -66,16 +66,21 @@ export const CAMERA_STREAMING_ADAPTER_KEY = 'camera.streaming';
 /**
  * The resolutions every camera advertises to a controller.
  *
- * One 16:9 ladder for every camera, whatever shape its own source produces. A camera of another shape has its
- * picture scaled to fit and centred, which preserves its aspect and costs it no bit rate. Dimensions are even
- * because H.264 codes in macroblocks, and the frame rate is a ceiling a session may select below rather than a
- * target.
+ * The ladder v4 advertised, which controllers played: given the in-between and 4:3 sizes, a controller picks a
+ * smaller start where the 16:9-only ladder made it start at 720p. A picture of another shape is scaled to fit
+ * and centred, so it keeps its aspect. 320x240 at 15 fps is the size an Apple Watch asks for.
  */
 const ADVERTISED_RESOLUTIONS: readonly (readonly [number, number, number])[] = [
-  [320, 180, 15],
-  [640, 360, 30],
-  [1280, 720, 30],
   [1920, 1080, 30],
+  [1280, 720, 30],
+  [1024, 768, 30],
+  [640, 480, 30],
+  [640, 360, 30],
+  [480, 360, 30],
+  [480, 270, 30],
+  [320, 240, 30],
+  [320, 240, 15],
+  [320, 180, 30],
 ];
 
 /**
