@@ -1060,6 +1060,13 @@ describe('diagnostic conditions', () => {
         'log.action.retryLiveViewNoPicture',
       ],
       [
+        'camera-live-session-failed',
+        { capability: 'camera', member: 'live' },
+        'station-key-unavailable',
+        'warn',
+        'log.action.reportStationKey',
+      ],
+      [
         'lock-operation-failed',
         { capability: 'lock', member: 'target' },
         'timeout',

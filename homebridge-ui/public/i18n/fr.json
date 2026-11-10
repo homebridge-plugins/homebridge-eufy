@@ -189,6 +189,7 @@
   "log.action.retryLight": "Relancez manuellement la commande de l’éclairage.",
   "log.action.retryLiveView": "Rouvrez la vue en direct et vérifiez l’accès réseau entre Homebridge et la caméra.",
   "log.action.retryLiveViewNoPicture": "La caméra a répondu mais n’a envoyé aucune image à temps. Rouvrez la vue en direct ; si cela se reproduit, envoyez un fichier de diagnostic.",
+  "log.action.reportStationKey": "Le plugin n’a pas pu lire la clé qui protège la vidéo de cette HomeBase : rouvrir la vue en direct n’y changera rien. Envoyez un fichier de diagnostic avec « Black screen or live video problem ».",
   "log.action.retryLock": "Relancez manuellement la commande de la serrure.",
   "log.action.retryRecording": "Aucune action n’est nécessaire ; l’enregistrement sera retenté au prochain déclenchement.",
   "log.action.retryTalkback": "Fermez et rouvrez la caméra, puis essayez de parler de nouveau.",
