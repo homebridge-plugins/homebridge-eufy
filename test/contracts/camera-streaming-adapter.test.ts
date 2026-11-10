@@ -1537,10 +1537,16 @@ describe('camera streaming bundle adapter', () => {
         levels: [H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0],
         packetizationMode: 0,
         resolutions: [
-          [320, 180, 15],
-          [640, 360, 30],
-          [1280, 720, 30],
           [1920, 1080, 30],
+          [1280, 720, 30],
+          [1024, 768, 30],
+          [640, 480, 30],
+          [640, 360, 30],
+          [480, 360, 30],
+          [480, 270, 30],
+          [320, 240, 30],
+          [320, 240, 15],
+          [320, 180, 30],
         ],
       });
     }
@@ -1569,8 +1575,8 @@ describe('camera streaming bundle adapter', () => {
     for (const management of streamManagements(target)) {
       const advertised = management.getCharacteristic(Characteristic.SupportedVideoStreamConfiguration).value as string;
       expect(advertisedVideo(advertised).resolutions).toEqual([
-        [1280, 720, 30],
         [1920, 1080, 30],
+        [1280, 720, 30],
       ]);
     }
   });
