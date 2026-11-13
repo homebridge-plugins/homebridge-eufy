@@ -8,7 +8,7 @@ npm install -g @homebridge-plugins/homebridge-eufy-security@beta
 
 ## Requirements
 
-- **Homebridge 2** and **Node.js 24.5.0 or newer**. Neither is optional.
+- **Homebridge 2.5** and **Node.js 24.5.0 or newer**. Neither is optional.
 - The V5 platform alias is `HomebridgeEufy`. The V4 `EufySecurity` alias is not accepted.
 
 ## What has a HomeKit adapter
