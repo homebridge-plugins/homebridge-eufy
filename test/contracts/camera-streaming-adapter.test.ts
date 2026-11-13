@@ -2438,12 +2438,12 @@ describe('camera streaming bundle adapter', () => {
 
     expect(target.services.filter((service) => service.UUID === Service.Switch.UUID)).toEqual([]);
     const indicator = operatingModes(target)[0]!.getCharacteristic(Characteristic.CameraOperatingModeIndicator);
-    await expect(indicator.handleGetRequest()).resolves.toBe(false);
+    await expect(indicator.handleGetRequest()).resolves.toBe(0);
 
-    await indicator.handleSetRequest(true);
+    await indicator.handleSetRequest(1);
 
     expect(setStatusLed).toHaveBeenCalledExactlyOnceWith(true);
-    await expect(indicator.handleGetRequest()).resolves.toBe(true);
+    await expect(indicator.handleGetRequest()).resolves.toBe(1);
   });
 
   it('presents no indicator LED without exact evidence and a bound typed operation', async () => {

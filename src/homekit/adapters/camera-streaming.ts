@@ -801,13 +801,13 @@ function operatingModePresentation(
     const indicator = resolve().getCharacteristic(hap.Characteristic.CameraOperatingModeIndicator);
     indicator.onGet(read);
     indicator.onSet((value: unknown) => {
-      if (typeof value !== 'boolean') {
+      if (value !== 0 && value !== 1 && typeof value !== 'boolean') {
         throw new hap.HapStatusError(hap.HAPStatus.INVALID_VALUE_IN_REQUEST);
       }
       return issue(
         'camera',
         'statusLed',
-        () => camera.setStatusLed!(value),
+        () => camera.setStatusLed!(Boolean(value)),
         () => {
           try {
             indicator.updateValue(read());
