@@ -1642,9 +1642,7 @@ describe('live media adaptation', () => {
           '242k',
         ]),
       );
-      expect(spawned[0]).toContain(
-        'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
-      );
+      expect(spawned[0]).toContain('scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2');
       prepared.stop();
     }
   });
@@ -1718,7 +1716,7 @@ describe('live media adaptation', () => {
 
     expect(spawned.map((args) => args[args.indexOf('-f') + 1])).toEqual(['h264', 'hevc']);
     for (const args of spawned) {
-      expect(args).toContain('scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2');
+      expect(args).toContain('scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2');
       expect(args).toEqual(expect.arrayContaining(['-fpsmax', '30', '-b:v', '288k', '-payload_type', '99']));
       expect(args).not.toContain('-r');
     }
@@ -2698,7 +2696,7 @@ describe('hardware encoder qualification', () => {
     const rate = ['-b:v', '287k', '-maxrate', '287k'];
     const vf = (upload = '') => [
       '-vf',
-      `scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2${upload}`,
+      `scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2${upload}`,
       '-fpsmax',
       '30',
     ];
@@ -3109,7 +3107,7 @@ describe('live output frame rate', () => {
  */
 describe('live encode variants', () => {
   it('changes one fixed set of libx264 arguments per attempt', async () => {
-    const vf = ['-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2'];
+    const vf = ['-vf', 'scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2'];
     const keyframes = ['30', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0'];
     const libx264 = (preset: string, rate: string, buffer: string) => [
       ...['-c:v', 'libx264', '-preset', preset, '-tune', 'zerolatency', '-profile:v', 'main', '-level:v', '3.1'],

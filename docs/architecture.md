@@ -851,8 +851,8 @@ number from the accessory structure with every characteristic value replaced by 
 `SupportedVideoStreamConfiguration`, so a paired controller is never told to read the matrix again. Measured
 on a paired 4:3 doorbell, a per-camera matrix was published and the controller still selected 1280x720.
 
-What a per-camera matrix would leave is black bars in a controller's tile, whose removal is unverified — a
-Home app tile is drawn 16:9 and may letterbox a 4:3 stream itself.
+The picture is scaled to fit the negotiated size and sent at its own shape, unpadded: the controller fits
+it to its tile. Padding to the negotiated frame shrank a tall dual-lens doorbell to a strip inside black bars.
 
 ### The negotiated bit-rate ceiling
 

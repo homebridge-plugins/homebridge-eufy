@@ -486,7 +486,7 @@ function recordingArguments(negotiated: NegotiatedRecording): string[] {
     '-pix_fmt',
     'yuv420p',
     '-vf',
-    `scale=${negotiated.width}:${negotiated.height}:force_original_aspect_ratio=decrease,pad=${negotiated.width}:${negotiated.height}:(ow-iw)/2:(oh-ih)/2`,
+    `scale=${negotiated.width}:${negotiated.height}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
     '-fpsmax',
     String(negotiated.fps),
     '-g',
