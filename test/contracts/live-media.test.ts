@@ -1537,6 +1537,9 @@ describe('live media adaptation', () => {
     expect(prepared.videoPort).toBe(41000);
     expect(spawned).toHaveLength(1);
     expect(spawned[0].executable).toBe('/synthetic/ffmpeg');
+    expect(spawned[0].args[spawned[0].args.indexOf('-threads') + 1], 'one slice per thread under zerolatency').toBe(
+      '4',
+    );
     expect(spawned[0].args).toEqual(
       expect.arrayContaining([
         '-c:v',
@@ -3110,7 +3113,8 @@ describe('live encode variants', () => {
     const vf = ['-vf', 'scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2'];
     const keyframes = ['30', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0'];
     const libx264 = (preset: string, rate: string, buffer: string) => [
-      ...['-c:v', 'libx264', '-preset', preset, '-tune', 'zerolatency', '-profile:v', 'main', '-level:v', '3.1'],
+      ...['-c:v', 'libx264', '-preset', preset, '-tune', 'zerolatency', '-threads', '4'],
+      ...['-profile:v', 'main', '-level:v', '3.1'],
       ...['-pix_fmt', 'yuv420p', '-b:v', rate, '-maxrate', rate, '-bufsize', buffer],
     ];
     const { notices, open } = hardwareMedia();
