@@ -265,10 +265,7 @@ describe('recording media adaptation', () => {
     const args = session.spawned[0];
     expect(args).toEqual(expect.arrayContaining(['-c:v', 'libx264', '-profile:v', 'high', '-level:v', '4.0']));
     expect(args).toEqual(
-      expect.arrayContaining([
-        '-vf',
-        'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2',
-      ]),
+      expect.arrayContaining(['-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2']),
     );
     expect(args[args.indexOf('-b:v') + 1]).toBe('2000k');
     expect(args[args.indexOf('-maxrate') + 1]).toBe('2000k');

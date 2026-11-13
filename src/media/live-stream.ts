@@ -1586,7 +1586,7 @@ function encodeArguments(encoder: LiveVideoEncoder, selection: NegotiatedLiveVid
     ...args,
     ...(changes.colorRange ? ['-color_range', 'mpeg'] : []),
     '-vf',
-    `scale=${selection.width}:${selection.height}:force_original_aspect_ratio=decrease,pad=${selection.width}:${selection.height}:(ow-iw)/2:(oh-ih)/2${encoder.upload ?? ''}`,
+    `scale=${selection.width}:${selection.height}:force_original_aspect_ratio=decrease:force_divisible_by=2${encoder.upload ?? ''}`,
     changes.constantRate ? '-r' : '-fpsmax',
     String(selection.fps),
     '-g',
