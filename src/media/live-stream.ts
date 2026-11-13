@@ -346,13 +346,20 @@ export interface EncoderHost {
   readonly configured: boolean;
 }
 
-/** `libx264`'s profile, level, speed and pixel format, shared by its rate-capped and constant-quality forms. */
+/**
+ * `libx264`'s profile, level, speed, threads and pixel format, shared by its rate-capped and constant-quality forms.
+ *
+ * `zerolatency` codes one slice per thread, and the thread count otherwise follows the host's cores: a frame cut in
+ * as many slices as an Apple Silicon Mac has cores never showed in the Home app, while four threads played.
+ */
 function libx264Arguments(selection: NegotiatedLiveVideo): string[] {
   return [
     '-preset',
     'superfast',
     '-tune',
     'zerolatency',
+    '-threads',
+    '4',
     '-profile:v',
     selection.profile,
     '-level:v',
