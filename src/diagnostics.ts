@@ -2155,6 +2155,13 @@ function sanitizeSdkPush(value: Record<string, unknown>): Record<string, unknown
     : { scope: 'sdk', level: 'debug', subsystem: 'push', event: 'push-received', eventType, device, events };
 }
 
+/** A refused RTC sign's HTTP status and cloud code: a shard 401 apart from any other refusal. */
+function sanitizeSignRefusal(value: Record<string, unknown>): Record<string, number> {
+  const httpStatus = boundedInteger(value.httpStatus, 599, 100);
+  const code = nonNegativeInteger(value.code);
+  return { ...(httpStatus === undefined ? {} : { httpStatus }), ...(code === undefined ? {} : { code }) };
+}
+
 function sanitizeSdkLiveStartTrace(candidate: unknown): Record<string, unknown> | undefined {
   if (!isRecord(candidate)) return undefined;
   const phase = String(candidate.phase);
@@ -2283,10 +2290,12 @@ export function createSdkLogger(target: Partial<PlatformLogger> | undefined): Lo
       }
       return { type: typeof value };
     });
+    const sign = event === 'rtc-sign-refused' ? / HTTP (\d+) code (\d+)?/.exec(message) : null;
     return {
       scope: 'sdk',
       subsystem,
       event,
+      ...(sign ? sanitizeSignRefusal({ httpStatus: Number(sign[1]), code: Number(sign[2]) }) : {}),
       ...(details.length ? { details } : {}),
       ...(args.length > MAX_SDK_DETAILS ? { detailsTruncated: true } : {}),
     };
@@ -2821,6 +2830,7 @@ function sanitizeStructuredEvent(message: string): Record<string, unknown> | und
       level,
       subsystem: value.subsystem,
       event: value.event,
+      ...(value.event === 'rtc-sign-refused' ? sanitizeSignRefusal(value) : {}),
       ...(details.length ? { details } : {}),
       ...(value.detailsTruncated === true ? { detailsTruncated: true } : {}),
     };
