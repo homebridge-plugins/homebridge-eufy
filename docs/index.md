@@ -27,10 +27,8 @@ features:
     details: Configuration consumers receive a versioned complete snapshot; partial inventory never withdraws a device or capability.
 ---
 
-::: warning Public beta
-V5 ships on the `beta` npm channel: `npm install -g @homebridge-plugins/homebridge-eufy-security@beta`.
-It requires Homebridge 2 and Node.js 24.5.0. The 4.x release stays on `latest` for anyone who is not
-ready to move.
+::: warning V5 replaces V4
+Needs Homebridge 2.5 and Node.js 24.5.0. V4 is frozen at `@4.7.2`.
 :::
 
 These guides replace the former GitHub wiki. Current V5 behavior is documented separately from

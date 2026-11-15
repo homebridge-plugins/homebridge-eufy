@@ -18,9 +18,9 @@
 ---
 
 > [!IMPORTANT]
-> **V5 is a beta and not yet a replacement for the stable V4 plugin.** Every capability area is
-> implemented, covered by the contract suite, and exercised against a real device fleet. It is published
-> on the `beta` dist-tag while that fleet keeps reporting; 4.x stays on `latest`.
+> **V5 replaces V4.** Every capability area is implemented, covered by the contract suite, and exercised
+> against a real device fleet. 4.x is frozen at 4.7.2 and stays installable as
+> `@homebridge-plugins/homebridge-eufy-security@4.7.2`, with no further fixes.
 >
 > **V5 does not adopt V4 HomeKit accessories.** It registers its own, so expect to remove the V4
 > accessories and reassign rooms, names, and automations once. A V4 configuration block is not loaded
@@ -55,12 +55,6 @@ from npm:
 
 ```bash
 npm install -g @homebridge-plugins/homebridge-eufy-security
-```
-
-While V5 is a beta, it is published under the `beta` dist-tag rather than `latest`:
-
-```bash
-npm install -g @homebridge-plugins/homebridge-eufy-security@beta
 ```
 
 ## First-time setup

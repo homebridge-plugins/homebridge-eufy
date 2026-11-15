@@ -9,13 +9,13 @@ package:
 npm install -g @homebridge-plugins/homebridge-eufy-security
 ```
 
-## V5 beta
+## V5
 
-V5 is a prerelease. It depends on an `@mega-yfue/eufy-sdk` prerelease published on npmjs, so nothing
-beyond a public registry is needed to install it.
+V5 depends on `@mega-yfue/eufy-sdk`, published on npmjs, so nothing beyond a public registry is needed to
+install it.
 
 ```bash
-npm install -g @homebridge-plugins/homebridge-eufy-security@beta
+npm install -g @homebridge-plugins/homebridge-eufy-security
 ```
 
 Developing from source:

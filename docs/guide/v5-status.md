@@ -1,9 +1,9 @@
-# V5 beta status
+# V5 status
 
 V5 is a clean integration built on `@mega-yfue/eufy-sdk`; it is not a feature-for-feature port of V4.
 
 ```bash
-npm install -g @homebridge-plugins/homebridge-eufy-security@beta
+npm install -g @homebridge-plugins/homebridge-eufy-security
 ```
 
 ## Requirements
