@@ -1,0 +1,130 @@
+# Only a `beta-X.Y.Z` branch may merge into `master`.
+#
+# Everything reaches `master` through a prerelease that was actually published and installed first:
+#
+#   feature / fix  ──PR──▶  beta-1.2.0  ──every push──▶  npm 1.2.0-beta.N
+#   beta-1.2.0     ──PR──▶  master      ──tag v1.2.0──▶  npm 1.2.0
+#
+# So the code behind a stable release is never code that shipped for the first time at that moment.
+# The tag is still what sets the published version (see release.yml); this only governs how commits
+# get onto the branch a tag can point at.
+#
+# ── A status check, because no rule can express this ────────────────────────────────────────────
+# Rulesets restrict who pushes where and demand a reviewed pull request; none of them looks at where
+# a pull request came FROM. This job supplies that predicate, and is registered as a REQUIRED check
+# in the `default` ruleset under the name `source-branch`. Renaming the job unregisters it, after
+# which it reports and blocks nothing.
+#
+# ── It closes rather than blocks, and says where to go ──────────────────────────────────────────
+# A failing check is a red mark in a tab a contributor may never open, so a mis-targeted pull request
+# used to sit open indefinitely while its author waited for a review that could not happen. The job
+# comments the redirect on the pull request itself and closes it, which is the only form of the
+# message that reaches the person who has to act on it.
+#
+# Closing costs the thread's continuity, so the comment carries both routes out: reopen after moving
+# the base, or open a fresh one. It fires on `opened` and `reopened` only — a base corrected by an
+# edit re-runs the check and passes, and a synchronize on an already-answered pull request should not
+# repeat the comment.
+#
+# ── `pull_request_target`, and why it is safe here ──────────────────────────────────────────────
+# Commenting and closing need a writable token, and a pull request from a fork is given a read-only
+# one under `pull_request`. `pull_request_target` runs the BASE branch's copy of this file with a
+# writable token, which is dangerous only when the job checks out the pull request's code and runs
+# it. This job checks out nothing and executes nothing from the branch under review; it reads two
+# fields of the event payload.
+#
+# ── Dependabot is exempt ────────────────────────────────────────────────────────────────────────
+# Dependabot opens against the repository's default branch, and its target is static configuration
+# that cannot follow whichever beta branch is open this cycle. Without the exemption every dependency
+# update, security ones included, blocks until someone edits .github/dependabot.yml. The exemption
+# covers one branch prefix, which only Dependabot writes to.
+name: merge policy
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited]
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  source-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check where this pull request comes from
+        id: source
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+
+          case "$HEAD_REF" in
+            dependabot/*)
+              echo "$HEAD_REF is Dependabot — exempt."
+              echo "allowed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          if printf '%s' "$HEAD_REF" | grep -qE '^beta-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "$HEAD_REF is a beta branch — allowed."
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "allowed=false" >> "$GITHUB_OUTPUT"
+
+      # The redirect goes on the pull request, where its author is, rather than only into a check.
+      - name: Redirect the author and close
+        if: >-
+          steps.source.outputs.allowed == 'false'
+          && (github.event.action == 'opened' || github.event.action == 'reopened')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          cat > comment.md <<'INTRO'
+          ## This pull request cannot merge into `master`
+
+          Only a `beta-X.Y.Z` branch can. Every change reaches `master` through a prerelease that was
+          published and installed first, so the code behind a stable release is never code that shipped
+          for the first time at that moment.
+
+          **Nothing here is lost.** Two ways forward, whichever suits you:
+
+          - **Move the base and reopen.** Reopen this pull request, then use **Edit** next to the title and
+            change the base to the beta branch for the release you are aiming at. The commits, the
+            discussion and any reviews stay on it.
+          - **Open a fresh one** against that beta branch.
+
+          If the beta branch does not exist yet, create it from `master`. Every push to it publishes an
+          installable `X.Y.Z-beta.N`, and when the release is ready that branch is what opens a pull
+          request against `master`.
+
+          Thank you for the contribution — this is about routing, not about the change itself.
+          INTRO
+          printf '\n<sub>Closed automatically because the source branch was `%s`.</sub>\n' "$HEAD_REF" >> comment.md
+          gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body-file comment.md
+          gh pr close "$NUMBER" --repo "$GITHUB_REPOSITORY"
+
+      # The check stays the thing the ruleset requires, so a pull request whose base is corrected by an
+      # edit is unblocked by this passing rather than by anyone remembering to re-run it.
+      - name: Fail while the source branch cannot merge here
+        if: steps.source.outputs.allowed == 'false'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          {
+            echo "## Wrong source branch"
+            echo
+            echo "\`$HEAD_REF\` cannot merge into \`master\`. Only a \`beta-X.Y.Z\` branch can."
+            echo
+            echo "The pull request carries the redirect, and was closed if this was its first appearance."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error::'$HEAD_REF' cannot merge into master — only beta-X.Y.Z branches can. See the comment on the pull request."
+          exit 1
