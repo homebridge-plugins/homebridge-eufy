@@ -385,15 +385,24 @@ describe('diagnostic conditions', () => {
     expect(JSON.stringify(records)).not.toContain('synthetic-property');
   });
 
-  it('names a refused RTC sign apart from a generic WebRTC failure', () => {
-    const debug = vi.fn();
-    const sdk = createSdkLogger({ debug })!;
+  it('names a refused RTC sign by its HTTP status and cloud code, apart from a generic WebRTC failure', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-rtc-sign-'));
+    await new GuidedDiagnostics(root).authorize('live-media', 'now');
+    const logger = createDiagnosticLogger({ debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root);
 
-    sdk.warn('[rtc-call] RTC sign for T8223P0000000000 refused: HTTP 200 code 26052 synthetic-close-error');
+    try {
+      createSdkLogger(logger)!.warn(
+        '[rtc-call] RTC sign for T8223P0000000000 refused: HTTP 401 code 26052 synthetic-close-error',
+      );
+      await logger.flush?.();
 
-    const records = debug.mock.calls.map(([message]) => JSON.parse(message));
-    expect(records.map(({ event }) => event)).toEqual(['rtc-sign-refused']);
-    expect(JSON.stringify(records)).not.toContain('T8223P0000000000');
+      const written = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8');
+      expect(JSON.parse(written)).toMatchObject({ event: 'rtc-sign-refused', httpStatus: 401, code: 26052 });
+      expect(written).not.toContain('T8223P0000000000');
+      expect(written).not.toContain('synthetic-close-error');
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
   });
 
   /** A push that decoded into no event is the code a device sends that the library does not map yet. */
