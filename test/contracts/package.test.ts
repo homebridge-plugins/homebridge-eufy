@@ -855,7 +855,7 @@ function baselineJpeg(image: Buffer): { width: number; height: number } {
 
 describe('packed plugin', () => {
   const repository = fileURLToPath(new URL('../..', import.meta.url));
-  const directory = mkdtempSync(join(tmpdir(), 'homebridge-eufy-security-'));
+  const directory = mkdtempSync(join(tmpdir(), 'homebridge-eufy-'));
   const packageDirectory = join(directory, 'package');
   let result: PackResult;
 
@@ -2014,9 +2014,7 @@ describe('packed plugin', () => {
       cachedAccessory: { plugin: string };
       configuration: Record<string, unknown>;
     };
-    expect(migrationFixture.cachedAccessory.plugin).toBe(
-      (JSON.parse(readFileSync(join(packageDirectory, 'package.json'), 'utf8')) as { name: string }).name,
-    );
+    expect(migrationFixture.cachedAccessory.plugin).toBe('@homebridge-plugins/homebridge-eufy-security');
     const migratedUi = await renderUi(script, [migrationFixture.configuration], catalogs, 'en', [], {
       status: 'restart-required',
     });

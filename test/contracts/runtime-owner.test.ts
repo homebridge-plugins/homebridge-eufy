@@ -1488,7 +1488,7 @@ describe('a runtime standing down on request and taking the session back', () =>
  */
 describe('child bridge recognition', () => {
   it('recognises only a child bridge as replaceable', () => {
-    expect(isChildBridgeTitle('homebridge: @homebridge-plugins/homebridge-eufy-security')).toBe(true);
+    expect(isChildBridgeTitle('homebridge: @homebridge-plugins/homebridge-eufy')).toBe(true);
     expect(isChildBridgeTitle('homebridge: some other plugin')).toBe(true);
     expect(isChildBridgeTitle('homebridge')).toBe(false);
     expect(isChildBridgeTitle('homebridge-config-ui-x')).toBe(false);

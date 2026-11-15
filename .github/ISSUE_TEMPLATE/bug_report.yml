@@ -14,7 +14,7 @@ body:
         > If something is broken on V4, please update to V5 and report from there:
         >
         > ```bash
-        > npm install -g @homebridge-plugins/homebridge-eufy-security@beta
+        > npm install -g @homebridge-plugins/homebridge-eufy@beta
         > ```
         >
         > V5 needs **Homebridge 2** and **Node 24.5+**, and it registers its own accessories rather than
@@ -41,11 +41,11 @@ body:
       label: Environment
       description: "The diagnostics archive carries these too, but fill them in so triage can start without opening it."
       value: |
-        - **Plugin Version**: 
-        - **Homebridge Version**: 
-        - **Node.js Version**: 
-        - **OS**: 
-        - **Support Case ID** (shown when the archive is created): 
+        - **Plugin Version**:
+        - **Homebridge Version**:
+        - **Node.js Version**:
+        - **OS**:
+        - **Support Case ID** (shown when the archive is created):
       render: markdown
     validations:
       required: true

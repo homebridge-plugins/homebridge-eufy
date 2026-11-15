@@ -379,7 +379,7 @@ write_env HOMEBRIDGE_BIN "$HOMEBRIDGE_BIN"
 write_env UI_BIN "$UI_BIN"
 
 mkdir -p "$RUN_DIR/plugins/@homebridge-plugins"
-ln -sfn "$REPO" "$RUN_DIR/plugins/@homebridge-plugins/homebridge-eufy-security"
+ln -sfn "$REPO" "$RUN_DIR/plugins/@homebridge-plugins/homebridge-eufy"
 ln -sfn "$(dirname "$(dirname "$(dirname "$UI_BIN")")")" "$RUN_DIR/plugins/homebridge-config-ui-x"
 cat > "$RUN_DIR/config.json" <<JSON
 {

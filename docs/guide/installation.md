@@ -6,7 +6,7 @@ Install through the Homebridge UI by searching for **Homebridge Eufy**, or insta
 package:
 
 ```bash
-npm install -g @homebridge-plugins/homebridge-eufy-security
+npm install -g @homebridge-plugins/homebridge-eufy
 ```
 
 ## V5
@@ -15,7 +15,7 @@ V5 depends on `@mega-yfue/eufy-sdk`, published on npmjs, so nothing beyond a pub
 install it.
 
 ```bash
-npm install -g @homebridge-plugins/homebridge-eufy-security
+npm install -g @homebridge-plugins/homebridge-eufy
 ```
 
 Developing from source:

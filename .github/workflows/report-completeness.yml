@@ -189,7 +189,7 @@ jobs:
                   'Please update to V5 and tell us whether it still happens:',
                   '',
                   '```bash',
-                  'npm install -g @homebridge-plugins/homebridge-eufy-security@beta',
+                  'npm install -g @homebridge-plugins/homebridge-eufy@beta',
                   '```',
                   '',
                   'V5 needs Homebridge 2 and Node 24.5 or newer, and it registers its own accessories instead of adopting the V4 ones, so expect to reassign rooms, names and automations once. If you cannot move yet, say so and this stays open — it simply waits for V5.',

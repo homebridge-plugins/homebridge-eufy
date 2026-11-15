@@ -1,6 +1,6 @@
 name: Release
 
-# Publishes @homebridge-plugins/homebridge-eufy-security.
+# Publishes @homebridge-plugins/homebridge-eufy.
 #
 # ── One trigger: a published GitHub Release ─────────────────────────────────────────────────────
 # Every channel goes out the same way, so there is one path to audit and one place a release is
