@@ -27,8 +27,8 @@ const MOTION_HOLDS = new WeakMap<object, MotionHold>();
  */
 export const MOTION_EVENT_REQUIREMENTS = [
   { capability: 'motion', eventName: 'motion' },
-  { capability: 'motion', eventName: 'cryingDetected' },
-  { capability: 'motion', eventName: 'soundDetected' },
+  { capability: 'camera', eventName: 'cryingDetected' },
+  { capability: 'camera', eventName: 'soundDetected' },
   { capability: 'motion', eventName: 'petDetection' },
   { capability: 'motion', eventName: 'vehicleDetected' },
   { capability: 'motion', eventName: 'dogDetected' },
