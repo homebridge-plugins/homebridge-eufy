@@ -3,10 +3,10 @@ name: CI
 on:
   push:
     branches:
-      - beta-5.0.0
+      - "beta-*"
   pull_request:
     branches:
-      - beta-5.0.0
+      - "beta-*"
 
 permissions:
   contents: read

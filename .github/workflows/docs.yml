@@ -3,7 +3,7 @@ name: Docs
 on:
   push:
     branches:
-      - beta-5.0.0
+      - "beta-*"
     paths:
       - "docs/**"
       - "README.md"

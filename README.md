@@ -2,8 +2,8 @@
 
 <!-- The suffix names the mode: logo-dark.svg is the white glyph for dark backgrounds. -->
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/homebridge-plugins/homebridge-eufy/beta-5.0.0/homebridge-ui/public/assets/logo-dark.svg">
-  <img src="https://raw.githubusercontent.com/homebridge-plugins/homebridge-eufy/beta-5.0.0/homebridge-ui/public/assets/logo.svg" alt="Homebridge Eufy" height="96">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/homebridge-plugins/homebridge-eufy/master/homebridge-ui/public/assets/logo-dark.svg">
+  <img src="https://raw.githubusercontent.com/homebridge-plugins/homebridge-eufy/master/homebridge-ui/public/assets/logo.svg" alt="Homebridge Eufy" height="96">
 </picture>
 
 **Bring verified eufy device capabilities into Apple Home through Homebridge.**
