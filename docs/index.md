@@ -29,6 +29,7 @@ features:
 
 ::: warning V5 replaces V4
 Needs Homebridge 2.5 and Node.js 24.5.0. V4 is frozen at `@4.7.2`.
+The plugin was `homebridge-eufy-security`: install `homebridge-eufy` and remove the old one.
 :::
 
 These guides replace the former GitHub wiki. Current V5 behavior is documented separately from
