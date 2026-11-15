@@ -94,6 +94,11 @@ export type LiveSessionFailure =
   | 'source-stopped'
   | 'source-input-unstable'
   | 'rtcp-timeout'
+  /**
+   * The controller sent no receiver report in the grace after media started, so it never reached this host's
+   * stream ports. `rtcp-timeout` is a controller that did report and then stopped.
+   */
+  | 'no-controller-rtcp'
   | 'adaptation-spawn-failed'
   | 'adaptation-exited-before-output'
   | 'adaptation-exited-while-streaming'

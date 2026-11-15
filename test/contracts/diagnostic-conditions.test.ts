@@ -617,6 +617,7 @@ describe('diagnostic conditions', () => {
       'no-video-within-backstop',
       'source-error',
       'rtcp-timeout',
+      'no-controller-rtcp',
       'adaptation-spawn-failed',
       'adaptation-exited-before-output',
       'adaptation-exited-while-streaming',
@@ -1074,6 +1075,13 @@ describe('diagnostic conditions', () => {
         'station-key-unavailable',
         'warn',
         'log.action.reportStationKey',
+      ],
+      [
+        'camera-live-session-failed',
+        { capability: 'camera', member: 'live' },
+        'no-controller-rtcp',
+        'warn',
+        'log.action.checkControllerNetwork',
       ],
       [
         'lock-operation-failed',

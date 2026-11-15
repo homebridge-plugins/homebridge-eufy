@@ -682,7 +682,7 @@ describe('live media adaptation', () => {
     expect(session.stream.stop).toHaveBeenCalledOnce();
     expect(session.outcomes).toEqual([
       { outcome: 'streaming' },
-      { outcome: 'failed', reason: 'rtcp-timeout', stage: 'controller-rtcp' },
+      { outcome: 'failed', reason: 'no-controller-rtcp', stage: 'controller-rtcp' },
     ]);
     vi.useRealTimers();
   });
@@ -2021,7 +2021,7 @@ describe('live media adaptation', () => {
     expect(noRtcp.stream.stop).toHaveBeenCalledOnce();
     expect(noRtcp.outcomes).toEqual([
       { outcome: 'streaming' },
-      { outcome: 'failed', reason: 'rtcp-timeout', stage: 'controller-rtcp' },
+      { outcome: 'failed', reason: 'no-controller-rtcp', stage: 'controller-rtcp' },
     ]);
     vi.useRealTimers();
   });
