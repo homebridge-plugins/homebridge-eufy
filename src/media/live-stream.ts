@@ -826,7 +826,6 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
     let initialRtcpGrace: ReturnType<typeof setTimeout> | undefined;
     let videoStartBackstop: ReturnType<typeof setTimeout> | undefined;
     let videoFailed = false;
-    let rtcpObserved = false;
     /** How many receiver reports this session was acknowledged by, and when the last one arrived. */
     /** Why the video adaptation now running was started, which the record reporting it carries. */
     let videoCause: AdaptationCause = 'first';
@@ -953,7 +952,7 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
       const stage =
         reason === 'source-acquisition-timeout' || source === undefined
           ? 'sdk-source-acquisition'
-          : reason === 'rtcp-timeout'
+          : reason === 'rtcp-timeout' || reason === 'no-controller-rtcp'
             ? 'controller-rtcp'
             : warmUp || !receivedVideoKeyframe
               ? 'first-source-keyframe'
@@ -973,7 +972,6 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
      * warms for longer than one RTCP interval.
      */
     const resetRtcpDeadline = (): void => {
-      rtcpObserved = true;
       rtcpReports += 1;
       lastRtcpAt = Date.now();
       clearTimeout(initialRtcpGrace);
@@ -1001,10 +999,10 @@ export class FfmpegLiveMedia implements LiveMediaAdapter {
         return;
       }
       streaming = true;
-      if (rtcpObserved) {
+      if (rtcpReports > 0) {
         resetRtcpDeadline();
       } else {
-        initialRtcpGrace = setTimeout(() => failVideo('rtcp-timeout'), INITIAL_RTCP_GRACE_MS);
+        initialRtcpGrace = setTimeout(() => failVideo('no-controller-rtcp'), INITIAL_RTCP_GRACE_MS);
         initialRtcpGrace.unref?.();
       }
       transport.onSessionOutcome?.({ outcome: 'streaming' });
