@@ -1,6 +1,155 @@
 {
-  "pluginAlias": "EufySecurity",
+  "pluginAlias": "HomebridgeEufy",
   "pluginType": "platform",
   "singular": true,
-  "customUi": true
+  "customUi": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "username": {
+        "title": "Eufy account email",
+        "type": "string"
+      },
+      "password": {
+        "title": "Eufy account password",
+        "format": "password",
+        "type": "string"
+      },
+      "country": {
+        "title": "Account country",
+        "description": "Two-letter country code used to select the Eufy account region.",
+        "default": "US",
+        "pattern": "^[A-Za-z]{2}$",
+        "type": "string"
+      },
+      "trustedDeviceName": {
+        "title": "Trusted-device name",
+        "default": "Homebridge Eufy",
+        "minLength": 1,
+        "type": "string"
+      },
+      "pollingIntervalMinutes": {
+        "title": "Polling interval in minutes",
+        "default": 10,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "maxConcurrentMediaSessions": {
+        "title": "Concurrent camera media limit",
+        "description": "How many cameras may stream live video or take a fresh still at the same time. Use 0 for unlimited, which is the default. A camera refused because the limit is reached is never interrupted once it has started, and a still that cannot be taken now is answered with the camera’s most recent picture instead. Set this if several cameras at once make live view stutter on this host.",
+        "default": 0,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "warmUpEvents": {
+        "title": "Warm up camera connections",
+        "description": "Events that open a camera’s connection as soon as it reports one, so the live view or snapshot straight afterwards starts immediately. Every camera is independent: an event opens only the camera that reported it, and only for the events chosen here. A camera on its own battery is kept awake for several minutes each time; wired cameras and those behind a HomeBase are unaffected. Choose these in the plugin interface, which offers whatever your devices actually report.",
+        "type": "array",
+        "default": [
+          "doorbellPress"
+        ],
+        "uniqueItems": true,
+        "items": {
+          "type": "string"
+        }
+      },
+      "ffmpegPath": {
+        "title": "FFmpeg path",
+        "description": "Leave unset to use the FFmpeg executable bundled with the plugin.",
+        "minLength": 1,
+        "type": "string"
+      },
+      "smallVideoPackets": {
+        "title": "Smaller live video packets",
+        "description": "Turn this on if the Home app keeps loading a camera but never shows the live picture. Live video is then sent in smaller network packets, as version 4 did. Off by default.",
+        "default": false,
+        "type": "boolean"
+      },
+      "liveVideoPassthrough": {
+        "title": "Send camera video unchanged",
+        "description": "Turn this on if live view never shows, or if the log says FFmpeg stopped before sending video. Live video from cameras that record H.264 is then sent as the camera recorded it, as version 4 did, instead of being converted to what the Home app asked for. Off by default.",
+        "default": false,
+        "type": "boolean"
+      },
+      "hardwareVideoEncoder": {
+        "title": "Hardware video encoding",
+        "description": "Use the computer’s video hardware: turn this off if live view stopped working after an update or looks wrong. On by default.",
+        "default": true,
+        "type": "boolean"
+      },
+      "hdLiveVideo": {
+        "title": "Always HD live video",
+        "description": "Turn this on if live view in the Home app looks blurry. Cameras then offer the Home app only 720p and 1080p, also on mobile data and in the camera grid, which uses more data. Off by default.",
+        "default": false,
+        "type": "boolean"
+      },
+      "ignoreHomeBitRate": {
+        "title": "Ignore the Home app's bit rate limit",
+        "description": "Turn this on if live video looks sharp for a few seconds, then blurry or blocky. Video is then converted at a constant quality close to the camera's own, instead of the low bit rate the Home app asks for, which uses more network bandwidth. Off by default.",
+        "default": false,
+        "type": "boolean"
+      },
+      "entityPreferences": {
+        "title": "Entity preferences",
+        "additionalProperties": false,
+        "default": {},
+        "type": "object",
+        "patternProperties": {
+          "^.+$": {
+            "additionalProperties": false,
+            "properties": {
+              "represented": {
+                "default": true,
+                "type": "boolean"
+              },
+              "audio": {
+                "default": true,
+                "type": "boolean"
+              },
+              "securitySystem": {
+                "default": true,
+                "type": "boolean"
+              },
+              "liveVideoPassthrough": {
+                "type": "boolean"
+              },
+              "ignoreHomeBitRate": {
+                "type": "boolean"
+              },
+              "snapshotMode": {
+                "default": "Refresh",
+                "enum": [
+                  "Cloud",
+                  "Live",
+                  "Refresh"
+                ],
+                "type": "string"
+              },
+              "armingModes": {
+                "additionalProperties": false,
+                "patternProperties": {
+                  "^(home|away|night|off)$": {
+                    "enum": [
+                      "away",
+                      "home",
+                      "schedule",
+                      "custom1",
+                      "custom2",
+                      "custom3",
+                      "off",
+                      "geo",
+                      "disarmed"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
 }

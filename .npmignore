@@ -1,6 +1,28 @@
 # Ignore source code
 src
 
+# Editable image masters. The runtime resolves its packaged images from media/ at the package root,
+# which is the copy that ships.
+*.xcf
+
+# Development material with no role on an installed host: the contract specifications, the documentation
+# site, the maintainer and qualification scripts, the agent skill definitions, the UI design system, and
+# editor and formatter configuration.
+test
+docs
+/scripts
+.claude
+.editorconfig
+.prettierrc.json
+.prettierignore
+.gitmessage
+.nvmrc
+FUNDING.yml
+CODING_STANDARDS.md
+CONTEXT.md
+DESIGN.md
+.impeccable
+
 # ------------- Defaults ------------- #
 
 # gitHub actions
@@ -101,7 +123,6 @@ web_modules/
 
 # Nuxt.js build / generate output
 .nuxt
-dist
 
 # Gatsby files
 .cache/
@@ -144,3 +165,6 @@ tsconfig.configui.spec.json
 tsconfig.plugin.json
 karma.conf.js
 .idea
+
+# The specification suite and its runner configuration are not part of the published package.
+vitest.config.ts

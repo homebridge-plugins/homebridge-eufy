@@ -1,0 +1,2216 @@
+import { randomBytes } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
+
+import { describe, expect, it, vi } from 'vitest';
+
+import { LIVE_TRACE_MESSAGE, type LiveTrace } from '@mega-yfue/eufy-sdk';
+
+import type { RecordingFailure, SnapshotFailure } from '../../src/media/contracts.js';
+import {
+  createDiagnosticLogger,
+  createSdkLogger,
+  DiagnosticConditions,
+  GuidedDiagnostics,
+  reportAdaptationNotice,
+  reportHomeKitEvent,
+  unconfirmedWriteCondition,
+  reportRuntimeNotice,
+} from '../../src/diagnostics.js';
+
+describe('diagnostic conditions', () => {
+  it('emits transitions once and explicitly clears a recovered condition', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+
+    conditions.reportRuntimeState('degraded');
+    conditions.reportRuntimeState('degraded');
+    conditions.reportRuntimeState('ready');
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]![0]).toContain('[runtime-transport-degraded] The Eufy connection is degraded.');
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message))).toContainEqual({
+      scope: 'diagnostic-condition',
+      level: 'warn',
+      code: 'runtime-transport-degraded',
+      active: true,
+      reason: 'degraded',
+      summaryKey: 'log.runtime.transportDegraded',
+      actionKey: 'log.action.checkNetwork',
+    });
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message))).toContainEqual(
+      expect.objectContaining({
+        scope: 'diagnostic-condition',
+        code: 'runtime-transport-degraded',
+        active: false,
+        reason: 'recovered',
+      }),
+    );
+  });
+
+  it('names an unconfirmed write only for a member this plugin actually writes', () => {
+    expect(unconfirmedWriteCondition('enabled')).toEqual({
+      code: 'camera-control-operation-failed',
+      capability: 'camera',
+      member: 'enabled',
+      active: true,
+      reason: 'not-confirmed',
+    });
+    expect(unconfirmedWriteCondition('statusLed')?.member).toBe('statusLed');
+    expect(unconfirmedWriteCondition('nightVision')?.member).toBe('nightVision');
+    expect(
+      unconfirmedWriteCondition('watermark'),
+      'a property this plugin never writes belongs to another consumer of the same account',
+    ).toBeUndefined();
+    expect(unconfirmedWriteCondition('constructor')).toBeUndefined();
+  });
+
+  it('reports an unconfirmed write against the accessory it names, under its own reason', () => {
+    const warn = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info: vi.fn(), warn });
+
+    conditions.reportHomeKit(unconfirmedWriteCondition('enabled')!, ['T8170T10230000000']);
+
+    expect(warn, 'a write the camera ignored has to reach the console, not only the record').toHaveBeenCalledOnce();
+    const record = JSON.parse(debug.mock.calls[0]![0]);
+    expect(record).toMatchObject({
+      scope: 'diagnostic-condition',
+      code: 'camera-control-operation-failed',
+      capability: 'camera',
+      member: 'enabled',
+      active: true,
+      reason: 'not-confirmed',
+      affectedAccessoryCount: 1,
+    });
+    expect(JSON.stringify(record), 'the serial is never emitted').not.toContain('T8170T10230000000');
+  });
+
+  /**
+   * A condition names the cameras it is about, in the owner's own log.
+   *
+   * The console line and the retained record have different readers. The line goes to the owner's log, where
+   * Homebridge prints accessory names on every other line, and a count is not something an owner can act on:
+   * "1 accessory is affected" on an eight-camera account says only that one of them failed. The record goes to
+   * a support archive and keeps carrying no identity at all.
+   */
+  it('names the affected accessories on the console, and still keeps them out of the record', () => {
+    const warn = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info: vi.fn(), warn }, (serial) =>
+      serial === 'T8170T10230000000' ? 'Jardin' : undefined,
+    );
+
+    conditions.reportHomeKit(unconfirmedWriteCondition('enabled')!, ['T8170T10230000000']);
+
+    const line = String(warn.mock.calls[0]![0]);
+    const record = JSON.parse(debug.mock.calls[0]![0]);
+    expect(line, 'the owner reads a name, not a tally').toContain('Jardin');
+    // The archive carries the alias and no identity; the owner's own log carries the pairing. So an alias in a
+    // support case is resolvable by the one person who can be asked, and by nobody else.
+    expect(line, 'paired with the alias the archive will carry').toContain(record.accessoryAliases[0]);
+    expect(JSON.stringify(record), 'the record still names nothing').not.toContain('Jardin');
+  });
+
+  it('falls back to the count where a name is not known, rather than saying nothing', () => {
+    const warn = vi.fn();
+    const conditions = new DiagnosticConditions({ debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn });
+
+    conditions.reportHomeKit(unconfirmedWriteCondition('enabled')!, ['T8170T10230000000']);
+
+    const line = String(warn.mock.calls[0]![0]);
+    expect(line).toContain('1 accessory');
+    expect(line, 'and never the serial it was handed').not.toContain('T8170T10230000000');
+  });
+
+  it('uses stable support-case accessory aliases and never emits supplied identity', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+    const firstSerial = 'T8000P0000000000';
+    const secondSerial = 'T8000P1111111111';
+    const diagnostic = {
+      code: 'invalid-contact-observation',
+      capability: 'contact',
+      member: 'open',
+      active: true,
+      reason: 'malformed',
+    } as const;
+
+    conditions.reportHomeKit(diagnostic, [firstSerial, secondSerial]);
+    conditions.reportHomeKit(diagnostic, [secondSerial, firstSerial]);
+    conditions.reportHomeKit({ ...diagnostic, active: false, reason: 'recovered' }, []);
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]![0]).toContain('2 accessories are affected.');
+    const active = JSON.parse(debug.mock.calls[0]![0]);
+    expect(active).toMatchObject({
+      scope: 'diagnostic-condition',
+      code: 'invalid-contact-observation',
+      active: true,
+      affectedAccessoryCount: 2,
+    });
+    expect(active.accessoryAliases).toHaveLength(2);
+    expect(active.accessoryAliases[0]).toMatch(/^accessory-[0-9a-f-]{36}$/);
+    expect(active.accessoryAliases[1]).toMatch(/^accessory-[0-9a-f-]{36}$/);
+    expect(active.accessoryAliases[0]).not.toBe(active.accessoryAliases[1]);
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls, debug.mock.calls])).not.toContain(firstSerial);
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls, debug.mock.calls])).not.toContain(secondSerial);
+    expect(JSON.parse(debug.mock.calls[1]![0])).toMatchObject({
+      code: 'invalid-contact-observation',
+      active: false,
+      reason: 'recovered',
+      affectedAccessoryCount: 0,
+    });
+  });
+
+  it('tracks members with the same code as independent conditions', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+    const base = {
+      code: 'invalid-smart-light-observation',
+      capability: 'smart_light',
+      active: true,
+      reason: 'malformed',
+    } as const;
+
+    conditions.reportHomeKit({ ...base, member: 'power' }, ['synthetic-light']);
+    conditions.reportHomeKit({ ...base, member: 'brightness' }, ['synthetic-light']);
+    conditions.reportHomeKit({ ...base, member: 'power', active: false, reason: 'recovered' }, []);
+
+    expect(debug.mock.calls.slice(0, 2).map(([message]) => JSON.parse(message).member)).toEqual([
+      'power',
+      'brightness',
+    ]);
+    expect(info).toHaveBeenCalledOnce();
+    expect(JSON.parse(debug.mock.calls[2]![0])).toMatchObject({ member: 'power', active: false });
+  });
+
+  it('allowlists security-system faults without retaining device identity', () => {
+    const warn = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info: vi.fn(), warn });
+    const identity = 'synthetic-security-system';
+
+    conditions.reportHomeKit(
+      {
+        code: 'unsupported-arming-mode',
+        capability: 'arming',
+        member: 'mode',
+        active: true,
+        reason: 'unsupported',
+      },
+      [identity],
+    );
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(JSON.parse(debug.mock.calls[0]![0])).toMatchObject({
+      code: 'unsupported-arming-mode',
+      capability: 'arming',
+      member: 'mode',
+      active: true,
+      reason: 'unsupported',
+    });
+    expect(JSON.stringify([warn.mock.calls, debug.mock.calls])).not.toContain(identity);
+  });
+
+  it('bounds aliases while retaining the complete affected-accessory count', () => {
+    const warn = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info: vi.fn(), warn });
+    const identities = Array.from({ length: 40 }, (_, index) => `synthetic-device-${index}`);
+
+    conditions.reportHomeKit(
+      {
+        code: 'battery-temperature-alert',
+        capability: 'battery',
+        member: 'batteryAlert',
+        active: true,
+        reason: 'hot',
+      },
+      identities,
+    );
+
+    const output = JSON.parse(debug.mock.calls[0]![0]);
+    expect(output).toMatchObject({ affectedAccessoryCount: 40, aliasesTruncated: true });
+    expect(output.accessoryAliases).toHaveLength(32);
+    expect(JSON.stringify(output)).not.toContain('synthetic-device-');
+  });
+
+  it('drops non-allowlisted fields and rejects unknown generated output', () => {
+    const normal: string[] = [];
+    const structured: string[] = [];
+    const conditions = new DiagnosticConditions({
+      debug: (message) => structured.push(message),
+      error: (message) => normal.push(message),
+      info: (message) => normal.push(message),
+      warn: (message) => normal.push(message),
+    });
+    const prohibited = [
+      'account@example.invalid',
+      'credential-value',
+      'token-value',
+      'cookie-value',
+      'private-key-value',
+      '192.0.2.1',
+      'protocol-frame-value',
+      'raw-capture-value',
+    ];
+
+    conditions.reportHomeKit(
+      {
+        code: 'battery-temperature-alert',
+        capability: 'battery',
+        member: 'batteryAlert',
+        active: true,
+        reason: 'hot',
+        account: prohibited[0],
+        credential: prohibited[1],
+        token: prohibited[2],
+        cookie: prohibited[3],
+        key: prohibited[4],
+        address: prohibited[5],
+        sdk: { frame: prohibited[6] },
+        capture: prohibited[7],
+      } as never,
+      ['T8000P2222222222'],
+    );
+    conditions.reportHomeKit(
+      {
+        code: 'unknown-condition',
+        capability: 'unknown',
+        member: 'unknown',
+        active: true,
+        reason: 'unknown',
+      } as never,
+      ['T8000P3333333333'],
+    );
+    const sdk = createSdkLogger({
+      debug: (message) => structured.push(message),
+    })!;
+    sdk.error(
+      `[p2p] upstream error ${prohibited.join(' ')}`,
+      { account: prohibited[0], token: prohibited[2], capture: prohibited[7] },
+      ...Array.from({ length: 20 }, () => prohibited[6]),
+    );
+
+    expect(normal).toHaveLength(1);
+    expect(structured).toHaveLength(2);
+    expect(JSON.parse(structured[1]!)).toMatchObject({ detailsTruncated: true, details: expect.any(Array) });
+    expect(JSON.parse(structured[1]!).details).toHaveLength(16);
+    for (const value of prohibited) {
+      expect([...normal, ...structured].join('\n')).not.toContain(value);
+    }
+    expect(normal[0]).not.toContain('T8000P2222222222');
+    expect(normal[0]).not.toContain('unknown-condition');
+  });
+
+  /**
+   * A warm-up is not a retry.
+   *
+   * The SDK's warm-up line reads `warming (retry=2000ms deadline=20000ms)`, and the trace vocabulary carries
+   * the phase already. Classified from its text it read as a session rebuild, so a live open of four cameras
+   * read as four rebuilds against a station that had rebuilt nothing.
+   */
+  it('does not call a warm-up a retry, and classifies a message that says it is retrying', () => {
+    const debug = vi.fn();
+    const sdk = createSdkLogger({ debug })!;
+
+    sdk.debug('[live synthetic-parent:0] warming (retry=2000ms deadline=20000ms)');
+    sdk.debug('[push] synthetic-cause — retrying (attempt 2)');
+
+    const events = debug.mock.calls.map(([message]) => JSON.parse(message).event);
+    expect(events, 'a warm-up the trace vocabulary carries is not classified from its text').toEqual([
+      'connection-retrying',
+    ]);
+  });
+
+  /**
+   * A message no class matches is not recorded at all, at any level, while a classified one still is.
+   *
+   * The classification is the whole content of an SDK record, because the message text crosses a trust
+   * boundary and is never retained. Two measured rotations of a running host held 237,820 fall-through
+   * records against 717 classified ones, none of them above `debug`, each stating only that a subsystem had
+   * spoken.
+   */
+  it('records nothing for an SDK message no class matches', () => {
+    const debug = vi.fn();
+    const sdk = createSdkLogger({ debug, error: vi.fn(), info: vi.fn(), warn: vi.fn() })!;
+
+    sdk.debug('[p2p] T8000P0000000000 <<< 192.0.2.10:32100 header=f1d0 len=1024');
+    sdk.debug('[p2p] T8000P0000000000 sendLookups: cloud -> 192.0.2.10:32100 self=192.0.2.20:41000');
+    sdk.debug('[p2p] T8000P0000000000 beginCheckCam -> 192.0.2.10:32100 (+/-3)');
+    sdk.warn('[p2p] T8000P0000000000 path silent for 15000ms', new Error('synthetic-cause'));
+
+    expect(
+      debug,
+      'a record whose only content is its class carries none when the class is absent',
+    ).not.toHaveBeenCalled();
+
+    sdk.debug('[session synthetic-parent] connected');
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message).event)).toEqual(['connection-opened']);
+  });
+
+  it('classifies current SDK session messages without retaining session identity', () => {
+    const debug = vi.fn();
+    const sdk = createSdkLogger({ debug })!;
+
+    sdk.debug('[session synthetic-parent] connecting now (wired, on demand)');
+    sdk.debug('[session synthetic-parent] connected');
+    sdk.debug('[session synthetic-parent] in use again — idle-detach cancelled');
+    sdk.debug('[session synthetic-parent] idle window elapsed — disconnecting now (device can sleep)');
+    sdk.warn('[live synthetic-parent] live stream failed to start');
+    sdk.warn('[p2p] send err synthetic-address');
+    sdk.warn('[device] property synthetic-property wire value is not numeric');
+
+    const records = debug.mock.calls.map(([message]) => JSON.parse(message));
+    expect(records.map(({ subsystem, event }) => ({ subsystem, event }))).toEqual([
+      { subsystem: 'p2p', event: 'session-connecting' },
+      { subsystem: 'p2p', event: 'connection-opened' },
+      { subsystem: 'p2p', event: 'session-resumed' },
+      { subsystem: 'p2p', event: 'connection-closed' },
+      { subsystem: 'p2p', event: 'media-error' },
+      { subsystem: 'p2p', event: 'transport-error' },
+      { subsystem: 'device', event: 'observation-invalid' },
+    ]);
+    expect(JSON.stringify(records)).not.toContain('synthetic-parent');
+    expect(JSON.stringify(records)).not.toContain('synthetic-address');
+    expect(JSON.stringify(records)).not.toContain('synthetic-property');
+  });
+
+  it('names a refused RTC sign by its HTTP status and cloud code, apart from a generic WebRTC failure', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-rtc-sign-'));
+    await new GuidedDiagnostics(root).authorize('live-media', 'now');
+    const logger = createDiagnosticLogger({ debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root);
+
+    try {
+      createSdkLogger(logger)!.warn(
+        '[rtc-call] RTC sign for T8223P0000000000 refused: HTTP 401 code 26052 synthetic-close-error',
+      );
+      await logger.flush?.();
+
+      const written = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8');
+      expect(JSON.parse(written)).toMatchObject({ event: 'rtc-sign-refused', httpStatus: 401, code: 26052 });
+      expect(written).not.toContain('T8223P0000000000');
+      expect(written).not.toContain('synthetic-close-error');
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /** A push that decoded into no event is the code a device sends that the library does not map yet. */
+  it('records a received push by its event type, device knowledge and decoded count', () => {
+    const debug = vi.fn();
+    const sdk = createSdkLogger({ debug })!;
+
+    sdk.debug('[push] in: eventType=3101 device=known events=0');
+    sdk.debug('[push] in: eventType=3101 device=T8224P0000000000 events=0');
+
+    const records = debug.mock.calls.map(([message]) => JSON.parse(message));
+    expect(records).toEqual([
+      {
+        scope: 'sdk',
+        level: 'debug',
+        subsystem: 'push',
+        event: 'push-received',
+        eventType: 3101,
+        device: 'known',
+        events: 0,
+      },
+    ]);
+  });
+
+  it('retains only bounded identity-free live startup details from SDK debug records', () => {
+    const debug = vi.fn();
+    const sdk = createSdkLogger({ debug })!;
+
+    sdk.debug('[live] start trace', {
+      phase: 'media-command',
+      topology: 'own',
+      action: 'start',
+      level2: true,
+      signCode: 8,
+      keyframe: false,
+      serial: 'T8000P0000000000',
+    });
+
+    expect(JSON.parse(debug.mock.calls[0]![0])).toEqual({
+      scope: 'sdk',
+      subsystem: 'p2p',
+      event: 'live-start-trace',
+      phase: 'media-command',
+      topology: 'own',
+      action: 'start',
+      level2: true,
+      level: 'debug',
+    });
+
+    sdk.debug('[live] start trace', { phase: 'media-command-ack', action: 'start', serial: 'T8000P0000000000' });
+    expect(JSON.parse(debug.mock.calls[1]![0])).toEqual({
+      scope: 'sdk',
+      subsystem: 'p2p',
+      event: 'live-start-trace',
+      phase: 'media-command-ack',
+      action: 'start',
+      level: 'debug',
+    });
+
+    sdk.debug('[live] start trace', { phase: 'datagram-gap', dataType: 1, payload: 'must-not-survive' });
+    expect(JSON.parse(debug.mock.calls[2]![0])).toEqual({
+      scope: 'sdk',
+      subsystem: 'p2p',
+      event: 'live-start-trace',
+      phase: 'datagram-gap',
+      dataType: 1,
+      level: 'debug',
+    });
+
+    sdk.debug('[live] start trace', { phase: 'media-command-retry', action: 'start' });
+    sdk.debug('[live] start trace', { phase: 'media-command-unacknowledged', action: 'start' });
+    expect(debug.mock.calls.slice(3).map(([message]) => JSON.parse(message).phase)).toEqual([
+      'media-command-retry',
+      'media-command-unacknowledged',
+    ]);
+  });
+
+  /**
+   * Every phase the SDK's live trace vocabulary carries survives sanitization as a structured record,
+   * because a phase the sanitizer does not recognise is dropped entirely rather than reduced.
+   *
+   * One table keyed by the published `LiveTrace` union, so each entry must carry exactly the fields its
+   * phase declares and none can be exercised twice or missed. The `satisfies` documents that shape rather
+   * than guarding it — this repository typechecks `src` only, so what fails when the SDK widens the union is
+   * the sanitizer's own table.
+   */
+  it('records every phase the SDK live trace vocabulary carries', () => {
+    const debug = vi.fn();
+    const sdk = createSdkLogger({ debug, error: vi.fn(), info: vi.fn(), warn: vi.fn() })!;
+    const traces = {
+      'media-command': { topology: 'own', action: 'start', level2: false },
+      'media-command-ack': { action: 'start' },
+      'media-command-retry': { action: 'start' },
+      'media-command-unacknowledged': { action: 'start' },
+      'first-video-command': { signCode: 8, accepted: true },
+      'first-video-unit': { keyframe: true },
+      'first-keyframe': {},
+      'first-foreign-media-command': { media: 'video' },
+      'video-decode-empty': { signCode: 3 },
+      'datagram-gap': { dataType: 1 },
+      'sequence-restart': { dataType: 1 },
+      'level2-wait': { waitMs: 7599 },
+      'level2-ready': { cipherId: 209 },
+      'level2-set-payload-only': { cipherId: 196 },
+      'session-connect-wait': { waitMs: 5000 },
+      'session-connected': { waitedMs: 320 },
+      'session-unreachable': { waitedMs: 25000 },
+      'level2-unavailable': { reason: 'grace-elapsed', waitedMs: 8000 },
+      'cipher-fallback': { cipherId: 209, answeredCipherId: 196 },
+      'level2-negotiating': { cipherId: 209 },
+      'lookup-channels': { local: true, cloud: false, cloudMissing: 'dsk-key' },
+      'station-resolved': { topology: 'attached', channel: 2, stationAdmin: 'self', stationModel: 'T8030' },
+      'station-channel-unresolved': { issue: 'shared' },
+      warming: { retryMs: 2000, deadlineMs: 20000 },
+      'media-command-unsent': { reason: 'level2-key' },
+      'path-stale': { silentMs: 15000 },
+      'channel-silent': { silentMs: 6000, outcome: 'reasserted' },
+      'start-failed': { reason: 'source-error', stage: 'awaiting-first-frame', attempts: 3, errorName: 'TypeError' },
+    } satisfies { [P in LiveTrace['phase']]: Omit<Extract<LiveTrace, { phase: P }>, 'phase'> };
+
+    const phases = Object.keys(traces);
+    for (const [phase, fields] of Object.entries(traces)) {
+      sdk.debug(LIVE_TRACE_MESSAGE, { phase, ...fields, serial: 'T8000P0000000000' });
+    }
+
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message).event)).toEqual(
+      phases.map(() => 'live-start-trace'),
+    );
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message).phase)).toEqual(phases);
+    expect(JSON.stringify(debug.mock.calls)).not.toContain('T8000P0000000000');
+
+    const resolved = debug.mock.calls
+      .map(([message]) => JSON.parse(message))
+      .find((record) => record.phase === 'station-resolved');
+    expect(
+      resolved?.stationModel,
+      'a base this SDK reaches differently reads like a base switched off unless its model is retained',
+    ).toBe('T8030');
+
+    const lookup = debug.mock.calls
+      .map(([message]) => JSON.parse(message))
+      .find((record) => record.phase === 'lookup-channels');
+    expect(lookup?.cloudMissing, 'a connect with no cloud lookup must say what the lookup lacked').toBe('dsk-key');
+
+    const failed = debug.mock.calls
+      .map(([message]) => JSON.parse(message))
+      .find((record) => record.phase === 'start-failed');
+    expect(failed).toMatchObject({ reason: 'source-error', stage: 'awaiting-first-frame', attempts: 3 });
+    expect(failed, 'an upstream error class name is not retained').not.toHaveProperty('errorName');
+  });
+
+  /**
+   * The startup phases carry the durations a slow live start is diagnosed from, which is the whole reason they
+   * are structured: the same facts as free text could not be retained, because a station identity inside a
+   * message survives every pattern a redactor recognises.
+   */
+  it('retains the durations a startup phase states, and drops one outside its window', () => {
+    const debug = vi.fn();
+    const sdk = createSdkLogger({ debug, error: vi.fn(), info: vi.fn(), warn: vi.fn() })!;
+
+    sdk.debug(LIVE_TRACE_MESSAGE, { phase: 'level2-wait', waitMs: 7599 });
+    sdk.debug(LIVE_TRACE_MESSAGE, { phase: 'warming', retryMs: 2000, deadlineMs: 20000 });
+    sdk.debug(LIVE_TRACE_MESSAGE, { phase: 'level2-ready', cipherId: 209 });
+    sdk.debug(LIVE_TRACE_MESSAGE, { phase: 'level2-wait', waitMs: 999_999 });
+
+    const records = debug.mock.calls.map(([message]) => JSON.parse(message as string));
+    expect(records.map((r) => [r.event, r.waitMs ?? r.retryMs, r.cipherId])).toEqual([
+      ['live-start-trace', 7599, undefined],
+      ['live-start-trace', 2000, undefined],
+      ['live-start-trace', undefined, 209],
+    ]);
+    expect(records[1]!.deadlineMs).toBe(20000);
+  });
+
+  it('persists an SDK live startup trace only during authorized live diagnostics', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-live-start-'));
+    await new GuidedDiagnostics(root).authorize('live-media', 'now');
+    const logger = createDiagnosticLogger({ debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root);
+
+    try {
+      createSdkLogger(logger)!.debug('[live] start trace', {
+        phase: 'first-video-command',
+        signCode: 8,
+        accepted: true,
+        serial: 'T8000P0000000000',
+      });
+      await logger.flush?.();
+
+      const record = JSON.parse(readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8').trim());
+      expect(record).toMatchObject({
+        scope: 'sdk',
+        level: 'debug',
+        subsystem: 'p2p',
+        event: 'live-start-trace',
+        phase: 'first-video-command',
+        signCode: 8,
+        accepted: true,
+      });
+      expect(JSON.stringify(record)).not.toContain('T8000P0000000000');
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('allowlists every bounded live camera session reason without media or device material', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+    const reasons = [
+      'source-acquisition-timeout',
+      'no-video-within-backstop',
+      'source-error',
+      'rtcp-timeout',
+      'no-controller-rtcp',
+      'adaptation-spawn-failed',
+      'adaptation-exited-before-output',
+      'adaptation-exited-while-streaming',
+      'adaptation-failed',
+    ];
+    const serial = 'T8000P0000000000';
+
+    for (const reason of reasons) {
+      conditions.reportHomeKit(
+        { code: 'camera-live-session-failed', capability: 'camera', member: 'live', active: true, reason },
+        [serial],
+      );
+    }
+    conditions.reportHomeKit(
+      {
+        code: 'camera-live-session-failed',
+        capability: 'camera',
+        member: 'live',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(warn).toHaveBeenCalledTimes(reasons.length);
+    expect(warn.mock.calls[0]![0]).toContain('[camera-live-session-failed] A live camera session ended without video');
+    expect(info).toHaveBeenCalledOnce();
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message).reason)).toEqual([...reasons, 'recovered']);
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message))[0]).toMatchObject({
+      scope: 'diagnostic-condition',
+      code: 'camera-live-session-failed',
+      capability: 'camera',
+      member: 'live',
+      active: true,
+      summaryKey: 'log.homekit.cameraLiveSessionFailed',
+      actionKey: 'log.action.retryLiveView',
+      affectedAccessoryCount: 1,
+    });
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls, debug.mock.calls])).not.toContain(serial);
+  });
+
+  it('allowlists every bounded talkback reason without media or device material', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+    const reasons = ['source-unavailable', 'unsupported-selection', 'adaptation-failed', 'device-audio-failed'];
+    const serial = 'T8000P0000000000';
+
+    for (const reason of reasons) {
+      conditions.reportHomeKit(
+        { code: 'camera-talkback-failed', capability: 'camera', member: 'talkback', active: true, reason },
+        [serial],
+      );
+    }
+    conditions.reportHomeKit(
+      {
+        code: 'camera-talkback-failed',
+        capability: 'camera',
+        member: 'talkback',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(warn).toHaveBeenCalledTimes(reasons.length);
+    expect(warn.mock.calls[0]![0]).toContain('[camera-talkback-failed] Camera talkback stopped unexpectedly');
+    expect(info).toHaveBeenCalledOnce();
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message).reason)).toEqual([...reasons, 'recovered']);
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message))[0]).toMatchObject({
+      scope: 'diagnostic-condition',
+      code: 'camera-talkback-failed',
+      capability: 'camera',
+      member: 'talkback',
+      active: true,
+      summaryKey: 'log.homekit.cameraTalkbackFailed',
+      actionKey: 'log.action.retryTalkback',
+      affectedAccessoryCount: 1,
+    });
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls, debug.mock.calls])).not.toContain(serial);
+  });
+
+  it('allowlists evidenced talkback whose bound SDK action is unavailable', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+
+    conditions.reportHomeKit(
+      {
+        code: 'camera-talkback-capability-unavailable',
+        capability: 'camera',
+        member: 'talkback',
+        active: true,
+        reason: 'missing',
+      },
+      ['T8000P0000000000'],
+    );
+    conditions.reportHomeKit(
+      {
+        code: 'camera-talkback-capability-unavailable',
+        capability: 'camera',
+        member: 'talkback',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]![0]).toContain('[camera-talkback-capability-unavailable] Camera talkback is unavailable');
+    expect(info).toHaveBeenCalledOnce();
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message).reason)).toEqual(['missing', 'recovered']);
+  });
+
+  it('allowlists a refused live session for a disabled camera without device material', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+    const serial = 'T8000P0000000000';
+
+    for (const reason of ['disabled', 'disabled-mid-session']) {
+      conditions.reportHomeKit(
+        { code: 'camera-live-session-refused', capability: 'camera', member: 'live', active: true, reason },
+        [serial],
+      );
+    }
+    conditions.reportHomeKit(
+      {
+        code: 'camera-live-session-refused',
+        capability: 'camera',
+        member: 'live',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[0]![0]).toContain(
+      '[camera-live-session-refused] Live view is unavailable because the camera is turned off',
+    );
+    expect(warn.mock.calls[0]![0]).toContain('Turn the camera on in the Eufy app');
+    expect(info).toHaveBeenCalledOnce();
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message).reason)).toEqual([
+      'disabled',
+      'disabled-mid-session',
+      'recovered',
+    ]);
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message))[0]).toMatchObject({
+      scope: 'diagnostic-condition',
+      code: 'camera-live-session-refused',
+      capability: 'camera',
+      member: 'live',
+      active: true,
+      summaryKey: 'log.homekit.cameraLiveSessionRefused',
+      actionKey: 'log.action.enableCamera',
+      affectedAccessoryCount: 1,
+    });
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls, debug.mock.calls])).not.toContain(serial);
+  });
+
+  it('allowlists a live session a disabled camera answered without video, apart from a transport failure', () => {
+    const warn = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info: vi.fn(), warn });
+    const serial = 'T8000P0000000000';
+
+    conditions.reportHomeKit(
+      {
+        code: 'camera-live-session-refused',
+        capability: 'camera',
+        member: 'live',
+        active: true,
+        reason: 'disabled-no-video',
+      },
+      [serial],
+    );
+    conditions.reportHomeKit(
+      {
+        code: 'camera-live-session-failed',
+        capability: 'camera',
+        member: 'live',
+        active: true,
+        reason: 'source-audio-only',
+      },
+      [serial],
+    );
+
+    expect(warn.mock.calls.map(([message]) => String(message).split('.')[0])).toEqual([
+      '[camera-live-session-refused] Live view is unavailable because the camera is turned off',
+      '[camera-live-session-failed] A live camera session ended without video',
+    ]);
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message)).map(({ code, reason }) => [code, reason])).toEqual([
+      ['camera-live-session-refused', 'disabled-no-video'],
+      ['camera-live-session-failed', 'source-audio-only'],
+    ]);
+    expect(JSON.stringify([warn.mock.calls, debug.mock.calls])).not.toContain(serial);
+  });
+
+  it('allowlists a recording refused for a disabled camera without device material', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+    const serial = 'T8000P0000000000';
+
+    conditions.reportHomeKit(
+      {
+        code: 'camera-recording-refused',
+        capability: 'camera',
+        member: 'recordFragments',
+        active: true,
+        reason: 'disabled',
+      },
+      [serial],
+    );
+    conditions.reportHomeKit(
+      {
+        code: 'camera-recording-refused',
+        capability: 'camera',
+        member: 'recordFragments',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]![0]).toContain(
+      '[camera-recording-refused] Recording is unavailable because the camera is turned off',
+    );
+    expect(warn.mock.calls[0]![0]).toContain('Turn the camera on in the Eufy app');
+    expect(info).toHaveBeenCalledOnce();
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message))[0]).toMatchObject({
+      scope: 'diagnostic-condition',
+      code: 'camera-recording-refused',
+      capability: 'camera',
+      member: 'recordFragments',
+      active: true,
+      reason: 'disabled',
+      summaryKey: 'log.homekit.cameraRecordingRefused',
+      actionKey: 'log.action.enableCamera',
+      affectedAccessoryCount: 1,
+    });
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls, debug.mock.calls])).not.toContain(serial);
+  });
+
+  it('allowlists a substituted camera image without device material', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+    const serial = 'T8000P0000000000';
+
+    conditions.reportHomeKit(
+      {
+        code: 'camera-snapshot-unavailable',
+        capability: 'camera',
+        member: 'snapshot',
+        active: true,
+        reason: 'no-acquisition',
+      },
+      [serial],
+    );
+    conditions.reportHomeKit(
+      {
+        code: 'camera-snapshot-unavailable',
+        capability: 'camera',
+        member: 'snapshot',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]![0]).toContain('[camera-snapshot-unavailable] A camera image is unavailable');
+    expect(info).toHaveBeenCalledOnce();
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message))[0]).toMatchObject({
+      scope: 'diagnostic-condition',
+      code: 'camera-snapshot-unavailable',
+      capability: 'camera',
+      member: 'snapshot',
+      active: true,
+      reason: 'no-acquisition',
+      summaryKey: 'log.homekit.cameraSnapshotUnavailable',
+      actionKey: 'log.action.checkCameraSnapshot',
+      affectedAccessoryCount: 1,
+    });
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls, debug.mock.calls])).not.toContain(serial);
+  });
+
+  it('attributes every bounded unanswered snapshot reason to one acquisition', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+    /** Exhaustive by type, so a widened media vocabulary cannot reach the log unallowlisted and untested. */
+    const attributions = {
+      'no-acquisition': true,
+      'no-retained-image': true,
+      'stored-unavailable': true,
+      'stored-failed': true,
+      'stored-not-observed': true,
+      'stored-pending': true,
+      'stored-download-failed': true,
+      'stored-invalid-image': true,
+      'live-unavailable': true,
+      'live-failed': true,
+      'live-station-unreachable': true,
+      'live-no-keyframe': true,
+      'live-source-failed': true,
+      'live-undecodable-burst': true,
+      'live-decoder-unavailable': true,
+    } satisfies Record<SnapshotFailure, true>;
+    const reasons = [...Object.keys(attributions), 'adapter-missing'];
+    const serial = 'T8000P0000000000';
+
+    for (const reason of reasons) {
+      conditions.reportHomeKit(
+        { code: 'camera-snapshot-unavailable', capability: 'camera', member: 'snapshot', active: true, reason },
+        [serial],
+      );
+    }
+    conditions.reportHomeKit(
+      {
+        code: 'camera-snapshot-unavailable',
+        capability: 'camera',
+        member: 'snapshot',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(warn).toHaveBeenCalledTimes(reasons.length);
+    expect(info).toHaveBeenCalledOnce();
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message).reason)).toEqual([...reasons, 'recovered']);
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls, debug.mock.calls])).not.toContain(serial);
+  });
+
+  it('attributes every bounded recording failure the media domain can report', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+    /** Exhaustive by type, so a widened recording vocabulary cannot reach the log unallowlisted and untested. */
+    const attributions = {
+      'source-unavailable': true,
+      'source-error': true,
+      'no-output-within-backstop': true,
+      'adaptation-failed': true,
+    } satisfies Record<RecordingFailure, true>;
+    const reasons = Object.keys(attributions);
+    const serial = 'T8000P0000000000';
+
+    for (const reason of reasons) {
+      conditions.reportHomeKit(
+        { code: 'camera-recording-failed', capability: 'camera', member: 'recordFragments', active: true, reason },
+        [serial],
+      );
+    }
+    conditions.reportHomeKit(
+      {
+        code: 'camera-recording-failed',
+        capability: 'camera',
+        member: 'recordFragments',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(warn).toHaveBeenCalledTimes(reasons.length);
+    expect(info).toHaveBeenCalledOnce();
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message).reason)).toEqual([...reasons, 'recovered']);
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls, debug.mock.calls])).not.toContain(serial);
+  });
+
+  /**
+   * Every reason a camera omitted from HomeKit Secure Video can carry. The allowlist discards a record whose
+   * reason it does not know, so a reason that never reaches this seam is a camera that never explains itself.
+   */
+  /**
+   * A condition names the remedy that fits its cause. A device HomeKit cannot represent yet is an informational line
+   * with nothing to do, an unmapped guard mode points at the mode map, a missing FFmpeg points at the path setting,
+   * one that cannot be started points at the same setting to check, and one that exits before any output points at
+   * the path setting again. A control that timed out points at the Eufy
+   * app rather than a retry. A reason with no remedy of its own keeps the condition's. The retained
+   * record carries the same level and action as the console line.
+   */
+  it('names the remedy that fits each cause, at its level, on the console and in the record', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-remedy-'));
+    const info = vi.fn();
+    const warn = vi.fn();
+    const logger = createDiagnosticLogger({ debug: vi.fn(), error: vi.fn(), info, warn }, root);
+    const conditions = new DiagnosticConditions(logger);
+    const cases = [
+      ['recognized-device-not-represented', {}, 'no-primary-purpose-member', 'info', 'log.action.notSupportedYet'],
+      [
+        'unsupported-arming-mode',
+        { capability: 'arming', member: 'mode' },
+        'unsupported',
+        'warn',
+        'log.action.mapArmingMode',
+      ],
+      [
+        'camera-streaming-capability-unavailable',
+        { capability: 'camera', member: 'live' },
+        'adapter-missing',
+        'warn',
+        'log.action.setFfmpegPath',
+      ],
+      [
+        'camera-recording-unavailable',
+        { capability: 'camera', member: 'recordFragments' },
+        'adapter-missing',
+        'warn',
+        'log.action.setFfmpegPath',
+      ],
+      [
+        'camera-live-session-failed',
+        { capability: 'camera', member: 'live' },
+        'adaptation-spawn-failed',
+        'warn',
+        'log.action.checkFfmpegPath',
+      ],
+      [
+        'camera-live-session-failed',
+        { capability: 'camera', member: 'live' },
+        'adaptation-exited-before-output',
+        'warn',
+        'log.action.setFfmpegPath',
+      ],
+      [
+        'camera-live-session-failed',
+        { capability: 'camera', member: 'live' },
+        'source-error',
+        'warn',
+        'log.action.retryLiveView',
+      ],
+      [
+        'camera-live-session-failed',
+        { capability: 'camera', member: 'live' },
+        'source-warm-timeout',
+        'warn',
+        'log.action.retryLiveViewNoPicture',
+      ],
+      [
+        'camera-live-session-failed',
+        { capability: 'camera', member: 'live' },
+        'station-key-unavailable',
+        'warn',
+        'log.action.reportStationKey',
+      ],
+      [
+        'camera-live-session-failed',
+        { capability: 'camera', member: 'live' },
+        'no-controller-rtcp',
+        'warn',
+        'log.action.checkControllerNetwork',
+      ],
+      [
+        'lock-operation-failed',
+        { capability: 'lock', member: 'target' },
+        'timeout',
+        'warn',
+        'log.action.controlTimedOut',
+      ],
+      [
+        'camera-talkback-failed',
+        { capability: 'camera', member: 'talkback' },
+        'no-controller-audio',
+        'warn',
+        'log.action.checkTalkbackMicrophone',
+      ],
+    ] as const;
+
+    try {
+      for (const [code, fields, reason] of cases) {
+        conditions.reportHomeKit({ code, ...fields, active: true, reason }, ['T8000P0000000000']);
+      }
+      await logger.flush?.();
+
+      const records = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(records.map(({ code, reason, level, actionKey }) => [code, reason, level, actionKey])).toEqual(
+        cases.map(([code, , reason, level, actionKey]) => [code, reason, level, actionKey]),
+      );
+      expect(info.mock.calls.map(([message]) => String(message).split(']')[0])).toEqual([
+        '[recognized-device-not-represented',
+      ]);
+      expect(info.mock.calls[0]![0]).toContain('No action is needed');
+      expect(warn).toHaveBeenCalledTimes(cases.length - 1);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('attributes every reason a camera is unavailable for recording', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+    const reasons = ['missing-evidence', 'missing', 'adapter-missing', 'missing-trigger'];
+    const serial = 'T8000P0000000000';
+
+    for (const reason of reasons) {
+      conditions.reportHomeKit(
+        {
+          code: 'camera-recording-unavailable',
+          capability: 'camera',
+          member: 'recordFragments',
+          active: true,
+          reason,
+        },
+        [serial],
+      );
+    }
+    conditions.reportHomeKit(
+      {
+        code: 'camera-recording-unavailable',
+        capability: 'camera',
+        member: 'recordFragments',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(warn).toHaveBeenCalledTimes(reasons.length);
+    expect(warn.mock.calls[0]![0]).toContain(
+      '[camera-recording-unavailable] HomeKit Secure Video recording is unavailable for this camera',
+    );
+    expect(warn.mock.calls[0]![0]).toContain('Check that HomeKit Secure Video is set up for this camera');
+    expect(info).toHaveBeenCalledOnce();
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message))[0]).toMatchObject({
+      scope: 'diagnostic-condition',
+      code: 'camera-recording-unavailable',
+      capability: 'camera',
+      member: 'recordFragments',
+      active: true,
+      reason: 'missing-evidence',
+      summaryKey: 'log.homekit.cameraRecordingUnavailable',
+      actionKey: 'log.action.checkCameraRecording',
+      affectedAccessoryCount: 1,
+    });
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message).reason)).toEqual([...reasons, 'recovered']);
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls, debug.mock.calls])).not.toContain(serial);
+  });
+
+  /**
+   * A camera control is withdrawn per member across three capabilities, so both the reason vocabulary and
+   * every capability and member it fans out across have to survive the allowlist. The bundle reports its
+   * spotlight and audio members under capability ids distinct from the standalone light adapter's.
+   *
+   * Reasons and members are counted on separate reporters, because one reporter suppresses a repeat of the
+   * state a member is already in and the two loops would otherwise overlap on whichever member they share.
+   */
+  it('attributes every unavailable camera control to its own capability and member', () => {
+    const serial = 'T8000P0000000000';
+    const reasons = ['missing', 'malformed', 'sdk-fault'];
+    const members = [
+      ['camera', 'enabled'],
+      ['camera', 'statusLed'],
+      ['light', 'isOn'],
+      ['light', 'brightness'],
+      ['audio', 'microphone'],
+      ['audio', 'speaker'],
+      ['audio', 'volume'],
+    ] as const;
+
+    const byReason = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const reasoned = new DiagnosticConditions(byReason);
+    for (const reason of reasons) {
+      reasoned.reportHomeKit(
+        { code: 'camera-controls-capability-unavailable', capability: 'light', member: 'isOn', active: true, reason },
+        [serial],
+      );
+    }
+
+    const byMember = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const membered = new DiagnosticConditions(byMember);
+    for (const [capability, member] of members) {
+      membered.reportHomeKit(
+        { code: 'camera-controls-capability-unavailable', capability, member, active: true, reason: 'missing' },
+        [serial],
+      );
+    }
+    membered.reportHomeKit(
+      {
+        code: 'camera-controls-capability-unavailable',
+        capability: 'audio',
+        member: 'volume',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(byReason.warn).toHaveBeenCalledTimes(reasons.length);
+    expect(byReason.warn.mock.calls[0]![0]).toContain(
+      '[camera-controls-capability-unavailable] A camera control is unavailable',
+    );
+    expect(byReason.warn.mock.calls[0]![0]).toContain(
+      'No action is needed; the control returns when the camera reports it',
+    );
+    expect(byReason.debug.mock.calls.map(([message]) => JSON.parse(message).reason)).toEqual(reasons);
+    expect(byReason.debug.mock.calls.map(([message]) => JSON.parse(message))[0]).toMatchObject({
+      scope: 'diagnostic-condition',
+      code: 'camera-controls-capability-unavailable',
+      capability: 'light',
+      member: 'isOn',
+      active: true,
+      reason: 'missing',
+      summaryKey: 'log.homekit.cameraControlsCapabilityUnavailable',
+      actionKey: 'log.action.waitCameraControl',
+      affectedAccessoryCount: 1,
+    });
+
+    expect(byMember.warn).toHaveBeenCalledTimes(members.length);
+    expect(byMember.info).toHaveBeenCalledOnce();
+    const records = byMember.debug.mock.calls.map(([message]) => JSON.parse(message));
+    expect(records.slice(0, members.length).map(({ capability, member }) => [capability, member])).toEqual(
+      members.map(([capability, member]) => [capability, member]),
+    );
+    expect(records.at(-1)).toMatchObject({ capability: 'audio', member: 'volume', active: false, reason: 'recovered' });
+    expect(
+      JSON.stringify(
+        [byReason, byMember].map(({ debug, info, warn }) => [debug.mock.calls, info.mock.calls, warn.mock.calls]),
+      ),
+    ).not.toContain(serial);
+  });
+
+  /**
+   * An authoritative observation this plugin refused to read, reported per capability and member because the
+   * reader is shared by the streaming and controls bundles and each names the member it was reading.
+   */
+  it('attributes every camera control observation it refused to read', () => {
+    const serial = 'T8000P0000000000';
+    const reasons = ['sdk-fault', 'missing', 'malformed'];
+    const members = [
+      ['camera', 'enabled'],
+      ['camera', 'statusLed'],
+      ['camera', 'nightVision'],
+      ['light', 'isOn'],
+      ['light', 'brightness'],
+      ['audio', 'microphone'],
+      ['audio', 'speaker'],
+      ['audio', 'volume'],
+    ] as const;
+
+    const byReason = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const reasoned = new DiagnosticConditions(byReason);
+    for (const reason of reasons) {
+      reasoned.reportHomeKit(
+        {
+          code: 'invalid-camera-control-observation',
+          capability: 'camera',
+          member: 'nightVision',
+          active: true,
+          reason,
+        },
+        [serial],
+      );
+    }
+
+    const byMember = { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const membered = new DiagnosticConditions(byMember);
+    for (const [capability, member] of members) {
+      membered.reportHomeKit(
+        { code: 'invalid-camera-control-observation', capability, member, active: true, reason: 'malformed' },
+        [serial],
+      );
+    }
+    membered.reportHomeKit(
+      {
+        code: 'invalid-camera-control-observation',
+        capability: 'light',
+        member: 'brightness',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(byReason.warn).toHaveBeenCalledTimes(reasons.length);
+    expect(byReason.warn.mock.calls[0]![0]).toContain(
+      '[invalid-camera-control-observation] A camera control state could not be read',
+    );
+    expect(byReason.warn.mock.calls[0]![0]).toContain('Check the camera in the Eufy app');
+    expect(byReason.debug.mock.calls.map(([message]) => JSON.parse(message).reason)).toEqual(reasons);
+    expect(byReason.debug.mock.calls.map(([message]) => JSON.parse(message))[0]).toMatchObject({
+      scope: 'diagnostic-condition',
+      code: 'invalid-camera-control-observation',
+      capability: 'camera',
+      member: 'nightVision',
+      active: true,
+      reason: 'sdk-fault',
+      summaryKey: 'log.homekit.invalidCameraControlObservation',
+      actionKey: 'log.action.checkCameraControl',
+      affectedAccessoryCount: 1,
+    });
+
+    expect(byMember.warn).toHaveBeenCalledTimes(members.length);
+    expect(byMember.info).toHaveBeenCalledOnce();
+    const records = byMember.debug.mock.calls.map(([message]) => JSON.parse(message));
+    expect(records.slice(0, members.length).map(({ capability, member }) => [capability, member])).toEqual(
+      members.map(([capability, member]) => [capability, member]),
+    );
+    expect(records.at(-1)).toMatchObject({
+      capability: 'light',
+      member: 'brightness',
+      active: false,
+      reason: 'recovered',
+    });
+    expect(
+      JSON.stringify(
+        [byReason, byMember].map(({ debug, info, warn }) => [debug.mock.calls, info.mock.calls, warn.mock.calls]),
+      ),
+    ).not.toContain(serial);
+  });
+
+  it('allowlists a withdrawn camera snapshot acquisition per acquisition member', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+    const serial = 'T8000P0000000000';
+
+    for (const [member, reason] of [
+      ['snapshotStored', 'missing-evidence'],
+      ['snapshotLive', 'adapter-missing'],
+    ] as const) {
+      conditions.reportHomeKit(
+        { code: 'camera-snapshot-capability-unavailable', capability: 'camera', member, active: true, reason },
+        [serial],
+      );
+    }
+    conditions.reportHomeKit(
+      {
+        code: 'camera-snapshot-capability-unavailable',
+        capability: 'camera',
+        member: 'snapshotStored',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[0]![0]).toContain(
+      '[camera-snapshot-capability-unavailable] Camera snapshot acquisition is unavailable',
+    );
+    expect(info).toHaveBeenCalledOnce();
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message))).toEqual([
+      expect.objectContaining({
+        scope: 'diagnostic-condition',
+        level: 'warn',
+        code: 'camera-snapshot-capability-unavailable',
+        capability: 'camera',
+        member: 'snapshotStored',
+        active: true,
+        reason: 'missing-evidence',
+        summaryKey: 'log.homekit.cameraSnapshotCapabilityUnavailable',
+        actionKey: 'log.action.waitCameraSnapshot',
+        affectedAccessoryCount: 1,
+      }),
+      expect.objectContaining({ member: 'snapshotLive', active: true, reason: 'adapter-missing' }),
+      expect.objectContaining({ member: 'snapshotStored', active: false, reason: 'recovered' }),
+    ]);
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls, debug.mock.calls])).not.toContain(serial);
+  });
+
+  it('allowlists withdrawn camera live media without device material', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const debug = vi.fn();
+    const conditions = new DiagnosticConditions({ debug, error: vi.fn(), info, warn });
+    const serial = 'T8000P0000000000';
+
+    conditions.reportHomeKit(
+      {
+        code: 'camera-streaming-capability-unavailable',
+        capability: 'camera',
+        member: 'live',
+        active: true,
+        reason: 'sdk-fault',
+      },
+      [serial],
+    );
+    conditions.reportHomeKit(
+      {
+        code: 'camera-streaming-capability-unavailable',
+        capability: 'camera',
+        member: 'live',
+        active: false,
+        reason: 'recovered',
+      },
+      [],
+    );
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]![0]).toContain(
+      '[camera-streaming-capability-unavailable] Camera live media is unavailable',
+    );
+    expect(info).toHaveBeenCalledOnce();
+    expect(debug.mock.calls.map(([message]) => JSON.parse(message))[0]).toMatchObject({
+      scope: 'diagnostic-condition',
+      code: 'camera-streaming-capability-unavailable',
+      capability: 'camera',
+      member: 'live',
+      active: true,
+      reason: 'sdk-fault',
+      summaryKey: 'log.homekit.cameraStreamingCapabilityUnavailable',
+      actionKey: 'log.action.waitCameraLive',
+      affectedAccessoryCount: 1,
+    });
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls, debug.mock.calls])).not.toContain(serial);
+  });
+
+  it('emits only allowlisted bounded HomeKit event traces in debug output', () => {
+    const debug = vi.fn();
+
+    reportHomeKitEvent({ debug }, {
+      adapter: 'contact.sensor',
+      event: 'contact-state',
+      observation: 'malformed',
+      scope: 'account@example.invalid',
+      serial: 'T8000P0000000000',
+    } as never);
+    reportHomeKitEvent(
+      { debug },
+      { adapter: 'T8000P0000000000', event: 'protocol-frame-value', observation: 'raw-capture-value' },
+    );
+    reportHomeKitEvent(
+      { debug },
+      { adapter: 'arming.security-system', event: 'security-system-alarm', observation: 'valid' },
+    );
+    reportHomeKitEvent(
+      { debug },
+      { adapter: 'camera.streaming', event: 'camera-enabled-changed', observation: 'valid' },
+    );
+    reportHomeKitEvent(
+      { debug },
+      { adapter: 'camera.streaming', event: 'camera-enabled-invented', observation: 'valid' },
+    );
+
+    expect(debug).toHaveBeenNthCalledWith(
+      1,
+      JSON.stringify({
+        scope: 'homekit',
+        level: 'debug',
+        adapter: 'contact.sensor',
+        event: 'contact-state',
+        observation: 'malformed',
+      }),
+    );
+    expect(debug).toHaveBeenNthCalledWith(
+      2,
+      JSON.stringify({
+        scope: 'homekit',
+        level: 'debug',
+        adapter: 'arming.security-system',
+        event: 'security-system-alarm',
+        observation: 'valid',
+      }),
+    );
+    expect(debug).toHaveBeenNthCalledWith(
+      3,
+      JSON.stringify({
+        scope: 'homekit',
+        level: 'debug',
+        adapter: 'camera.streaming',
+        event: 'camera-enabled-changed',
+        observation: 'valid',
+      }),
+    );
+    expect(debug).toHaveBeenCalledTimes(3);
+  });
+
+  it('emits only allowlisted live video selections in debug output', () => {
+    const debug = vi.fn();
+
+    reportHomeKitEvent({ debug }, {
+      adapter: 'camera.streaming',
+      event: 'live-video-selected',
+      operation: 'start',
+      profile: 'high',
+      level: '4.0',
+      width: 1280,
+      height: 720,
+      fps: 30,
+      mtu: 1378,
+      maxBitRate: 299,
+      addressVersion: 'ipv4',
+      serial: 'T8000P0000000000',
+    } as never);
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-video-selected',
+        operation: 'reconfigure',
+        profile: 'main',
+        level: '3.1',
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        mtu: 1228,
+        maxBitRate: 802,
+        addressVersion: 'ipv6',
+      },
+    );
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-video-selected',
+        operation: 'start',
+        profile: 'extended' as never,
+        level: '5.2' as never,
+        width: 8192,
+        height: 8192,
+        fps: 240,
+      },
+    );
+    reportHomeKitEvent({ debug }, {
+      adapter: 'camera.streaming',
+      event: 'live-video-selected',
+      operation: 'start',
+      profile: 'high',
+      level: '4.0',
+      width: '1280',
+      height: 720,
+      fps: '30',
+    } as never);
+
+    expect(debug).toHaveBeenCalledTimes(2);
+    expect(debug).toHaveBeenNthCalledWith(
+      1,
+      JSON.stringify({
+        scope: 'homekit',
+        level: 'debug',
+        adapter: 'camera.streaming',
+        event: 'live-video-selected',
+        operation: 'start',
+        profile: 'high',
+        levelName: '4.0',
+        width: 1280,
+        height: 720,
+        fps: 30,
+        mtu: 1378,
+        maxBitRate: 299,
+        addressVersion: 'ipv4',
+      }),
+    );
+    expect(debug).toHaveBeenNthCalledWith(
+      2,
+      JSON.stringify({
+        scope: 'homekit',
+        level: 'debug',
+        adapter: 'camera.streaming',
+        event: 'live-video-selected',
+        operation: 'reconfigure',
+        profile: 'main',
+        levelName: '3.1',
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        mtu: 1228,
+        maxBitRate: 802,
+        addressVersion: 'ipv6',
+      }),
+    );
+  });
+
+  it('reconstructs only allowlisted live-session lifecycle traces', () => {
+    const debug = vi.fn();
+
+    reportHomeKitEvent({ debug }, {
+      adapter: 'camera.streaming',
+      event: 'live-session-released',
+      release: 'requested',
+      serial: 'T8000P0000000000',
+    } as never);
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-failed',
+        outcome: 'failed',
+        reason: 'source-error',
+        stage: 'raw-transport' as never,
+      },
+    );
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-released',
+        release: 'gave-up' as never,
+      },
+    );
+    reportHomeKitEvent({ debug }, { adapter: 'camera.streaming', event: 'live-session-released' } as never);
+
+    expect(debug).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify({
+        scope: 'homekit',
+        level: 'debug',
+        adapter: 'camera.streaming',
+        event: 'live-session-released',
+        release: 'requested',
+      }),
+    );
+    expect(JSON.stringify(debug.mock.calls)).not.toContain('T8000P0000000000');
+  });
+
+  it('persists an allowlisted live video selection through the production diagnostic logger', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-live-selection-'));
+    await new GuidedDiagnostics(root).authorize('live-media', 'now');
+    const logger = createDiagnosticLogger({ debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root);
+
+    reportHomeKitEvent(logger, {
+      adapter: 'camera.streaming',
+      event: 'live-video-selected',
+      operation: 'start',
+      profile: 'high',
+      level: '4.0',
+      width: 1280,
+      height: 720,
+      fps: 30,
+      mtu: 1378,
+      addressVersion: 'ipv4',
+    });
+    reportHomeKitEvent(logger, {
+      adapter: 'camera.streaming',
+      event: 'live-session-released',
+      release: 'failed',
+    });
+    reportHomeKitEvent(logger, {
+      adapter: 'camera.streaming',
+      event: 'live-session-failed',
+      outcome: 'failed',
+      reason: 'source-error',
+      stage: 'first-source-keyframe',
+    });
+    await logger.flush?.();
+
+    const records = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: 'homekit',
+          level: 'debug',
+          adapter: 'camera.streaming',
+          event: 'live-video-selected',
+          operation: 'start',
+          profile: 'high',
+          levelName: '4.0',
+          width: 1280,
+          height: 720,
+          fps: 30,
+          mtu: 1378,
+          addressVersion: 'ipv4',
+        }),
+      ]),
+    );
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: 'homekit',
+          level: 'debug',
+          adapter: 'camera.streaming',
+          event: 'live-session-failed',
+          outcome: 'failed',
+          reason: 'source-error',
+          stage: 'first-source-keyframe',
+        }),
+      ]),
+    );
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: 'homekit',
+          level: 'debug',
+          adapter: 'camera.streaming',
+          event: 'live-session-released',
+          release: 'failed',
+        }),
+      ]),
+    );
+  });
+
+  it('keeps plugin and SDK events together in JSONL while Homebridge receives human messages', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-diagnostics-'));
+    const debug = vi.fn();
+    const warn = vi.fn();
+    await new GuidedDiagnostics(root).authorize('startup-authentication', 'now');
+    const logger = createDiagnosticLogger({ debug, error: vi.fn(), info: vi.fn(), warn }, root);
+
+    try {
+      reportRuntimeNotice(logger, 'status-publication-failed');
+      createSdkLogger(logger)!.info('[mqtt] connected');
+      await logger.flush?.();
+
+      expect(warn).toHaveBeenCalledExactlyOnceWith(
+        '[status-publication-failed] Runtime status could not be published; dashboard status may be stale.',
+      );
+      expect(debug).not.toHaveBeenCalled();
+      const logDirectory = join(root, 'logs');
+      const logPath = join(logDirectory, 'homebridge-eufy.jsonl');
+      const records = readFileSync(logPath, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      expect(records.map(({ scope }) => scope)).toEqual(['runtime-notice', 'sdk']);
+      expect(records.map(({ level }) => level)).toEqual(['warn', 'info']);
+      expect(records[1]).toMatchObject({ subsystem: 'mqtt', event: 'connection-opened' });
+      expect(records.every(({ timestamp }) => Number.isFinite(Date.parse(timestamp)))).toBe(true);
+      expect(statSync(logDirectory).mode & 0o777).toBe(0o700);
+      expect(statSync(logPath).mode & 0o777).toBe(0o600);
+
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1_000);
+      utimesSync(logPath, yesterday, yesterday);
+      createSdkLogger(logger)!.warn('[push] reconnecting');
+      await logger.flush?.();
+
+      const archived = gunzipSync(readFileSync(`${logPath}.1.gz`)).toString('utf8');
+      expect(archived).toContain('"scope":"runtime-notice"');
+      expect(statSync(`${logPath}.1.gz`).mode & 0o777).toBe(0o600);
+      expect(JSON.parse(readFileSync(logPath, 'utf8').trim())).toMatchObject({ scope: 'sdk', level: 'warn' });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('retains a discarded camera image as plugin evidence, the warning alone naming no camera', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-media-notice-'));
+    await new GuidedDiagnostics(root).authorize('startup-authentication', 'now');
+    const warn = vi.fn();
+    const logger = createDiagnosticLogger({ debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn }, root);
+
+    try {
+      reportRuntimeNotice(logger, 'camera-snapshot-cache-invalid');
+      await logger.flush?.();
+
+      expect(warn).toHaveBeenCalledExactlyOnceWith(
+        '[camera-snapshot-cache-invalid] An invalid retained camera image was removed',
+      );
+      const records = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => {
+          const { timestamp, ...rest } = JSON.parse(line) as Record<string, unknown>;
+          expect(timestamp).toEqual(expect.any(String));
+          return rest;
+        });
+      expect(records).toEqual([
+        {
+          scope: 'media-notice',
+          level: 'warn',
+          code: 'camera-snapshot-cache-invalid',
+          messageKey: 'log.snapshotCacheInvalid',
+        },
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /** A record refused by a full queue is counted, and the count reaches the file as one `records-dropped` record. */
+  it('counts records a full queue refused into one records-dropped record', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-dropped-'));
+    const logger = createDiagnosticLogger({ error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root);
+
+    try {
+      for (let index = 0; index < 20_000; index += 1) {
+        reportRuntimeNotice(logger, 'status-publication-failed');
+      }
+      await logger.flush?.();
+
+      const records = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const dropped = records.filter(({ event }) => event === 'records-dropped');
+      expect(dropped).toEqual([
+        {
+          scope: 'diagnostics',
+          level: 'warn',
+          event: 'records-dropped',
+          droppedRecords: expect.any(Number),
+          timestamp: expect.any(String),
+        },
+      ]);
+      expect(records.length - 1 + Number(dropped[0]!.droppedRecords)).toBe(20_000);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  }, 30_000);
+
+  it('reconstructs file records from allowlisted fields and excludes FFmpeg', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-diagnostics-'));
+    await new GuidedDiagnostics(root).authorize('startup-authentication', 'now');
+    const logger = createDiagnosticLogger({ error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root);
+
+    try {
+      logger.debug?.(
+        JSON.stringify({
+          scope: 'sdk',
+          level: 'warn',
+          subsystem: 'p2p',
+          event: 'connection-retrying',
+          token: 'must-not-appear',
+          serial: 'T8000P0000000000',
+        }),
+      );
+      logger.debug?.(JSON.stringify({ scope: 'unknown', level: 'error', token: 'must-not-appear' }));
+      logger.debug?.(
+        JSON.stringify({
+          scope: 'diagnostic-condition',
+          level: 'warn',
+          code: 'runtime-transport-degraded',
+          active: true,
+          reason: 'degraded',
+          capability: 'contact',
+        }),
+      );
+      logger.debug?.(
+        JSON.stringify({
+          scope: 'diagnostic-condition',
+          level: 'warn',
+          code: 'invalid-contact-observation',
+          active: true,
+          reason: 'owner-conflict',
+        }),
+      );
+      createSdkLogger(logger)!.debug('[ffmpeg] raw stderr must-not-appear');
+      await logger.flush?.();
+
+      const output = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8');
+      const records = output
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        scope: 'sdk',
+        level: 'warn',
+        subsystem: 'p2p',
+        event: 'connection-retrying',
+      });
+      expect(output).not.toContain('must-not-appear');
+      expect(output).not.toContain('T8000P0000000000');
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /** A lock code the adapter ignores is retained as its bounded number, so a support case can name it. */
+  it('records the code of an ignored lock announcement, and drops one out of range', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent(
+      { debug },
+      { adapter: 'lock.mechanism', event: 'lock-state', observation: 'ignored', code: 769 },
+    );
+    reportHomeKitEvent(
+      { debug },
+      { adapter: 'lock.mechanism', event: 'lock-state', observation: 'ignored', code: 1e9 },
+    );
+    const records = debug.mock.calls.map(([message]) => JSON.parse(message));
+    expect(records[0]).toMatchObject({ event: 'lock-state', observation: 'ignored', code: 769 });
+    expect(records[1]).not.toHaveProperty('code');
+  });
+
+  it('records which announcement moved the camera power, and refuses one it does not know', () => {
+    const debug = vi.fn();
+
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'camera-enabled-changed',
+        observation: 'valid',
+        announcedBy: 'poll',
+      },
+    );
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'camera-enabled-changed',
+        observation: 'valid',
+        announcedBy: 'write',
+      },
+    );
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'camera-enabled-changed',
+        observation: 'valid',
+        announcedBy: 'telepathy',
+      },
+    );
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'contact.sensor',
+        event: 'contact-state',
+        observation: 'valid',
+      },
+    );
+
+    const records = debug.mock.calls.map(([message]) => JSON.parse(message as string));
+    expect(
+      records.map((record) => record.announcedBy),
+      'a support case has to tell "we did this" from "the user did this in the vendor app"',
+    ).toEqual(['poll', 'write', undefined, undefined]);
+    expect(records[2], 'an unknown announcement is dropped, never passed through as fact').not.toHaveProperty(
+      'announcedBy',
+    );
+  });
+
+  /**
+   * The same field, followed to the file rather than to the reporter's sink.
+   *
+   * Every record crosses `sanitizeStructuredEvent` on its way into the log, and that rebuilds a homekit record
+   * from an allowlist rather than forwarding it — so a field the reporter adds and the allowlist does not name
+   * is dropped between the two, silently and only in the artifact a support case actually reads. Asserting on
+   * the reporter's sink cannot see that, which is how the field came to be produced by one half and discarded
+   * by the other.
+   */
+  it('keeps the announcement in the record that reaches the log file', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-announcement-'));
+    await new GuidedDiagnostics(root).authorize('control-state', 'now');
+    const logger = createDiagnosticLogger({ error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root);
+
+    try {
+      reportHomeKitEvent(logger, {
+        adapter: 'camera.controls',
+        event: 'camera-enabled-changed',
+        observation: 'valid',
+        announcedBy: 'poll',
+      });
+      reportHomeKitEvent(logger, {
+        adapter: 'camera.streaming',
+        event: 'camera-enabled-changed',
+        observation: 'valid',
+        announcedBy: 'write',
+      });
+      reportHomeKitEvent(logger, {
+        adapter: 'camera.streaming',
+        event: 'camera-enabled-changed',
+        observation: 'valid',
+        announcedBy: 'telepathy',
+      });
+      await logger.flush?.();
+
+      const records = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+
+      expect(
+        records.map((record) => record.announcedBy),
+        'the field is useless if it does not survive into the artifact a support case reads',
+      ).toEqual(['poll', 'write', undefined]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  /**
+   * The stderr tail is the only place an adaptation states its own cause, and it is also the only place this
+   * plugin's own argument list can be echoed back — the output URL carries the base64 SRTP key and salt, and
+   * the controller address is beside it. Both are therefore replaced by name before the line is kept, and the
+   * record's own vocabulary is checked rather than trusted, because it is written from process exit status and
+   * operating-system strings.
+   */
+  it('records a bounded FFmpeg failure without its arguments, keys, or addresses', () => {
+    const debug = vi.fn();
+    const srtpParameters = 'zBQPjxIWMOHTsPu1FTuxIVBWjLXPMR14pJEyRJEP';
+
+    reportAdaptationNotice(
+      { debug },
+      {
+        role: 'live-video',
+        event: 'exited-before-output',
+        code: 234,
+        signal: 'SIGSEGV',
+        stderr: [
+          "Unknown encoder 'libfdk_aac'",
+          `[out#0/rtp @ 0x55f1b2] Could not write header for output file srtp://192.0.2.10:50100?srtp_out_params=${srtpParameters}`,
+          'Error opening input file /home/synthetic/.homebridge/node_modules/ffmpeg-for-homebridge/ffmpeg',
+          'Connection to udp://[2001:db8::1]:41000 failed',
+          `srtp_out_params ${srtpParameters}`,
+          'progress=continue',
+          '   ',
+        ],
+      },
+    );
+
+    const record = JSON.parse(debug.mock.calls[0]![0] as string) as Record<string, unknown>;
+    expect(record).toMatchObject({
+      scope: 'ffmpeg',
+      level: 'warn',
+      role: 'live-video',
+      event: 'exited-before-output',
+      code: 234,
+      signal: 'SIGSEGV',
+    });
+    expect(record.stderr, 'the one line naming the cause survives, and only the material beside it goes').toEqual([
+      "Unknown encoder 'libfdk_aac'",
+      '[out#0/rtp @ 0x55f1b2] Could not write header for output file <url>',
+      'Error opening input file <path>',
+      'Connection to <url> failed',
+      'srtp_out_params <redacted>',
+    ]);
+    expect(JSON.stringify(record)).not.toContain(srtpParameters);
+    expect(JSON.stringify(record)).not.toContain('192.0.2.10');
+    expect(JSON.stringify(record)).not.toContain('2001:db8');
+  });
+
+  /**
+   * Base64 includes `/`, so replacing filesystem paths before key material splits a key into sub-runs that
+   * no length threshold catches and keeps the remainder verbatim. Measured over random 30-byte keys, roughly
+   * one line in twenty then retained an eight-character fragment. A serial is shorter than any key threshold
+   * and an SDK snapshot filename is a single path segment, so neither is caught by length or by separator.
+   */
+  it('leaves no fragment of a key or a serial in a line, whatever its shape', () => {
+    const retained = (line: string): readonly string[] => {
+      const debug = vi.fn();
+      reportAdaptationNotice({ debug }, { role: 'sdk', event: 'output', stderr: [line] });
+      const record =
+        debug.mock.calls[0] === undefined
+          ? {}
+          : (JSON.parse(debug.mock.calls[0][0] as string) as { stderr?: string[] });
+      return record.stderr ?? [];
+    };
+
+    expect(retained('Cannot open T8210N2012345678.jpg')).toEqual(['Cannot open <serial>.jpg']);
+    expect(retained('Could not open C:\\Users\\eufy\\T8000P0000000000\\snap.jpg')).toEqual(['Could not open <path>']);
+    expect(retained('Station T8010P1234567890 refused the request')).toEqual(['Station <serial> refused the request']);
+
+    const leaked = Array.from({ length: 200 }, () => randomBytes(30).toString('base64')).filter((key) =>
+      retained(`srtp_out_params ${key}`).some((kept) =>
+        kept.split(/<[a-z]+>|\s/).some((fragment) => fragment.length >= 4 && key.includes(fragment)),
+      ),
+    );
+
+    expect(leaked, 'not one fragment of any key survives, however the base64 happened to fall').toEqual([]);
+  });
+
+  /**
+   * An elapsed time and a compressed IPv6 address are both colon-separated groups of hexadecimal digits, and one
+   * retained FFmpeg line carries both: `out_time` is how long a session actually coded, and an address beside it
+   * is sensitive. Each address form here is redacted whole, leaving no group of one behind, and the clock, the
+   * timecode, and the stream index beside them are kept as FFmpeg stated them.
+   */
+  it('redacts every written form of an address while keeping an FFmpeg clock whole', () => {
+    const retained = (line: string): readonly string[] => {
+      const debug = vi.fn();
+      reportAdaptationNotice({ debug }, { role: 'sdk', event: 'output', stderr: [line] });
+      const record =
+        debug.mock.calls[0] === undefined
+          ? {}
+          : (JSON.parse(debug.mock.calls[0][0] as string) as { stderr?: string[] });
+      return record.stderr ?? [];
+    };
+
+    expect(retained('out_time=00:00:02.944000')).toEqual(['out_time=00:00:02.944000']);
+    expect(retained('frame= 74 time=10:59:59.94 speed=0.999x')).toEqual(['frame= 74 time=10:59:59.94 speed=0.999x']);
+    expect(retained('Duration: 00:00:00.04, start: 0.000000')).toEqual(['Duration: 00:00:00.04, start: 0.000000']);
+    expect(retained('timecode: 01:02:03:04')).toEqual(['timecode: 01:02:03:04']);
+    expect(retained('Stream #0:1: Audio: aac (LC), 16000 Hz')).toEqual(['Stream #0:1: Audio: aac (LC), 16000 Hz']);
+
+    for (const address of [
+      '2001:db8:85a3:0:0:8a2e:370:7334',
+      '2001:0db8:85a3:0000:0000:8a2e:0370:7334',
+      '1234:5678:9012:3456:7890:1234:5678:9012',
+      '2001:db8::1',
+      '2001:db8::1:2:3',
+      'fe80::1',
+      'fe80::',
+      '2001:db8:2::',
+      '::1',
+      '::ffff:c0a8:101',
+    ]) {
+      expect(retained(`Connection to ${address} failed`), `${address} is an address, whatever its form`).toEqual([
+        'Connection to <address> failed',
+      ]);
+    }
+
+    for (const embedded of ['2001:db8:0:0:0:0:192.0.2.10', '::ffff:192.0.2.10']) {
+      expect(retained(`Connection to ${embedded} failed`), 'an embedded IPv4 quad leaves no group beside it').toEqual([
+        'Connection to <address>:<address> failed',
+      ]);
+    }
+
+    expect(
+      retained('out_time=00:00:02.944000 peer 2001:db8::1'),
+      'one line carries both, and each is treated as what it is',
+    ).toEqual(['out_time=00:00:02.944000 peer <address>']);
+
+    const group = (): string => Math.floor(Math.random() * 65536).toString(16);
+    const quad = (): string => Array.from({ length: 4 }, () => Math.floor(Math.random() * 256)).join('.');
+    const written = (): readonly string[] => {
+      const groups = Array.from({ length: 8 }, group);
+      const compressed = 1 + Math.floor(Math.random() * 6);
+      return [
+        groups.join(':'),
+        groups.map((each) => each.padStart(4, '0')).join(':'),
+        groups.join(':').toUpperCase(),
+        `${groups.slice(0, compressed).join(':')}::${groups.slice(compressed + 2).join(':')}`,
+        `${groups.slice(0, compressed).join(':')}::`,
+        `::${groups.slice(compressed).join(':')}`,
+        `${groups.slice(0, 6).join(':')}:${quad()}`,
+        `${groups.slice(0, compressed).join(':')}::${quad()}`,
+      ];
+    };
+
+    const leaked = Array.from({ length: 200 }, written)
+      .flat()
+      .filter(
+        (address) => !/^peer (?:<address>[:.]?)+ unreachable$/.test(retained(`peer ${address} unreachable`)[0] ?? ''),
+      );
+
+    expect(leaked, 'no group of any address survives, in any form it can be written').toEqual([]);
+  });
+
+  it('drops an FFmpeg record whose role, event, exit status, or signal it cannot name', () => {
+    const debug = vi.fn();
+
+    reportAdaptationNotice({ debug }, { role: 'invented-role', event: 'exited-before-output' });
+    reportAdaptationNotice({ debug }, { role: 'live-video', event: 'invented-event' });
+    reportAdaptationNotice({ debug }, { role: 'sdk', event: 'output', code: -7, signal: 'SIGINVENTED' });
+    reportAdaptationNotice({ debug }, { role: 'recording', event: 'spawn-failed' });
+
+    expect(debug).toHaveBeenCalledTimes(2);
+    expect(
+      JSON.parse(debug.mock.calls[0]![0] as string),
+      'an exit status and a signal outside the bounded sets are dropped, never passed through',
+    ).toEqual({ scope: 'ffmpeg', level: 'debug', role: 'sdk', event: 'output' });
+    expect(JSON.parse(debug.mock.calls[1]![0] as string)).toEqual({
+      scope: 'ffmpeg',
+      level: 'warn',
+      role: 'recording',
+      event: 'spawn-failed',
+    });
+  });
+
+  /**
+   * The SDK runs FFmpeg of its own for snapshot decoding, and its stderr was dropped on the way in. That is
+   * the same class of evidence as the plugin's own adaptation output, and it is kept only while a profile
+   * declaring FFmpeg output is authorized — a profile that does not declare it still keeps nothing.
+   */
+  it('keeps the SDK\u2019s own FFmpeg output as ffmpeg-log evidence only where a profile declares it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-diagnostics-'));
+    await new GuidedDiagnostics(root).authorize('live-media', 'now');
+    const logger = createDiagnosticLogger({ error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root);
+
+    try {
+      createSdkLogger(logger)!.debug("[ffmpeg] Unknown decoder 'h264_synthetic'");
+      createSdkLogger(logger)!.debug('[ffmpeg] failed on srtp://192.0.2.10:50100?srtp_out_params=must-not-appear');
+      await logger.flush?.();
+
+      const records = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+      expect(records).toHaveLength(2);
+      expect(records[0]).toMatchObject({
+        scope: 'ffmpeg',
+        level: 'debug',
+        role: 'sdk',
+        event: 'output',
+        stderr: ["Unknown decoder 'h264_synthetic'"],
+      });
+      expect(records[1]).toMatchObject({ stderr: ['failed on <url>'] });
+      expect(readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8')).not.toContain('must-not-appear');
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+});

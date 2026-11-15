@@ -1,0 +1,222 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-19T00:00:00Z",
+  "title": "Design System: Homebridge Eufy",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Lagoon Teal",
+        "canonical": "#00bfc4",
+        "tonalRamp": [
+          "oklch(25% 0.06 196)",
+          "oklch(35% 0.08 196)",
+          "oklch(48% 0.1 196)",
+          "oklch(60% 0.12 196)",
+          "oklch(72% 0.13 196)",
+          "oklch(82% 0.1 196)",
+          "oklch(90% 0.06 196)",
+          "oklch(96% 0.03 196)"
+        ]
+      },
+      "accent-ink": { "role": "primary", "displayName": "Deep Lagoon", "canonical": "#006f73" },
+      "on-accent": { "role": "primary", "displayName": "Lagoon Shadow", "canonical": "#07383a" },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Slate Ink",
+        "canonical": "var(--bs-body-color, #182033)",
+        "tonalRamp": [
+          "oklch(15% 0.03 264)",
+          "oklch(25% 0.03 264)",
+          "oklch(37% 0.03 264)",
+          "oklch(50% 0.025 264)",
+          "oklch(62% 0.02 264)",
+          "oklch(74% 0.015 264)",
+          "oklch(86% 0.01 264)",
+          "oklch(95% 0.005 264)"
+        ]
+      },
+      "muted": { "role": "neutral", "displayName": "Slate Mist", "canonical": "var(--bs-secondary-color, #667085)" },
+      "panel": { "role": "neutral", "displayName": "Paper Panel", "canonical": "#ffffff" },
+      "line": { "role": "neutral", "displayName": "Hairline" },
+      "line-strong": { "role": "neutral", "displayName": "Firm Hairline" },
+      "tile-bg": { "role": "neutral", "displayName": "Catalogue Ground", "canonical": "#edf2f7" },
+      "tile-ink": { "role": "neutral", "displayName": "Tile Ink" },
+      "tile-muted": { "role": "neutral", "displayName": "Tile Mist" },
+      "tile-scene-ink": { "role": "neutral", "displayName": "Scene Ink" },
+      "tile-scene-muted": { "role": "neutral", "displayName": "Scene Mist" },
+      "ok": { "role": "tertiary", "displayName": "Signal Green" },
+      "alert": { "role": "tertiary", "displayName": "Amber Watch" },
+      "fault": { "role": "tertiary", "displayName": "Ember Fault" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "The page title in the masthead." },
+      "headline": { "displayName": "Headline", "purpose": "Panel, dialog, and callout titles." },
+      "title": { "displayName": "Title", "purpose": "Device name on a tile, one line with an ellipsis." },
+      "summary": { "displayName": "Summary", "purpose": "Lead sentence under a panel title, in supporting ink." },
+      "body": { "displayName": "Body", "purpose": "Default copy." },
+      "label": { "displayName": "Label", "purpose": "Field labels, tooltips, segmented options." },
+      "eyebrow": { "displayName": "Eyebrow", "purpose": "Uppercase kicker above a title." }
+    },
+    "shadows": [
+      {
+        "name": "overlay",
+        "value": "0 0 0 1px rgb(23 32 44 / 6%), 0 4px 12px rgb(23 32 44 / 10%)",
+        "purpose": "Tooltips and the blocking dialog; in dark mode 0 0 0 1px rgb(255 255 255 / 9%)."
+      },
+      {
+        "name": "toggle-knob",
+        "value": "0 1px 2px rgb(0 0 0 / 22%)",
+        "purpose": "The toggle knob's physical position. Documented exception."
+      },
+      {
+        "name": "badge-halo",
+        "value": "drop-shadow(0 1px 2px rgb(4 8 14 / 85%))",
+        "purpose": "Unplated battery glyph over unknown artwork. Documented exception."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.23, 1, 0.32, 1)",
+        "purpose": "The only easing; 140-150ms state transitions, 100ms press."
+      }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "420px" },
+      { "name": "single-column", "value": "520px" },
+      { "name": "stacked-transfer", "value": "540px" },
+      { "name": "two-column", "value": "760px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The default button: full width, filled accent, 44px.",
+      "html": "<button class=\"ds-btn-primary\">Continue</button>",
+      "css": ".ds-btn-primary { width: 100%; min-height: 44px; border: 0; border-radius: 8px; background: #00bfc4; color: #07383a; font: 600 14px/1.5 ui-sans-serif, system-ui, sans-serif; cursor: pointer; transition: background 150ms cubic-bezier(0.23,1,0.32,1), transform 100ms cubic-bezier(0.23,1,0.32,1); } .ds-btn-primary:hover { background: color-mix(in srgb, #00bfc4 88%, #07383a); } .ds-btn-primary:active { transform: scale(0.97); } .ds-btn-primary:focus-visible { outline: 2px solid #006f73; outline-offset: 2px; } .ds-btn-primary:disabled { background: color-mix(in srgb, #00bfc4 28%, #fff); color: color-mix(in srgb, #07383a 60%, #fff); cursor: not-allowed; }"
+    },
+    {
+      "name": "Icon Action",
+      "kind": "button",
+      "refersTo": "button-icon",
+      "description": "40px square action with a tooltip from its label and an attention state.",
+      "html": "<button class=\"ds-icon-action\" aria-label=\"Diagnostics\" data-attention><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"currentColor\"><path d=\"M20 8h-2.81a5.985 5.985 0 0 0-1.82-1.96L17 4.41 15.59 3l-2.17 2.17a6.002 6.002 0 0 0-2.83 0L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z\"/></svg></button>",
+      "css": ".ds-icon-action { position: relative; display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid rgb(23 32 44 / 19%); border-radius: 8px; background: #fff; color: #182033; padding: 0; cursor: pointer; transition: background 150ms cubic-bezier(0.23,1,0.32,1); } .ds-icon-action svg { opacity: 0.72; } .ds-icon-action:hover { background: color-mix(in srgb, #00bfc4 9%, #fff); } .ds-icon-action:focus-visible { outline: 2px solid #006f73; outline-offset: 2px; } .ds-icon-action[data-attention] { border-color: #d99a21; box-shadow: 0 0 0 2px color-mix(in srgb, #d99a21 24%, transparent); } .ds-icon-action[data-attention]::before { content: ''; position: absolute; top: -5px; right: -5px; width: 8px; height: 8px; border: 2px solid #fff; border-radius: 50%; background: #d99a21; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "44px field with a firm hairline; accent edge on focus.",
+      "html": "<label class=\"ds-field\">Email<input class=\"ds-input\" type=\"email\" placeholder=\"name@example.com\"></label>",
+      "css": ".ds-field { display: grid; gap: 8px; color: #667085; font: 500 12px/1.25 ui-sans-serif, system-ui, sans-serif; } .ds-input { width: 100%; min-height: 44px; border: 1px solid rgb(23 32 44 / 19%); border-radius: 8px; background: #fff; color: #182033; padding: 8px 12px; font: 400 14px/1.5 ui-sans-serif, system-ui, sans-serif; } .ds-input:focus-visible { border-color: #00bfc4; outline: 2px solid #006f73; outline-offset: 2px; }"
+    },
+    {
+      "name": "Toggle",
+      "kind": "input",
+      "description": "36x20 pill switch; accent when on.",
+      "html": "<label class=\"ds-toggle\"><input type=\"checkbox\" checked><span>Expose to HomeKit</span></label>",
+      "css": ".ds-toggle { display: grid; grid-template-columns: 40px 1fr; align-items: center; gap: 4px; color: #667085; font: 400 11px/1.5 ui-sans-serif, system-ui, sans-serif; cursor: pointer; } .ds-toggle input { appearance: none; position: relative; width: 36px; height: 20px; margin: 0; border: 1px solid rgb(23 32 44 / 19%); border-radius: 999px; background: color-mix(in srgb, #667085 28%, #fff); transition: background 140ms cubic-bezier(0.23,1,0.32,1), border-color 140ms cubic-bezier(0.23,1,0.32,1); } .ds-toggle input::before { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 22%); transition: transform 140ms cubic-bezier(0.23,1,0.32,1); } .ds-toggle input:checked { border-color: #00bfc4; background: #00bfc4; } .ds-toggle input:checked::before { transform: translateX(16px); } .ds-toggle input:focus-visible { outline: 2px solid #006f73; outline-offset: 2px; }"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "chip",
+      "refersTo": "segmented-control-selected",
+      "description": "Three equal segments in one frame; the checked one fills with accent.",
+      "html": "<div class=\"ds-segments\"><label><input type=\"radio\" name=\"s\" checked><span>Fast</span></label><label><input type=\"radio\" name=\"s\"><span>Balanced</span></label><label><input type=\"radio\" name=\"s\"><span>Fresh</span></label></div>",
+      "css": ".ds-segments { display: grid; grid-template-columns: repeat(3, 1fr); overflow: hidden; border: 1px solid rgb(23 32 44 / 19%); border-radius: 8px; background: #fff; font-family: ui-sans-serif, system-ui, sans-serif; } .ds-segments label { position: relative; color: #667085; cursor: pointer; } .ds-segments label + label { border-left: 1px solid rgb(23 32 44 / 11%); } .ds-segments input { position: absolute; opacity: 0; width: 1px; height: 1px; } .ds-segments span { display: block; padding: 8px 4px; font-size: 10px; font-weight: 600; text-align: center; transition: background 150ms cubic-bezier(0.23,1,0.32,1); } .ds-segments input:checked + span { background: #00bfc4; color: #07383a; } .ds-segments input:focus-visible + span { outline: 2px solid #006f73; outline-offset: -2px; }"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "status-chip",
+      "description": "Pill on accent-soft with accent-ink tabular text.",
+      "html": "<span class=\"ds-status\">Step 2 of 3</span>",
+      "css": ".ds-status { display: inline-block; border-radius: 999px; background: color-mix(in srgb, #00bfc4 12%, #fff); color: #006f73; padding: 4px 8px; font: 600 11px/1.5 ui-sans-serif, system-ui, sans-serif; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Steps",
+      "kind": "nav",
+      "description": "Three-step progress; the current step's rule and label take the accent.",
+      "html": "<ol class=\"ds-steps\"><li><span>1</span>Account</li><li class=\"current\"><span>2</span>Verify</li><li><span>3</span>Done</li></ol>",
+      "css": ".ds-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0; padding: 0; list-style: none; font-family: ui-sans-serif, system-ui, sans-serif; } .ds-steps li { display: grid; gap: 4px; border-top: 3px solid rgb(23 32 44 / 11%); padding-top: 8px; color: #667085; font-size: 11px; text-align: center; text-transform: uppercase; } .ds-steps li.current { border-color: #00bfc4; color: #006f73; } .ds-steps span { font-size: 10px; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Device Tile",
+      "kind": "card",
+      "refersTo": "device-tile",
+      "description": "The catalogue entry: product ground, bottom gradient, name and status with a dot.",
+      "html": "<article class=\"ds-tile\"><span class=\"ds-tile-badge\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"#17202c\"><path d=\"M7 20h10V6H7z\"/></svg></span><div class=\"ds-tile-copy\"><h3>Front Door</h3><p><i></i>Live</p></div></article>",
+      "css": ".ds-tile { position: relative; display: flex; flex-direction: column; justify-content: flex-end; width: 220px; aspect-ratio: 1; overflow: hidden; border: 1px solid rgb(23 32 44 / 11%); border-radius: 12px; background: #edf2f7; padding: 16px; font-family: ui-sans-serif, system-ui, sans-serif; transition: border-color 150ms cubic-bezier(0.23,1,0.32,1); } .ds-tile::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to bottom, transparent 40%, rgb(237 242 247 / 94%) 100%); } .ds-tile:hover { border-color: color-mix(in srgb, #00bfc4 45%, rgb(23 32 44 / 19%)); } .ds-tile-badge { position: absolute; z-index: 2; top: 12px; right: 12px; display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid rgb(23 32 44 / 28%); border-radius: 999px; background: rgb(255 255 255 / 78%); } .ds-tile-copy { position: relative; z-index: 2; color: #17202c; } .ds-tile-copy h3 { margin: 0 0 2px; font-size: 17px; font-weight: 600; line-height: 1.2; letter-spacing: -0.01em; } .ds-tile-copy p { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; line-height: 1.25; color: color-mix(in srgb, #1a7f4b 75%, #17202c); } .ds-tile-copy i { width: 8px; height: 8px; border-radius: 999px; background: #1a7f4b; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Device Catalogue",
+    "overview": "The interface is a catalogue of the household's devices. On the dashboard each device is a tile, and each tile shows either a packaged product photograph, desaturated and inset on a flat ground, or the camera's own last frame filling the tile. Everything else steps back so those images carry the page: one teal accent, a neutral panel, hairline edges, and the host's system font. The UI is a guest inside Homebridge's settings page. It keeps a transparent body, follows the host's light or dark theme, and inherits `--bs-body-color` so its text levels move with the host.\n\nControls are tactile and confident. Every primary target is 44px tall, the primary button is filled with the accent, a press scales it to 0.97, and every state can be read without color: an attention dot beside the alert ring, a word beside the capture icon, a dot beside a status label. The sheet holds itself to written scales and treats any value off them as a defect: spacing on a 4px grid, five radius tokens, four text levels, two edge intensities, one easing curve, and one overlay shadow.\n\nThe layout is a single column of at most 720px, sized for the Homebridge settings modal. It reflows from a three-column device grid to two columns, then to a stack of 2:1 tiles on a phone.",
+    "keyCharacteristics": [
+      "Device imagery leads; the chrome is neutral and edge-drawn.",
+      "One accent (teal `#00bfc4`), reserved for primary action, selection, and current position.",
+      "Depth comes from borders. A shadow appears only on a layer floating over content it doesn't belong to.",
+      "44px targets, a filled accent, and a 0.97 press scale.",
+      "Inherits the host theme; light and dark are first-class.",
+      "No state rests on color alone."
+    ],
+    "rules": [
+      {
+        "name": "The One Voice Rule",
+        "body": "Teal is the only hue that acts. Status colors report state and never decorate, and no second brand hue exists.",
+        "section": "colors"
+      },
+      {
+        "name": "The Mixed, Not Stated Rule",
+        "body": "Derived levels (`ink-secondary`, `ink-disabled`, `accent-soft`, hover and disabled fills) are `color-mix()` against the panel, and they are redeclared in the dark block so they resolve against the dark panel.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two Grounds Rule",
+        "body": "Copy over a product cutout takes the tile's ink. Copy over a camera frame takes the scene ink, whatever the theme.",
+        "section": "colors"
+      },
+      {
+        "name": "The Four Weights Rule",
+        "body": "400 body, 500 label, 600 emphasis, 700 heading. No other weight appears.",
+        "section": "typography"
+      },
+      {
+        "name": "The Four Levels Rule",
+        "body": "Text uses exactly four levels: ink, supporting, muted, disabled. Never invent a fifth gray.",
+        "section": "typography"
+      },
+      {
+        "name": "The Depth Is Edges Rule",
+        "body": "A border carries structure; only a floating layer carries a shadow. A new shadow needs a stated reason in the sheet.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Radius Is a Token Rule",
+        "body": "No rule states a radius as a literal; every radius is one of `rounded.sm`, `control`, `card`, `panel`, or `pill`.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do take every spacing value from the 4px grid, and every radius, edge, text level, and easing from its token.",
+      "Do let device imagery carry the dashboard; keep chrome on `panel`, `line`, and the four text levels.",
+      "Do pair every colored state with a non-color signal (dot, word, ring, or stripe).",
+      "Do make primary targets 44px and icon actions 40px.",
+      "Do redeclare any `color-mix()` token in the dark block when you add one.",
+      "Do put a new interactive state in the consolidated state block near the end of `app.css`, in cascade order.",
+      "Do use `tile-scene-ink` for copy over a camera frame in both themes."
+    ],
+    "donts": [
+      "Don't introduce a second accent hue. The live preview's red play hover (`#e53935`) and its red-tinted current-device highlight are known drift to bring back to teal.",
+      "Don't write literal radii or undefined variables. The wizard map and wizard card use `12px`, `6px`, `14px`, and `var(--border, rgb(128 128 128 / 30%))`, and should use `rounded.*` and `line`.",
+      "Don't add a shadow to a resting surface; use an edge.",
+      "Don't add a fifth text gray or a weight outside 400/500/600/700.",
+      "Don't set a body background. The host page shows through.",
+      "Don't contain or desaturate a camera frame the way a product cutout is treated."
+    ]
+  }
+}

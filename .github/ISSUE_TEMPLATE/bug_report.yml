@@ -24,16 +24,16 @@ body:
   - type: checkboxes
     id: preflight
     attributes:
-      label: Preflight Checklist
+      label: Checks you have done (tick only what is true)
       options:
         - label: I have searched the [existing issues](https://github.com/homebridge-plugins/homebridge-eufy/issues) and this bug has not been reported before.
-          required: true
+          required: false
         - label: I understand **V4 is no longer maintained**, and that a fix will only ever land in V5.
-          required: true
+          required: false
         - label: I am using a **dedicated guest admin account** (not my main Eufy account).
-          required: true
+          required: false
         - label: I have restarted Homebridge and the issue persists.
-          required: true
+          required: false
 
   - type: textarea
     id: environment
@@ -77,8 +77,8 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics Archive
-      description: "Open the plugin settings, select the device that is misbehaving, click **Run diagnostics**, and follow it through. Drag the `homebridge-eufy-<case-id>.eufysupport.gz` file it gives you into this box. It is encrypted, nothing was uploaded, and it does not contain your serial numbers, addresses or login details."
-      placeholder: "Drag the .eufysupport.gz file here..."
+      description: "In the plugin settings, click the Diagnostics (bug) icon on the dashboard and finish a capture. Then find the `homebridge-eufy-support-....eufysupport.gz` file in your Downloads folder, drag it into this box, and wait until its name appears before submitting. The file is encrypted; the plugin never uploads it."
+      placeholder: "Drag the .eufysupport.gz file here. Typing text instead leaves the report on hold."
     validations:
       required: true
 
@@ -86,7 +86,7 @@ body:
     id: description
     attributes:
       label: What happened?
-      description: Describe the bug, what you expected, and how to reproduce it. Screenshots help. Do not attach logs, config files or Homebridge backups — they hold your passwords, and they are removed on sight.
+      description: Describe the bug, what you expected, and how to reproduce it. Attach logs or screenshots if possible.
       placeholder: |
         **What happened:**
         Describe the issue...

@@ -1,0 +1,3248 @@
+import { EventEmitter } from 'node:events';
+import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PassThrough, Writable } from 'node:stream';
+
+import type {
+  LiveAudioFrame,
+  LiveStreamConsumer,
+  LiveVideoConfig,
+  LiveVideoFrame,
+  StreamBudgetNotice,
+  TalkbackCodec,
+  TalkbackHandle,
+} from '@mega-yfue/eufy-sdk';
+import { LiveStreamStartError } from '@mega-yfue/eufy-sdk';
+import { StationKeyUnavailableError, StationUnreachableError } from '@mega-yfue/eufy-sdk';
+import bundledFfmpegPath from 'ffmpeg-for-homebridge';
+import { describe, expect, it, vi } from 'vitest';
+
+import type {
+  AdaptationNotice,
+  LiveSessionOutcome,
+  NegotiatedLiveAudio,
+  NegotiatedLiveVideo,
+  TalkbackOutcome,
+  LiveVideoSettings,
+} from '../../src/media/contracts.js';
+import {
+  FfmpegLiveMedia,
+  resolveFfmpegIdentity,
+  SMALL_VIDEO_PACKET_SIZE,
+  type EncoderHost,
+  type MediaProcess,
+  type QualificationRun,
+} from '../../src/media/live-stream.js';
+import { startLivePreview } from '../../src/media/live-preview.js';
+import { StallingAdaptationInput } from './stalling-adaptation-input.js';
+
+const NEGOTIATED_VIDEO: NegotiatedLiveVideo = {
+  width: 1280,
+  height: 720,
+  fps: 30,
+  maxBitRate: 300,
+  profile: 'main',
+  level: '3.1',
+  payloadType: 99,
+  ssrc: 1234,
+  mtu: 1200,
+  rtcpInterval: 0.5,
+};
+
+/** The AudioSpecificConfig the SDK attaches to AAC-ELD: ER AAC-ELD, 16 kHz, mono, 480 samples per frame, no LD-SBR. */
+const ELD_CONFIG = Buffer.from([0xf8, 0xf0, 0x30, 0x00]);
+
+const AAC_ELD_16: NegotiatedLiveAudio = {
+  codec: 'AAC-eld',
+  channels: 1,
+  sampleRate: 16,
+  maxBitRate: 24,
+  payloadType: 110,
+  ssrc: 5678,
+};
+
+const KEYFRAME = {
+  codec: 'h264' as const,
+  width: 1280,
+  height: 720,
+  keyframe: true,
+  data: Buffer.from([0, 0, 0, 1, 0x65]),
+};
+
+class SyntheticLiveStream extends EventEmitter implements LiveStreamConsumer {
+  awaitingKeyframe = false;
+  /** Frames the source is holding, handed over in order once it is released, as a paused consumer does. */
+  private readonly queued: Array<() => void> = [];
+  private paused = false;
+  /** The coded configuration last announced, so a change is announced once rather than per frame. */
+  private config?: LiveVideoConfig;
+
+  readonly pause = vi.fn(() => {
+    this.paused = true;
+  });
+
+  readonly resume = vi.fn(() => {
+    this.paused = false;
+    while (this.queued.length > 0 && !this.paused) {
+      this.queued.shift()!();
+    }
+  });
+
+  start(): this {
+    return this;
+  }
+
+  stop = vi.fn();
+
+  /**
+   * Deliver one frame, announcing its coded configuration first where that has changed.
+   *
+   * The announcement travels WITH the frame and is compared at delivery, as the real consumer does: it
+   * resolves the configuration when a frame arrives, carries it on the queued item, and announces inside the
+   * single hand-over every path traverses. Deciding at enqueue time instead would let a held backlog lose an
+   * announcement, and would let `resume` stop between an announcement and the frame it precedes — an
+   * interleaving the real consumer cannot produce.
+   *
+   * `announced` defaults to the frame's own header because these frames carry no real parameter sets, which
+   * is the SDK's documented fallback. Passing it explicitly models the case that matters: the SDK reads the
+   * configuration from the parameter sets, so it can differ from the header a station reported, and a
+   * session must follow the announcement rather than the report.
+   */
+  video(frame: LiveVideoFrame, announced?: LiveVideoConfig): void {
+    const config = announced ?? { codec: frame.codec, width: frame.width, height: frame.height };
+    this.deliver(() => {
+      if (
+        this.config === undefined ||
+        this.config.codec !== config.codec ||
+        this.config.width !== config.width ||
+        this.config.height !== config.height
+      ) {
+        this.config = config;
+        this.emit('video-config', config);
+      }
+      this.emit('video', frame);
+    });
+  }
+
+  audio(frame: LiveAudioFrame): void {
+    this.deliver(() => this.emit('audio', frame));
+  }
+
+  /** Whether the source is currently held, which is the transition each side of this contract observes. */
+  get flow(): 'held' | 'flowing' {
+    return this.paused ? 'held' : 'flowing';
+  }
+
+  private deliver(emit: () => void): void {
+    if (this.paused) {
+      this.queued.push(emit);
+      return;
+    }
+    emit();
+  }
+}
+
+type SyntheticProcess = MediaProcess & { emit(event: string, ...args: unknown[]): boolean; readonly input: Buffer[] };
+
+/**
+ * The options one adaptation process applies to its input, which is everything before `-i`. FFmpeg reads
+ * the same option name on either side of the input, so an input contract has to be judged on this slice
+ * rather than on the whole argument list.
+ */
+function inputOptions(args: readonly string[]): string[] {
+  return args.slice(0, args.indexOf('-i'));
+}
+
+/** The FLV file header an audio-only stream opens with: signature, version 1, audio flag, size 9, no tag before. */
+const FLV_AUDIO_FILE_HEADER = Buffer.from([
+  0x46, 0x4c, 0x56, 0x01, 0x04, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00,
+]);
+
+/**
+ * The tags of an FLV byte stream after its 13-byte file header, each as its tag type, body, timestamp, stream id,
+ * and whether the size that closes it matches the tag.
+ */
+function flvTags(stream: Buffer) {
+  const tags: Array<{ type: number; body: Buffer; timestamp: number; streamId: number; closed: boolean }> = [];
+  let offset = 13;
+  while (offset + 11 <= stream.length) {
+    const size = stream.readUIntBE(offset + 1, 3);
+    tags.push({
+      type: stream[offset]!,
+      body: stream.subarray(offset + 11, offset + 11 + size),
+      timestamp: stream.readUIntBE(offset + 4, 3) | (stream[offset + 7]! << 24),
+      streamId: stream.readUIntBE(offset + 8, 3),
+      closed: stream.readUInt32BE(offset + 11 + size) === 11 + size,
+    });
+    offset += 11 + size + 4;
+  }
+  return tags;
+}
+
+/** One adaptation process whose input is observable as `input`, whichever kind of sink it was given. */
+function process(stdin?: StallingAdaptationInput): SyntheticProcess {
+  const events = new EventEmitter();
+  const sink = stdin ?? new PassThrough();
+  const input = stdin ? stdin.written : [];
+  if (sink instanceof PassThrough) {
+    sink.on('data', (chunk: Buffer) => input.push(Buffer.from(chunk)));
+  }
+  return {
+    stdin: sink,
+    stderr: new PassThrough(),
+    input,
+    on: events.on.bind(events),
+    emit: events.emit.bind(events),
+    kill: vi.fn(() => true),
+  };
+}
+
+type SyntheticReturnAudioProcess = SyntheticProcess & { stdout: PassThrough; eld: PassThrough };
+
+function returnAudioProcess(): SyntheticReturnAudioProcess {
+  const child = process() as SyntheticReturnAudioProcess;
+  child.stdout = new PassThrough();
+  child.eld = new PassThrough();
+  return child;
+}
+
+/** An FLV byte stream carrying `config` and then each access unit, built from the FLV tag layout. */
+function flvStream(config: Buffer, units: Buffer[]): Buffer {
+  const tag = (body: Buffer): Buffer => {
+    const header = Buffer.alloc(11);
+    header[0] = 8;
+    header.writeUIntBE(body.length, 1, 3);
+    const size = Buffer.alloc(4);
+    size.writeUInt32BE(11 + body.length);
+    return Buffer.concat([header, body, size]);
+  };
+  return Buffer.concat([
+    Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x04, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00]),
+    tag(Buffer.concat([Buffer.from([0xaf, 0x00]), config])),
+    ...units.map((unit) => tag(Buffer.concat([Buffer.from([0xaf, 0x01]), unit]))),
+  ]);
+}
+
+const ELD_TALKBACK_CONFIG = Buffer.from('f8f0212c00bc00', 'hex');
+
+class SyntheticTalkback extends EventEmitter implements TalkbackHandle {
+  readonly written: Buffer[] = [];
+  readonly sink: PassThrough;
+  readonly stop = vi.fn(async () => {
+    this.emit('stop');
+  });
+  readonly pending = 0;
+
+  constructor(readonly codec: TalkbackCodec = 'aac-lc') {
+    super();
+    this.sink = codec === 'aac-eld' ? new PassThrough({ objectMode: true, highWaterMark: 4 }) : new PassThrough();
+    this.sink.on('data', (chunk: Buffer) => this.written.push(Buffer.from(chunk)));
+  }
+
+  write(chunk: Buffer): void {
+    this.sink.write(chunk);
+  }
+
+  writable(): PassThrough {
+    return this.sink;
+  }
+
+  end(): void {
+    this.sink.end();
+  }
+
+  budget(notice: StreamBudgetNotice): void {
+    this.emit('budget', notice);
+  }
+
+  fail(): void {
+    this.emit('error', new Error('synthetic talkback failure'));
+  }
+}
+
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < 8; turn += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+/** One live session with controller return audio and every isolated talkback resource exposed. */
+async function talkbackSession(talkback: () => Promise<TalkbackHandle>) {
+  const stream = new SyntheticLiveStream();
+  const children: SyntheticProcess[] = [];
+  const returned: SyntheticReturnAudioProcess[] = [];
+  const spawned: string[][] = [];
+  const returnedArgs: string[][] = [];
+  const ports: Array<{ port: number; onMessage: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }> = [];
+  const talkbackOutcomes: TalkbackOutcome[] = [];
+  const onVideoFailure = vi.fn();
+  const notices: AdaptationNotice[] = [];
+  const media = new FfmpegLiveMedia(
+    '/synthetic/ffmpeg',
+    { report: (notice) => notices.push(notice) },
+    (_executable, args) => {
+      const child = process();
+      children.push(child);
+      spawned.push([...args]);
+      return child;
+    },
+    async () => {
+      const port = { port: 41000 + ports.length, onMessage: vi.fn(), close: vi.fn(async () => undefined) };
+      ports.push(port);
+      return port;
+    },
+    (_executable, args) => {
+      const child = returnAudioProcess();
+      returned.push(child);
+      returnedArgs.push([...args]);
+      return child;
+    },
+  );
+  const prepared = await media.prepare({
+    addressVersion: 'ipv4',
+    targetAddress: '192.0.2.10',
+    video: {
+      port: 50100,
+      srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+      srtpKey: Buffer.alloc(16),
+      srtpSalt: Buffer.alloc(14),
+    },
+    audio: {
+      port: 50101,
+      srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+      srtpKey: Buffer.alloc(16),
+      srtpSalt: Buffer.alloc(14),
+    },
+    onVideoFailure,
+    onTalkbackOutcome: (outcome) => talkbackOutcomes.push(outcome),
+  });
+  await prepared.start({ live: async () => stream, talkback }, { video: NEGOTIATED_VIDEO, audio: AAC_ELD_16 });
+  return {
+    prepared,
+    stream,
+    children,
+    spawned,
+    returned,
+    returnedArgs,
+    ports,
+    talkbackOutcomes,
+    onVideoFailure,
+    notices,
+  };
+}
+
+/**
+ * One prepared session that records every adaptation process, the arguments it was given, and every
+ * reported outcome. `audio` negotiates the second output so the audio adaptation contracts share this setup.
+ */
+async function liveSession(
+  source?: { live(options?: { signal?: AbortSignal }): Promise<LiveStreamConsumer> },
+  {
+    audio,
+    stalling,
+    video = NEGOTIATED_VIDEO,
+  }: { audio?: NegotiatedLiveAudio; stalling?: boolean; video?: NegotiatedLiveVideo } = {},
+) {
+  const stream = new SyntheticLiveStream();
+  const onVideoFailure = vi.fn();
+  const outcomes: LiveSessionOutcome[] = [];
+  const released = vi.fn();
+  const children: SyntheticProcess[] = [];
+  const inputs: StallingAdaptationInput[] = [];
+  const spawned: string[][] = [];
+  const notices: AdaptationNotice[] = [];
+  let receiverReport: (() => void) | undefined;
+  const media = new FfmpegLiveMedia(
+    '/synthetic/ffmpeg',
+    { report: (notice) => notices.push(notice) },
+    (_executable, args) => {
+      const stalls = stalling ? new StallingAdaptationInput() : undefined;
+      if (stalls) {
+        inputs.push(stalls);
+      }
+      const child = process(stalls);
+      children.push(child);
+      spawned.push([...args]);
+      return child;
+    },
+    async () => ({
+      port: 41000,
+      onMessage: (listener) => {
+        receiverReport = listener;
+      },
+      close: vi.fn(),
+    }),
+  );
+  const prepared = await media.prepare({
+    addressVersion: 'ipv4',
+    targetAddress: '192.0.2.10',
+    video: {
+      port: 50100,
+      srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+      srtpKey: Buffer.alloc(16),
+      srtpSalt: Buffer.alloc(14),
+    },
+    ...(audio
+      ? {
+          audio: {
+            port: 50101,
+            srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80' as const,
+            srtpKey: Buffer.alloc(16),
+            srtpSalt: Buffer.alloc(14),
+          },
+        }
+      : {}),
+    onVideoFailure,
+    onSessionOutcome: (outcome) => outcomes.push(outcome),
+    onSessionReleased: released,
+  });
+  return {
+    prepared,
+    stream,
+    children,
+    inputs,
+    spawned,
+    onVideoFailure,
+    outcomes,
+    released,
+    notices,
+    start: (): Promise<void> =>
+      prepared.start(source ?? { live: async () => stream }, { video, ...(audio ? { audio } : {}) }),
+    receiverReport: (): void => receiverReport?.(),
+  };
+}
+
+describe('live media adaptation', () => {
+  it('holds the SDK source instead of buffering for an adaptation that stopped reading', async () => {
+    const session = await liveSession(undefined, { stalling: true });
+    await session.start();
+
+    session.stream.video(KEYFRAME);
+    const input = session.inputs[0]!;
+    input.stall();
+    for (let frame = 0; frame < 200; frame += 1) {
+      session.stream.video({ ...KEYFRAME, keyframe: false, data: Buffer.alloc(4096, frame & 0xff) });
+    }
+
+    expect(session.stream.flow).toBe('held');
+    expect(session.stream.pause).toHaveBeenCalledOnce();
+    expect(input.written).toHaveLength(2);
+
+    input.release();
+    await settle();
+
+    expect(session.stream.flow).toBe('flowing');
+    expect(session.stream.resume).toHaveBeenCalledOnce();
+    session.prepared.stop();
+  });
+
+  it('keeps the source held while a second adaptation is the one that cannot keep up', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16, stalling: true });
+    await session.start();
+
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac-lc', data: Buffer.alloc(64, 0x11) });
+    const [video, audio] = [session.inputs[0]!, session.inputs[1]!];
+    video.stall();
+    audio.stall();
+
+    session.stream.video({ ...KEYFRAME, keyframe: false });
+    expect(session.stream.flow).toBe('held');
+    session.stream.audio({ codec: 'aac-lc', data: Buffer.alloc(64, 0x22) });
+    expect(audio.written).toHaveLength(1);
+
+    video.release();
+    await settle();
+
+    expect(audio.written).toHaveLength(2);
+    expect(session.stream.flow).toBe('held');
+
+    audio.release();
+    await settle();
+    expect(session.stream.flow).toBe('flowing');
+    session.prepared.stop();
+  });
+
+  it('releases a source held by an audio adaptation that exited while its input was full', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16, stalling: true });
+    await session.start();
+
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac-lc', data: Buffer.alloc(64, 0x11) });
+    session.inputs[1]!.stall();
+    session.stream.audio({ codec: 'aac-lc', data: Buffer.alloc(64, 0x22) });
+    expect(session.stream.flow).toBe('held');
+
+    session.children[1]!.emit('exit', 0, null);
+    await settle();
+
+    expect(session.stream.flow).toBe('flowing');
+    expect(session.onVideoFailure).not.toHaveBeenCalled();
+    session.prepared.stop();
+  });
+
+  it('does not hold the SDK source while its adaptations keep up', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac-lc', data: Buffer.alloc(64, 0x11) });
+    session.stream.video({ ...KEYFRAME, keyframe: false });
+    await settle();
+
+    expect(session.stream.pause).not.toHaveBeenCalled();
+    expect(session.stream.resume).not.toHaveBeenCalled();
+    session.prepared.stop();
+  });
+
+  it('starts adaptation for a first keyframe delivered after the SDK warm-up window', async () => {
+    vi.useFakeTimers();
+    const session = await liveSession();
+    await session.start();
+
+    await vi.advanceTimersByTimeAsync(22_000);
+
+    expect(session.onVideoFailure).not.toHaveBeenCalled();
+    expect(session.stream.stop).not.toHaveBeenCalled();
+    expect(session.children).toHaveLength(0);
+
+    session.stream.video(KEYFRAME);
+    session.children[0]!.stderr.push('progress=continue\n');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(session.children).toHaveLength(1);
+    expect(session.onVideoFailure).not.toHaveBeenCalled();
+    expect(session.outcomes).toEqual([{ outcome: 'streaming' }]);
+    session.prepared.stop();
+    expect(session.released).toHaveBeenCalledExactlyOnceWith('requested', expect.objectContaining({ reports: 0 }));
+    vi.useRealTimers();
+  });
+
+  /**
+   * A session stopped while its source was still being acquired reaches no adaptation and reports no outcome,
+   * so its release is the only record that it existed at all, and it names the acquisition it never got past.
+   */
+  it('reports the release of a session stopped while its source was still being acquired', async () => {
+    const session = await liveSession({
+      live: (options) =>
+        new Promise<never>((_, reject) =>
+          options?.signal?.addEventListener('abort', () => reject(options.signal!.reason)),
+        ),
+    });
+    const starting = session.start();
+
+    session.prepared.stop();
+
+    await expect(starting).rejects.toThrow('live media session stopped');
+    expect(session.outcomes).toEqual([]);
+    expect(session.children).toHaveLength(0);
+    expect(session.released).toHaveBeenCalledExactlyOnceWith(
+      'requested',
+      expect.objectContaining({ reports: 0 }),
+      'sdk-source-acquisition',
+    );
+  });
+
+  it('fails a session on the SDK warm-up error before the video backstop', async () => {
+    vi.useFakeTimers();
+    const session = await liveSession();
+    await session.start();
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    session.stream.emit('error', new Error('synthetic warm-up failure'));
+
+    expect(session.onVideoFailure).toHaveBeenCalledOnce();
+    expect(session.stream.stop).toHaveBeenCalledOnce();
+    expect(session.outcomes).toEqual([{ outcome: 'failed', reason: 'source-error', stage: 'first-source-keyframe' }]);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(session.onVideoFailure).toHaveBeenCalledOnce();
+    expect(session.outcomes).toHaveLength(1);
+    vi.useRealTimers();
+  });
+
+  it('names a source that answered with audio and never a video frame apart from any other source error', async () => {
+    vi.useFakeTimers();
+    const session = await liveSession();
+    await session.start();
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    session.stream.emit(
+      'error',
+      new LiveStreamStartError({ reason: 'warm-timeout', stage: 'audio-only', timeoutMs: 20_000, attempts: 10 }),
+    );
+
+    expect(session.onVideoFailure).toHaveBeenCalledOnce();
+    expect(session.stream.stop).toHaveBeenCalledOnce();
+    expect(session.outcomes).toEqual([
+      {
+        outcome: 'failed',
+        reason: 'source-audio-only',
+        stage: 'first-source-keyframe',
+        sourceStage: 'audio-only',
+        sourceReason: 'warm-timeout',
+      },
+    ]);
+    vi.useRealTimers();
+  });
+
+  /**
+   * An SDK warm-up failure is reported with the SDK's own stage and reason, and at the first source keyframe
+   * even where a keyframe the source replayed had already reached the adaptation.
+   */
+  it('reports an SDK warm-up failure with the stage and reason the SDK gave', async () => {
+    vi.useFakeTimers();
+    const session = await liveSession();
+    await session.start();
+    session.stream.video(KEYFRAME);
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    session.stream.emit(
+      'error',
+      new LiveStreamStartError({
+        reason: 'warm-timeout',
+        stage: 'awaiting-keyframe',
+        timeoutMs: 20_000,
+        attempts: 10,
+      }),
+    );
+
+    expect(session.outcomes).toEqual([
+      {
+        outcome: 'failed',
+        reason: 'source-warm-timeout',
+        stage: 'first-source-keyframe',
+        sourceStage: 'awaiting-keyframe',
+        sourceReason: 'warm-timeout',
+      },
+    ]);
+    vi.useRealTimers();
+  });
+
+  it('names an audio-only start that failed the source acquisition itself', async () => {
+    const failure = new LiveStreamStartError({
+      reason: 'source-ended',
+      stage: 'audio-only',
+      timeoutMs: 20_000,
+      attempts: 3,
+    });
+    const session = await liveSession({
+      live: async () => {
+        throw failure;
+      },
+    });
+
+    await expect(session.start()).rejects.toBe(failure);
+
+    expect(session.outcomes).toEqual([
+      {
+        outcome: 'failed',
+        reason: 'source-audio-only',
+        stage: 'sdk-source-acquisition',
+        sourceStage: 'audio-only',
+        sourceReason: 'source-ended',
+      },
+    ]);
+  });
+
+  it('bounds a silent source at the video backstop and reports the bounded reason', async () => {
+    vi.useFakeTimers();
+    const session = await liveSession();
+    await session.start();
+
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(session.onVideoFailure).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(session.onVideoFailure).toHaveBeenCalledOnce();
+    expect(session.stream.stop).toHaveBeenCalledOnce();
+    expect(session.outcomes).toEqual([
+      { outcome: 'failed', reason: 'no-video-within-backstop', stage: 'first-source-keyframe' },
+    ]);
+    vi.useRealTimers();
+  });
+
+  it('arms the initial RTCP grace from first adaptation progress rather than session start', async () => {
+    vi.useFakeTimers();
+    const session = await liveSession();
+    await session.start();
+
+    await vi.advanceTimersByTimeAsync(25_000);
+    session.stream.video(KEYFRAME);
+    session.children[0]!.stderr.push('progress=continue\n');
+    await vi.advanceTimersByTimeAsync(14_999);
+
+    expect(session.outcomes).toEqual([{ outcome: 'streaming' }]);
+    expect(session.onVideoFailure).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(session.onVideoFailure).toHaveBeenCalledOnce();
+    expect(session.stream.stop).toHaveBeenCalledOnce();
+    expect(session.outcomes).toEqual([
+      { outcome: 'streaming' },
+      { outcome: 'failed', reason: 'no-controller-rtcp', stage: 'controller-rtcp' },
+    ]);
+    vi.useRealTimers();
+  });
+
+  /**
+   * `FFmpeg exited with code: 234`, five reporters and two hours of troubleshooting is what one shared reason
+   * costs. A binary that never started names the path; one that exited before producing anything names the
+   * build's encoders, arguments or format; one that exited after it had been streaming names a run that was
+   * working. The three have different fixes, so they are reported apart, and the process's own stderr tail is
+   * reported with them because it states which of the three it actually was.
+   */
+  it('tells an adaptation that never started from one that exited before its first output', async () => {
+    const spawnFailed = await liveSession();
+    await spawnFailed.start();
+    spawnFailed.stream.video(KEYFRAME);
+    spawnFailed.children[0]!.emit('error', new Error('spawn /synthetic/ffmpeg ENOENT'));
+    await settle();
+
+    expect(spawnFailed.outcomes).toEqual([
+      { outcome: 'failed', reason: 'adaptation-spawn-failed', stage: 'first-adapted-output' },
+    ]);
+    expect(spawnFailed.notices).toEqual([
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+      { role: 'live-video', event: 'spawn-failed' },
+    ]);
+
+    const exited = await liveSession();
+    await exited.start();
+    exited.stream.video(KEYFRAME);
+    exited.children[0]!.stderr.push("Unknown encoder 'libx264'\n");
+    await settle();
+    exited.children[0]!.emit('exit', 234, null);
+    await settle();
+
+    expect(exited.outcomes).toEqual([
+      { outcome: 'failed', reason: 'adaptation-exited-before-output', stage: 'first-adapted-output' },
+    ]);
+    expect(exited.notices).toEqual([
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+      { role: 'live-video', event: 'exited-before-output', code: 234, stderr: ["Unknown encoder 'libx264'"] },
+    ]);
+  });
+
+  it('tells an adaptation that stopped mid-session from one that never produced output', async () => {
+    const session = await liveSession();
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.children[0]!.stderr.push('progress=continue\n');
+    await settle();
+    session.children[0]!.emit('exit', null, 'SIGSEGV');
+    await settle();
+
+    expect(session.outcomes).toEqual([
+      { outcome: 'streaming' },
+      { outcome: 'failed', reason: 'adaptation-exited-while-streaming', stage: 'first-adapted-output' },
+    ]);
+    expect(session.notices).toEqual([
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+      { role: 'live-video', event: 'exited-while-streaming', signal: 'SIGSEGV' },
+    ]);
+  });
+
+  /**
+   * `-progress pipe:2` writes its block on a timer whether or not media reaches the process, so retaining
+   * everything on that pipe would leave the tail holding nothing but progress by the time anything went
+   * wrong. Only the diagnostic lines are kept, bounded, and a line still waiting for its terminator is not
+   * one of them.
+   */
+  it('retains only the last diagnostic lines of an adaptation, never its progress block', async () => {
+    const session = await liveSession();
+    await session.start();
+    session.stream.video(KEYFRAME);
+    for (let index = 0; index < 12; index += 1) {
+      session.children[0]!.stderr.push(`diagnostic line ${index}\nprogress=continue\nframe=${index}\n`);
+    }
+    session.children[0]!.stderr.push('a line with no terminator yet');
+    await settle();
+    session.children[0]!.emit('exit', 1, null);
+    await settle();
+
+    expect(session.notices).toEqual([
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+      {
+        role: 'live-video',
+        event: 'exited-while-streaming',
+        code: 1,
+        stderr: [
+          'diagnostic line 8',
+          'frame=8',
+          'diagnostic line 9',
+          'frame=9',
+          'diagnostic line 10',
+          'frame=10',
+          'diagnostic line 11',
+          'frame=11',
+        ],
+      },
+    ]);
+  });
+
+  it('reports an audio adaptation that stopped without failing the video it runs beside', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac', data: Buffer.alloc(4) });
+    await settle();
+    session.children[1]!.stderr.push("Unknown encoder 'libfdk_aac'\n");
+    await settle();
+    session.children[1]!.emit('exit', 1, null);
+    await settle();
+
+    expect(session.outcomes, 'a silent camera is not a broken one, so audio never fails the session').toEqual([]);
+    expect(session.onVideoFailure).not.toHaveBeenCalled();
+    expect(session.notices).toEqual([
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+      { role: 'live-audio', event: 'started' },
+      {
+        role: 'live-audio',
+        event: 'exited-before-output',
+        code: 1,
+        stderr: ["Unknown encoder 'libfdk_aac'"],
+      },
+    ]);
+  });
+
+  it('does not restart an audio adaptation that exited before any output for the rest of the session', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac', data: Buffer.alloc(4) });
+    await settle();
+    session.children[1]!.emit('exit', 183, null);
+    await settle();
+
+    session.stream.audio({ codec: 'aac', data: Buffer.alloc(4) });
+    session.stream.video(KEYFRAME);
+    await settle();
+
+    expect(session.children, 'a broken audio input respawned FFmpeg on every frame').toHaveLength(2);
+    expect(session.onVideoFailure).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A live adaptation that stops accepting the frames it is still being given has ended what it was serving,
+   * and says so on the pipe rather than in an exit status. It is reported in its own right, because it carries
+   * no exit status of its own and the exit that follows is the one this session then asked for.
+   */
+  it('reports a live adaptation that stops accepting the media the source is still producing', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac', data: Buffer.alloc(4) });
+    await settle();
+    session.children[0]!.stderr.push('progress=continue\nav_interleaved_write_frame(): Broken pipe\n');
+    session.children[1]!.stderr.push('Audio encoding failed\n');
+    await settle();
+
+    session.children[1]!.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    session.children[0]!.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    await settle();
+
+    expect(session.outcomes).toEqual([
+      { outcome: 'streaming' },
+      { outcome: 'failed', reason: 'adaptation-failed', stage: 'first-adapted-output' },
+    ]);
+    expect(session.notices).toEqual([
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+      { role: 'live-audio', event: 'started' },
+      { role: 'live-audio', event: 'input-failed', stderr: ['Audio encoding failed'] },
+      { role: 'live-video', event: 'input-failed', stderr: ['av_interleaved_write_frame(): Broken pipe'] },
+    ]);
+  });
+
+  /**
+   * An adaptation this session stopped on purpose is not one that refused media: a codec change replaces the
+   * audio process, and the input it destroys can raise on a write already in flight.
+   */
+  it('does not report an input this session deliberately destroyed as one that stopped accepting media', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac', data: Buffer.alloc(4) });
+    await settle();
+    const replaced = session.children[1]!;
+    session.stream.audio({ codec: 'opus', data: Buffer.alloc(4) });
+    await settle();
+
+    replaced.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    await settle();
+
+    expect(session.notices).toEqual([
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+      { role: 'live-audio', event: 'started' },
+      { role: 'live-audio', event: 'started' },
+    ]);
+  });
+
+  /**
+   * An audio adaptation whose exit has already been reported is accounted for by that exit, so the input error
+   * a write still in flight raises afterwards adds no second account of the same death. Only the audio process
+   * this session is currently writing to can be one that stopped accepting media.
+   */
+  it('does not report an input error behind an audio exit already accounted for', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac', data: Buffer.alloc(4) });
+    await settle();
+    session.children[1]!.stderr.push('Audio encoding failed\n');
+    await settle();
+    session.children[1]!.emit('exit', 1, null);
+    await settle();
+
+    session.children[1]!.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    await settle();
+
+    expect(session.notices).toEqual([
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+      { role: 'live-audio', event: 'started' },
+      { role: 'live-audio', event: 'exited-before-output', code: 1, stderr: ['Audio encoding failed'] },
+    ]);
+  });
+
+  /**
+   * A profile that declares FFmpeg output has to receive some for a session that worked, not only for one
+   * that failed: an unwatchable live view is a working session whose adaptation warned its way through it.
+   * A process that ended as the session intended is therefore reported for what it wrote, with no reason
+   * raised against the camera, and a process that wrote nothing is not reported at all.
+   */
+  it('reports what a deliberately stopped adaptation wrote, without failing the session for it', async () => {
+    const noisy = await liveSession();
+    await noisy.start();
+    noisy.stream.video(KEYFRAME);
+    noisy.children[0]!.stderr.push('progress=continue\nPast duration 0.799995 too large\n');
+    await settle();
+    noisy.prepared.stop();
+    noisy.children[0]!.emit('exit', 0, 'SIGTERM');
+    await settle();
+
+    expect(noisy.outcomes, 'a stopped session is not a failed one').toEqual([{ outcome: 'streaming' }]);
+    expect(noisy.onVideoFailure).not.toHaveBeenCalled();
+    expect(noisy.notices).toEqual([
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+      { role: 'live-video', event: 'output', code: 0, signal: 'SIGTERM', stderr: ['Past duration 0.799995 too large'] },
+    ]);
+
+    const silent = await liveSession();
+    await silent.start();
+    silent.stream.video(KEYFRAME);
+    silent.children[0]!.stderr.push('progress=continue\n');
+    await settle();
+    silent.prepared.stop();
+    silent.children[0]!.emit('exit', 0, 'SIGTERM');
+    await settle();
+
+    expect(silent.notices, 'a process that said nothing has nothing to attribute beyond having started').toEqual([
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+    ]);
+  });
+
+  it('does not let an early receiver report bound a session before its media starts', async () => {
+    vi.useFakeTimers();
+    const session = await liveSession();
+    await session.start();
+    session.receiverReport();
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(session.onVideoFailure).not.toHaveBeenCalled();
+    expect(session.outcomes).toEqual([]);
+
+    session.stream.video(KEYFRAME);
+    session.children[0]!.stderr.push('progress=continue\n');
+    await vi.advanceTimersByTimeAsync(4_999);
+
+    expect(session.outcomes).toEqual([{ outcome: 'streaming' }]);
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(session.outcomes).toEqual([
+      { outcome: 'streaming' },
+      { outcome: 'failed', reason: 'rtcp-timeout', stage: 'controller-rtcp' },
+    ]);
+    vi.useRealTimers();
+  });
+
+  it('reports an upstream source end apart from a source failure', async () => {
+    vi.useFakeTimers();
+    const session = await liveSession();
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.children[0]!.stderr.push('progress=continue\n');
+    session.stream.emit('stop');
+
+    expect(session.outcomes).toEqual([
+      { outcome: 'streaming' },
+      { outcome: 'failed', reason: 'source-stopped', stage: 'first-adapted-output' },
+    ]);
+    expect(session.onVideoFailure).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  /**
+   * Every adapted input of one session is read on one clock: when its media arrived.
+   *
+   * A pipe carries no timeline, so arrival is the only timeline available, and two outputs of one session can
+   * be presented together only while both resolve to it. The rule is stated over every input format rather
+   * than per argument list, so no single stream can be read on a clock of its own.
+   */
+  it('reads every adapted input on the arrival clock', async () => {
+    const video = await liveSession();
+    await video.start();
+    video.stream.video(KEYFRAME);
+    video.stream.video({ ...KEYFRAME, codec: 'h265', keyframe: true, data: Buffer.from([0, 0, 0, 1, 0x26]) });
+    const aac = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await aac.start();
+    aac.stream.audio({ codec: 'aac-lc', data: Buffer.from([0xff, 0xf1, 1]) });
+    const alaw = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await alaw.start();
+    alaw.stream.audio({ codec: 'g711a', data: Buffer.from([1, 2, 3]) });
+
+    const inputs = [...video.spawned, ...aac.spawned, ...alaw.spawned].map(inputOptions);
+    expect(inputs).toHaveLength(4);
+    for (const options of inputs) {
+      expect(options).toEqual(expect.arrayContaining(['-use_wallclock_as_timestamps', '1']));
+    }
+    video.prepared.stop();
+    aac.prepared.stop();
+    alaw.prepared.stop();
+  });
+
+  /**
+   * A live audio output is resolved against the clock its input is read on, and resolves an excess by
+   * discarding it.
+   *
+   * An encoder advances its output timeline by the samples in each coded frame it is handed, whatever
+   * timestamp arrived with them, so the arrival stamp alone moves only where that timeline starts. The
+   * resampler is what bounds the output to real time however much content a source hands over at once, and it
+   * belongs on every audio input format rather than one.
+   */
+  it.each(['aac-lc', 'g711a'] as const)('resolves a live %s output against arrival', async (codec) => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+    session.stream.audio({ codec, data: Buffer.from([0xff, 0xf1, 1]) });
+
+    expect(session.spawned[0]!).toEqual(expect.arrayContaining(['-af', 'aresample=async=1']));
+    session.prepared.stop();
+  });
+
+  /**
+   * Measured at this seam with a discarding input option reinstated: time to first coded frame grew from
+   * 0.5s to 8.7s as the source keyframe interval grew from 15 to 250 frames, while 50 of 300 fed access units
+   * reached the coded output. One option on one input caused all of it, so the rule is stated over every
+   * adapted input rather than pinned as one argument list.
+   */
+  it('never asks any adapted input to discard what it analysed or to invent a timeline', async () => {
+    const video = await liveSession();
+    await video.start();
+    video.stream.video(KEYFRAME);
+    video.stream.video({ ...KEYFRAME, codec: 'h265', keyframe: true, data: Buffer.from([0, 0, 0, 1, 0x26]) });
+    const audio = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await audio.start();
+    audio.stream.audio({ codec: 'aac-lc', data: Buffer.from([0xff, 0xf1]) });
+    const alaw = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await alaw.start();
+    alaw.stream.audio({ codec: 'g711a', data: Buffer.from([0xd5]) });
+
+    const inputs = [...video.spawned, ...audio.spawned, ...alaw.spawned].map(inputOptions);
+    expect(inputs).toHaveLength(4);
+    for (const options of inputs) {
+      expect(options).toEqual(expect.arrayContaining(['-probesize', '32', '-analyzeduration', '1']));
+      for (const forbidden of ['nobuffer', 'discardcorrupt', 'genpts', 'gendts', 'igndts']) {
+        expect(options.join(' ')).not.toContain(forbidden);
+      }
+    }
+    video.prepared.stop();
+    audio.prepared.stop();
+    alaw.prepared.stop();
+  });
+
+  /**
+   * Every access unit a session accepts has to reach the process that codes it, byte for byte and in order.
+   * The count is the only thing that catches a whole group of pictures being lost silently: a session that
+   * drops frames still starts, still reports progress, and still produces a coded stream. Its `started` record
+   * names the source codec, so a support archive tells a copied stream from a converted one.
+   */
+  it.each(['h264', 'h265'] as const)(
+    'writes every %s access unit it accepts to the adaptation, in order and unaltered',
+    async (codec) => {
+      const session = await liveSession();
+      await session.start();
+      const gop = [
+        { ...KEYFRAME, codec, data: Buffer.from([0, 0, 0, 1, codec === 'h265' ? 0x26 : 0x65]) },
+        ...Array.from({ length: 249 }, (_, index) => ({
+          ...KEYFRAME,
+          codec,
+          keyframe: false,
+          data: Buffer.from([0, 0, 0, 1, codec === 'h265' ? 0x02 : 0x41, index >> 8, index & 0xff]),
+        })),
+      ];
+      for (const frame of gop) {
+        session.stream.video(frame);
+      }
+
+      expect(session.children).toHaveLength(1);
+      expect(session.spawned[0]![session.spawned[0]!.indexOf('-f') + 1]).toBe(codec === 'h265' ? 'hevc' : 'h264');
+      expect(session.notices[0], 'the started record names the source codec').toMatchObject({ source: codec });
+      expect(Buffer.concat(session.children[0]!.input)).toEqual(Buffer.concat(gop.map(({ data }) => data)));
+      session.prepared.stop();
+    },
+  );
+
+  /**
+   * A camera ramps its source up and down a resolution ladder, and it does so in the first seconds of a
+   * session: measured on the fleet, a mains-powered camera announced four geometries within 3.9 s of the
+   * pull opening, having delivered a decodable keyframe at 525 ms. Replacing the adaptation on each one cost
+   * four process lifetimes and four waits for the next keyframe before any video reached the controller.
+   *
+   * It is also unnecessary. One adaptation codes every rung: measured through this plugin's own bundled
+   * FFmpeg with the argument list below, a stream changing 1280x720 -> 640x360 delivered 60 of 60 frames,
+   * the reverse 60 of 60, and 640 -> 1280 -> 640 delivered 90 of 90, with no warning and a continuous
+   * output at the negotiated geometry. The decoder reinitialises on the new parameter sets and the scale
+   * filter follows it, which is what the teardown was standing in for.
+   *
+   * The geometry is not in the argument list at all — the output geometry is HomeKit's selection — so a
+   * rebuild here spawned a byte-identical command.
+   */
+  it('keeps one adaptation across every rung of a source resolution ladder', async () => {
+    const session = await liveSession();
+    await session.start();
+    const ladder = [
+      KEYFRAME,
+      { ...KEYFRAME, width: 640, height: 360, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x41, 1]) },
+      { ...KEYFRAME, width: 640, height: 360, data: Buffer.from([0, 0, 0, 1, 0x65, 2]) },
+      { ...KEYFRAME, width: 1920, height: 1080, data: Buffer.from([0, 0, 0, 1, 0x65, 3]) },
+      { ...KEYFRAME, width: 1920, height: 1080, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x41, 4]) },
+    ];
+    for (const frame of ladder) {
+      session.stream.video(frame);
+    }
+
+    expect(session.children).toHaveLength(1);
+    expect(Buffer.concat(session.children[0]!.input)).toEqual(Buffer.concat(ladder.map(({ data }) => data)));
+    session.prepared.stop();
+  });
+
+  /**
+   * A codec change is the one source change an adaptation cannot absorb: its input format is fixed at spawn,
+   * so an H.265 access unit fed to a process opened for H.264 fails to parse. Measured the same way — the
+   * mixed stream decoded only the frames before the change and reported `Invalid data found when processing
+   * input` for the rest — so here the process is replaced, and the units between the change and the keyframe
+   * a replacement can start from are withheld.
+   */
+  it('withholds only the access units no adaptation can code across a source codec change', async () => {
+    const session = await liveSession();
+    await session.start();
+    const h264 = [KEYFRAME, { ...KEYFRAME, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x41, 1]) }];
+    const withheld = [
+      { ...KEYFRAME, codec: 'h265' as const, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x02, 2]) },
+      { ...KEYFRAME, codec: 'h265' as const, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x02, 3]) },
+    ];
+    const h265 = [
+      { ...KEYFRAME, codec: 'h265' as const, data: Buffer.from([0, 0, 0, 1, 0x26, 4]) },
+      { ...KEYFRAME, codec: 'h265' as const, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x02, 5]) },
+    ];
+    for (const frame of [...h264, ...withheld, ...h265]) {
+      session.stream.video(frame);
+    }
+
+    expect(session.children).toHaveLength(2);
+    expect(Buffer.concat(session.children[0]!.input)).toEqual(Buffer.concat(h264.map(({ data }) => data)));
+    expect(Buffer.concat(session.children[1]!.input)).toEqual(Buffer.concat(h265.map(({ data }) => data)));
+    expect(session.spawned[1]![session.spawned[1]!.indexOf('-f') + 1]).toBe('hevc');
+    session.prepared.stop();
+  });
+
+  /**
+   * The SDK announces the coded configuration — read from the parameter sets in force — and a frame header
+   * is the station's report of it. This session follows the announcement, so a codec the header does not
+   * show still replaces the adaptation, whose input format was fixed at spawn.
+   */
+  it('replaces the adaptation on an announced codec the frame headers do not show', async () => {
+    const session = await liveSession();
+    await session.start();
+    const first = [KEYFRAME, { ...KEYFRAME, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x41, 1]) }];
+    const announcedH265 = { codec: 'h265' as const, width: 1280, height: 720 };
+    const second = [
+      { ...KEYFRAME, data: Buffer.from([0, 0, 0, 1, 0x65, 2]) },
+      { ...KEYFRAME, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x41, 3]) },
+    ];
+    for (const frame of first) {
+      session.stream.video(frame);
+    }
+    for (const frame of second) {
+      session.stream.video(frame, announcedH265);
+    }
+
+    expect(session.children).toHaveLength(2);
+    expect(Buffer.concat(session.children[0]!.input)).toEqual(Buffer.concat(first.map(({ data }) => data)));
+    expect(Buffer.concat(session.children[1]!.input)).toEqual(Buffer.concat(second.map(({ data }) => data)));
+    expect(session.spawned[1]![session.spawned[1]!.indexOf('-f') + 1]).toBe('hevc');
+    session.prepared.stop();
+  });
+
+  /**
+   * A session opens its adaptation on the configuration in force when the first keyframe arrives, so
+   * announcements made before then have nothing to replace and must not schedule a replacement.
+   *
+   * A cold source announces from each frame's own header until its parameter sets state a geometry, and a
+   * camera's ladder ramps during exactly that window, so several announcements before the first keyframe is
+   * the ordinary case rather than an edge.
+   */
+  it('opens one adaptation despite configurations announced before any keyframe', async () => {
+    const session = await liveSession();
+    await session.start();
+    const ramp = [
+      { ...KEYFRAME, width: 640, height: 360, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x41, 1]) },
+      { ...KEYFRAME, width: 960, height: 540, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x41, 2]) },
+    ];
+    const coded = [
+      KEYFRAME,
+      { ...KEYFRAME, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x41, 3]) },
+      { ...KEYFRAME, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x41, 4]) },
+    ];
+    for (const frame of [...ramp, ...coded]) {
+      session.stream.video(frame);
+    }
+
+    expect(session.children).toHaveLength(1);
+    expect(Buffer.concat(session.children[0]!.input)).toEqual(Buffer.concat(coded.map(({ data }) => data)));
+    session.prepared.stop();
+  });
+
+  /**
+   * A codec that moves away and back before any keyframe leaves the running adaptation still able to code
+   * what follows, so it is kept. Counting announcements rather than comparing them replaced it here, for a
+   * codec it was already opened for.
+   *
+   * The units announced under the foreign codec stay withheld: that process cannot parse them, which is the
+   * whole reason a codec change withholds at all.
+   */
+  it('keeps one adaptation when an announced codec reverts before a keyframe', async () => {
+    const session = await liveSession();
+    await session.start();
+    const opened = { codec: 'h264' as const, width: 1280, height: 720 };
+    const away = { codec: 'h265' as const, width: 1280, height: 720 };
+    const first = KEYFRAME;
+    const foreign = { ...KEYFRAME, codec: 'h265' as const, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x02, 1]) };
+    const resumed = [
+      { ...KEYFRAME, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x41, 2]) },
+      { ...KEYFRAME, data: Buffer.from([0, 0, 0, 1, 0x65, 3]) },
+    ];
+    session.stream.video(first, opened);
+    session.stream.video(foreign, away);
+    for (const frame of resumed) {
+      session.stream.video(frame, opened);
+    }
+
+    expect(session.children).toHaveLength(1);
+    expect(Buffer.concat(session.children[0]!.input)).toEqual(
+      Buffer.concat([first, ...resumed].map(({ data }) => data)),
+    );
+    session.prepared.stop();
+  });
+
+  /**
+   * A session replaces its adaptation for input the running process cannot code at most three times, and
+   * fails as `source-input-unstable` rather than replace it a fourth. A source alternating between two inputs
+   * asks for a replacement at every keyframe, which produces no watchable output and reports `streaming`
+   * throughout, because each short-lived process reports its own progress.
+   *
+   * Only the source's own changes count against the bound. A HomeKit reconfiguration also replaces the
+   * process, and the controller bounds how often it asks.
+   */
+  it('bounds how often one session replaces its adaptation for changed source input', async () => {
+    const session = await liveSession();
+    await session.start();
+    const alternating = (index: number): LiveVideoFrame =>
+      index % 2 === 0
+        ? { ...KEYFRAME, data: Buffer.from([0, 0, 0, 1, 0x65, index]) }
+        : { ...KEYFRAME, codec: 'h265' as const, data: Buffer.from([0, 0, 0, 1, 0x26, index]) };
+
+    session.stream.video(alternating(0));
+    session.children[0]!.stderr.push('progress=continue\n');
+    await settle();
+    for (let index = 1; index <= 4; index += 1) {
+      session.stream.video(alternating(index));
+    }
+    await settle();
+
+    expect(session.children).toHaveLength(4);
+    expect(session.outcomes).toEqual([
+      { outcome: 'streaming' },
+      { outcome: 'failed', reason: 'source-input-unstable', stage: 'first-adapted-output' },
+    ]);
+    expect(session.onVideoFailure).toHaveBeenCalledOnce();
+    expect(session.stream.stop).toHaveBeenCalledOnce();
+    expect(
+      session.released,
+      'a session that ended itself is not a session a controller closed, and a controller shows the same thing either way',
+    ).toHaveBeenCalledExactlyOnceWith('failed', expect.objectContaining({ reports: 0 }));
+    expect(session.children.at(-1)!.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  /** A configured video packet size caps the negotiated one and never raises it. */
+  it('caps the video packet size at the configured size', async () => {
+    for (const [mtu, expected] of [
+      [1378, 1128],
+      [600, 600],
+    ] as const) {
+      const stream = new SyntheticLiveStream();
+      const spawned: string[][] = [];
+      const media = new FfmpegLiveMedia(
+        '/synthetic/ffmpeg',
+        undefined,
+        (_executable: string, args: readonly string[]) => {
+          spawned.push([...args]);
+          return process();
+        },
+        async () => ({ port: 41000, onMessage: vi.fn(), close: vi.fn() }),
+        undefined,
+        SMALL_VIDEO_PACKET_SIZE,
+      );
+      const prepared = await media.prepare({
+        addressVersion: 'ipv4',
+        targetAddress: '192.0.2.10',
+        video: {
+          port: 50100,
+          srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+          srtpKey: Buffer.alloc(16, 1),
+          srtpSalt: Buffer.alloc(14, 2),
+        },
+      });
+      await prepared.start({ live: async () => stream }, { video: { ...NEGOTIATED_VIDEO, mtu } });
+      stream.video({ codec: 'h264', width: 1280, height: 720, keyframe: true, data: Buffer.from([0, 0, 0, 1, 0x65]) });
+
+      expect(spawned[0], String(mtu)).toContain(`srtp://192.0.2.10:50100?rtcpport=50100&pkt_size=${expected}`);
+      prepared.stop();
+    }
+  });
+
+  /**
+   * With pass-through on, an H.264 source is copied with no encoder in the process, onto the negotiated RTP
+   * output; an H.265 source is still transcoded.
+   */
+  it('copies H.264 and transcodes H.265 when pass-through is on', async () => {
+    for (const [codec, copied] of [
+      ['h264', true],
+      ['h265', false],
+    ] as const) {
+      const stream = new SyntheticLiveStream();
+      const spawned: string[][] = [];
+      const media = new FfmpegLiveMedia(
+        '/synthetic/ffmpeg',
+        undefined,
+        (_executable: string, args: readonly string[]) => {
+          spawned.push([...args]);
+          return process();
+        },
+        async () => ({ port: 41000, onMessage: vi.fn(), close: vi.fn() }),
+        undefined,
+        undefined,
+        true,
+      );
+      const prepared = await media.prepare({
+        addressVersion: 'ipv4',
+        targetAddress: '192.0.2.10',
+        video: {
+          port: 50100,
+          srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+          srtpKey: Buffer.alloc(16, 1),
+          srtpSalt: Buffer.alloc(14, 2),
+        },
+      });
+      await prepared.start({ live: async () => stream }, { video: NEGOTIATED_VIDEO });
+      stream.video({ codec, width: 1280, height: 720, keyframe: true, data: Buffer.from([0, 0, 0, 1, 0x65]) });
+
+      const args = spawned[0]!;
+      expect(args[args.indexOf('-c:v') + 1], codec).toBe(copied ? 'copy' : 'libx264');
+      expect(args, codec).toContain(`srtp://192.0.2.10:50100?rtcpport=50100&pkt_size=${NEGOTIATED_VIDEO.mtu}`);
+      prepared.stop();
+    }
+  });
+
+  /** Ignoring the negotiated bit rate codes at a constant quality, with no rate control left in the arguments. */
+  it('codes at a constant quality when the negotiated bit rate is ignored', async () => {
+    const stream = new SyntheticLiveStream();
+    const spawned: string[][] = [];
+    const media = new FfmpegLiveMedia(
+      '/synthetic/ffmpeg',
+      undefined,
+      (_executable: string, args: readonly string[]) => {
+        spawned.push([...args]);
+        return process();
+      },
+      async () => ({ port: 41000, onMessage: vi.fn(), close: vi.fn() }),
+      undefined,
+      undefined,
+      false,
+      true,
+    );
+    const prepared = await media.prepare({
+      addressVersion: 'ipv4',
+      targetAddress: '192.0.2.10',
+      video: {
+        port: 50100,
+        srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+        srtpKey: Buffer.alloc(16, 1),
+        srtpSalt: Buffer.alloc(14, 2),
+      },
+    });
+    await prepared.start({ live: async () => stream }, { video: NEGOTIATED_VIDEO });
+    stream.video({ codec: 'h264', width: 1280, height: 720, keyframe: true, data: Buffer.from([0, 0, 0, 1, 0x65]) });
+
+    const args = spawned[0]!;
+    expect(args[args.indexOf('-crf') + 1]).toBe('23');
+    expect(args).not.toContain('-b:v');
+    expect(args).not.toContain('-maxrate');
+    expect(args).not.toContain('-bufsize');
+    prepared.stop();
+  });
+
+  it('transcodes H.264 when passthrough compliance cannot be proven from SDK frames', async () => {
+    const stream = new SyntheticLiveStream();
+    const spawned: Array<{ executable: string; args: string[]; process: MediaProcess }> = [];
+    const spawn = vi.fn((executable: string, args: readonly string[]) => {
+      const child = process();
+      spawned.push({ executable, args: [...args], process: child });
+      return child;
+    });
+    const media = new FfmpegLiveMedia('/synthetic/ffmpeg', undefined, spawn, async () => ({
+      port: 41000,
+      onMessage: vi.fn(),
+      close: vi.fn(),
+    }));
+    const prepared = await media.prepare({
+      addressVersion: 'ipv4',
+      targetAddress: '192.0.2.10',
+      video: {
+        port: 50100,
+        srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+        srtpKey: Buffer.alloc(16, 1),
+        srtpSalt: Buffer.alloc(14, 2),
+      },
+    });
+
+    await prepared.start(
+      { live: async () => stream },
+      {
+        video: {
+          width: 1280,
+          height: 720,
+          fps: 30,
+          maxBitRate: 300,
+          profile: 'main',
+          level: '3.1',
+          payloadType: 99,
+          ssrc: 1234,
+          mtu: 1200,
+          rtcpInterval: 0.5,
+        },
+      },
+    );
+    stream.video({
+      codec: 'h264',
+      width: 1280,
+      height: 720,
+      keyframe: true,
+      data: Buffer.from([0, 0, 0, 1, 0x65]),
+    });
+
+    expect(prepared.videoPort).toBe(41000);
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].executable).toBe('/synthetic/ffmpeg');
+    expect(spawned[0].args[spawned[0].args.indexOf('-threads') + 1], 'one slice per thread under zerolatency').toBe(
+      '4',
+    );
+    expect(spawned[0].args).toEqual(
+      expect.arrayContaining([
+        '-c:v',
+        'libx264',
+        '-preset',
+        'superfast',
+        '-tune',
+        'zerolatency',
+        '-profile:v',
+        'main',
+        '-level:v',
+        '3.1',
+        '-fpsmax',
+        '30',
+        '-b:v',
+        '288k',
+        '-payload_type',
+        '99',
+        '-ssrc',
+        '1234',
+        '-srtp_out_suite',
+        'AES_CM_128_HMAC_SHA1_80',
+        '-srtp_out_params',
+        Buffer.concat([Buffer.alloc(16, 1), Buffer.alloc(14, 2)]).toString('base64'),
+        'srtp://192.0.2.10:50100?rtcpport=50100&pkt_size=1200',
+      ]),
+    );
+    const extend = vi.fn();
+    stream.emit('budget', { graceMs: 1_000, extend });
+    expect(extend).toHaveBeenCalledOnce();
+    prepared.stop();
+    stream.emit('budget', { graceMs: 1_000, extend });
+    expect(extend).toHaveBeenCalledOnce();
+  });
+
+  it('transcodes H.265 and resized H.264 to every negotiated video constraint after a keyframe', async () => {
+    const cases = [
+      { codec: 'h265' as const, width: 1920, height: 1080, inputFormat: 'hevc' },
+      { codec: 'h264' as const, width: 1920, height: 1080, inputFormat: 'h264' },
+    ];
+
+    for (const candidate of cases) {
+      const stream = new SyntheticLiveStream();
+      const spawned: string[][] = [];
+      const media = new FfmpegLiveMedia(
+        '/synthetic/ffmpeg',
+        undefined,
+        (_executable, args) => {
+          spawned.push([...args]);
+          return process();
+        },
+        async () => ({ port: 41000, onMessage: vi.fn(), close: vi.fn() }),
+      );
+      const prepared = await media.prepare({
+        addressVersion: 'ipv4',
+        targetAddress: '192.0.2.10',
+        video: {
+          port: 50100,
+          srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+          srtpKey: Buffer.alloc(16),
+          srtpSalt: Buffer.alloc(14),
+        },
+      });
+      await prepared.start(
+        { live: async () => stream },
+        {
+          video: {
+            width: 1280,
+            height: 720,
+            fps: 15,
+            maxBitRate: 250,
+            profile: 'high',
+            level: '4.0',
+            payloadType: 99,
+            ssrc: 1234,
+            mtu: 1200,
+            rtcpInterval: 0.5,
+          },
+        },
+      );
+
+      stream.video({ ...candidate, keyframe: false, data: Buffer.from([0, 0, 1, 1]) });
+      expect(spawned).toHaveLength(0);
+      stream.video({ ...candidate, keyframe: true, data: Buffer.from([0, 0, 1, 0x65]) });
+
+      expect(spawned[0]).toEqual(
+        expect.arrayContaining([
+          '-f',
+          candidate.inputFormat,
+          '-c:v',
+          'libx264',
+          '-profile:v',
+          'high',
+          '-level:v',
+          '4.0',
+          '-fpsmax',
+          '15',
+          '-g',
+          '30',
+          '-b:v',
+          '242k',
+          '-maxrate',
+          '242k',
+        ]),
+      );
+      expect(spawned[0]).toContain('scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2');
+      prepared.stop();
+    }
+  });
+
+  it('advances the RTP sequence for a replaced adaptation rather than restarting it', async () => {
+    const session = await liveSession();
+    await session.start();
+    session.stream.video(KEYFRAME);
+    session.children[0]!.stderr.push('progress=continue\n');
+    await settle();
+
+    session.stream.video({ ...KEYFRAME, codec: 'h265', data: Buffer.from([0x26]) });
+    await settle();
+
+    const sequences = session.spawned
+      .filter((args) => args.includes('-seq'))
+      .map((args) => Number(args[args.indexOf('-seq') + 1]));
+    expect(sequences).toHaveLength(2);
+    expect(
+      sequences[1]!,
+      'a replacement that numbers below its predecessor is replay to the controller',
+    ).toBeGreaterThan(sequences[0]!);
+    session.prepared.stop();
+  });
+
+  it('readapts a changed source codec at its next keyframe without changing negotiated output', async () => {
+    const stream = new SyntheticLiveStream();
+    const spawned: string[][] = [];
+    const media = new FfmpegLiveMedia(
+      '/synthetic/ffmpeg',
+      undefined,
+      (_executable, args) => {
+        spawned.push([...args]);
+        return process();
+      },
+      async () => ({ port: 41000, onMessage: vi.fn(), close: vi.fn() }),
+    );
+    const prepared = await media.prepare({
+      addressVersion: 'ipv4',
+      targetAddress: '192.0.2.10',
+      video: {
+        port: 50100,
+        srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+        srtpKey: Buffer.alloc(16),
+        srtpSalt: Buffer.alloc(14),
+      },
+    });
+    await prepared.start(
+      { live: async () => stream },
+      {
+        video: {
+          width: 1280,
+          height: 720,
+          fps: 30,
+          maxBitRate: 300,
+          profile: 'main',
+          level: '3.1',
+          payloadType: 99,
+          ssrc: 1234,
+          mtu: 1200,
+          rtcpInterval: 0.5,
+        },
+      },
+    );
+    stream.video({ codec: 'h264', width: 1920, height: 1080, keyframe: true, data: Buffer.from([0x65]) });
+    stream.video({ codec: 'h265', width: 1920, height: 1080, keyframe: false, data: Buffer.from([0x02]) });
+    expect(spawned).toHaveLength(1);
+    stream.video({ codec: 'h265', width: 1920, height: 1080, keyframe: true, data: Buffer.from([0x26]) });
+    // A geometry-only change on the last frame: absorbed by the running adaptation, so it spawns nothing.
+    stream.video({ codec: 'h265', width: 1280, height: 720, keyframe: true, data: Buffer.from([0x26]) });
+
+    expect(spawned.map((args) => args[args.indexOf('-f') + 1])).toEqual(['h264', 'hevc']);
+    for (const args of spawned) {
+      expect(args).toContain('scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2');
+      expect(args).toEqual(expect.arrayContaining(['-fpsmax', '30', '-b:v', '288k', '-payload_type', '99']));
+      expect(args).not.toContain('-r');
+    }
+    expect(stream.stop).not.toHaveBeenCalled();
+    prepared.stop();
+  });
+
+  it('starts and retains video when source audio is absent or its separate process fails', async () => {
+    const stream = new SyntheticLiveStream();
+    const children: SyntheticProcess[] = [];
+    const media = new FfmpegLiveMedia(
+      '/synthetic/ffmpeg',
+      undefined,
+      () => {
+        const child = process();
+        children.push(child);
+        return child;
+      },
+      async () => ({ port: 41000 + children.length, onMessage: vi.fn(), close: vi.fn() }),
+    );
+    const prepared = await media.prepare({
+      addressVersion: 'ipv4',
+      targetAddress: '192.0.2.10',
+      video: {
+        port: 50100,
+        srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+        srtpKey: Buffer.alloc(16),
+        srtpSalt: Buffer.alloc(14),
+      },
+      audio: {
+        port: 50101,
+        srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+        srtpKey: Buffer.alloc(16),
+        srtpSalt: Buffer.alloc(14),
+      },
+    });
+    await prepared.start(
+      { live: async () => stream },
+      {
+        video: {
+          width: 1280,
+          height: 720,
+          fps: 30,
+          maxBitRate: 300,
+          profile: 'main',
+          level: '3.1',
+          payloadType: 99,
+          ssrc: 1234,
+          mtu: 1200,
+          rtcpInterval: 0.5,
+        },
+        audio: {
+          codec: 'AAC-eld',
+          channels: 1,
+          sampleRate: 16,
+          maxBitRate: 24,
+          payloadType: 110,
+          ssrc: 5678,
+        },
+      },
+    );
+
+    stream.video({
+      codec: 'h264',
+      width: 1280,
+      height: 720,
+      keyframe: true,
+      data: Buffer.from([0, 0, 0, 1, 0x65]),
+    });
+    expect(children).toHaveLength(1);
+
+    stream.audio({ codec: 'aac-lc', data: Buffer.from([0xff, 0xf1, 1]) });
+    expect(children).toHaveLength(2);
+    children[1].emit('error', new Error('synthetic audio failure'));
+
+    expect(children[1].kill).toHaveBeenCalledWith('SIGTERM');
+    expect(children[0].kill).not.toHaveBeenCalled();
+    expect(stream.stop).not.toHaveBeenCalled();
+  });
+
+  it('does not let a replaced audio process clear the process for a later source codec', async () => {
+    const stream = new SyntheticLiveStream();
+    const children: SyntheticProcess[] = [];
+    const spawnedArgs: string[][] = [];
+    const media = new FfmpegLiveMedia(
+      '/synthetic/ffmpeg',
+      undefined,
+      (_executable, args) => {
+        const child = process();
+        children.push(child);
+        spawnedArgs.push([...args]);
+        return child;
+      },
+      async () => ({ port: 41000, onMessage: vi.fn(), close: vi.fn() }),
+    );
+    const prepared = await media.prepare({
+      addressVersion: 'ipv4',
+      targetAddress: '192.0.2.10',
+      video: {
+        port: 50100,
+        srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+        srtpKey: Buffer.alloc(16),
+        srtpSalt: Buffer.alloc(14),
+      },
+      audio: {
+        port: 50101,
+        srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+        srtpKey: Buffer.alloc(16),
+        srtpSalt: Buffer.alloc(14),
+      },
+    });
+    await prepared.start(
+      { live: async () => stream },
+      {
+        video: {
+          width: 1280,
+          height: 720,
+          fps: 30,
+          maxBitRate: 300,
+          profile: 'main',
+          level: '3.1',
+          payloadType: 99,
+          ssrc: 1234,
+          mtu: 1200,
+          rtcpInterval: 0.5,
+        },
+        audio: {
+          codec: 'AAC-eld',
+          channels: 1,
+          sampleRate: 16,
+          maxBitRate: 24,
+          payloadType: 110,
+          ssrc: 5678,
+        },
+      },
+    );
+    stream.audio({ codec: 'aac-lc', data: Buffer.from([0xff, 0xf1, 1]) });
+    stream.audio({ codec: 'g711a', data: Buffer.from([1, 2, 3]) });
+    expect(children).toHaveLength(2);
+    expect(spawnedArgs[0]).toEqual(expect.arrayContaining(['-f', 'aac', '-c:a', 'libfdk_aac', 'aac_eld']));
+    expect(spawnedArgs[1]).toEqual(expect.arrayContaining(['-f', 'alaw', '-c:a', 'libfdk_aac', 'aac_eld']));
+
+    children[0].emit('exit', 0, null);
+    stream.audio({ codec: 'g711a', data: Buffer.from([4, 5, 6]) });
+
+    expect(children).toHaveLength(2);
+    expect(children[1].kill).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Audio that carries its decoder config apart from its access units reaches FFmpeg as FLV holding exactly that
+   * config and those bytes, in tags that carry no timeline of their own.
+   */
+  it('hands audio that carries its own decoder config to FFmpeg as FLV with that config', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+    const first = Buffer.from([0x73, 0x69, 0xa0]);
+    const second = Buffer.from([0x72, 0x6a]);
+
+    session.stream.audio({ codec: 'aac-eld', data: first, config: ELD_CONFIG });
+    session.stream.audio({ codec: 'aac-eld', data: second, config: ELD_CONFIG });
+    await settle();
+
+    expect(session.children).toHaveLength(1);
+    expect(inputOptions(session.spawned[0]!)).toEqual(expect.arrayContaining(['-f', 'flv', '-c:a', 'libfdk_aac']));
+    const written = Buffer.concat(session.children[0]!.input);
+    expect(written.subarray(0, 13)).toEqual(FLV_AUDIO_FILE_HEADER);
+    const tag = (body: Buffer) => ({ type: 8, body, timestamp: 0, streamId: 0, closed: true });
+    expect(flvTags(written)).toEqual([
+      tag(Buffer.concat([Buffer.from([0xaf, 0]), ELD_CONFIG])),
+      tag(Buffer.concat([Buffer.from([0xaf, 1]), first])),
+      tag(Buffer.concat([Buffer.from([0xaf, 1]), second])),
+    ]);
+    session.prepared.stop();
+  });
+
+  it('tells only a raw a-law input the sample rate assumption its format cannot carry', async () => {
+    const session = await liveSession(undefined, { audio: AAC_ELD_16 });
+    await session.start();
+
+    session.stream.audio({ codec: 'aac-lc', data: Buffer.from([0xff, 0xf1, 1]) });
+    expect(inputOptions(session.spawned[0]!)).not.toContain('-ar');
+    expect(inputOptions(session.spawned[0]!)).not.toContain('-ac');
+
+    session.stream.audio({ codec: 'g711a', data: Buffer.from([1, 2, 3]) });
+    expect(inputOptions(session.spawned[1]!)).toEqual(expect.arrayContaining(['-ar', '16k', '-ac', '1']));
+
+    session.stream.audio({ codec: 'aac-eld', data: Buffer.from([1, 2, 3]), config: ELD_CONFIG });
+    expect(inputOptions(session.spawned[2]!)).not.toContain('-ar');
+    expect(inputOptions(session.spawned[2]!)).not.toContain('-ac');
+    expect(inputOptions(session.spawned[2]!)).toEqual(expect.arrayContaining(['-f', 'flv']));
+    expect(flvTags(Buffer.concat(session.children[2]!.input))[0]!.body).toEqual(
+      Buffer.concat([Buffer.from([0xaf, 0]), ELD_CONFIG]),
+    );
+    session.prepared.stop();
+  });
+
+  it('requests the global header AAC-ELD needs to leave the encoder at all', async () => {
+    const session = await liveSession(undefined, {
+      audio: { ...AAC_ELD_16, sampleRate: 24, maxBitRate: 32 },
+    });
+    await session.start();
+    session.stream.audio({ codec: 'aac-lc', data: Buffer.from([0xff, 0xf1, 1]) });
+
+    expect(session.spawned[0]).toEqual(
+      expect.arrayContaining([
+        '-c:a',
+        'libfdk_aac',
+        '-profile:a',
+        'aac_eld',
+        '-flags',
+        '+global_header',
+        '-ar',
+        '24k',
+        '-ac',
+        '1',
+        '-b:a',
+        '32k',
+      ]),
+    );
+    session.prepared.stop();
+  });
+
+  it('bounds startup when a long GOP supplies no keyframe', async () => {
+    vi.useFakeTimers();
+    const session = await liveSession();
+    await session.start();
+    session.stream.video({ ...KEYFRAME, keyframe: false, data: Buffer.from([0, 0, 0, 1, 0x41]) });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(session.children).toHaveLength(0);
+    expect(session.stream.stop).toHaveBeenCalledOnce();
+    expect(session.onVideoFailure).toHaveBeenCalledOnce();
+    expect(session.outcomes).toEqual([
+      { outcome: 'failed', reason: 'no-video-within-backstop', stage: 'first-source-keyframe' },
+    ]);
+    vi.useRealTimers();
+  });
+
+  /**
+   * A station that could not be reached, and one that withheld the key its media start is sealed with, are not
+   * a source that failed.
+   *
+   * Every camera behind an unreachable base fails together, so the next step is that base rather than the
+   * camera a viewer opened; a missing session key is a refusal that retrying the same camera does not resolve.
+   * Reported as `source-error`, both read as the camera's fault. The stage stays `sdk-source-acquisition`,
+   * because that is where the session ended.
+   */
+  it('names a station that could not be reached, and one that withheld its key', async () => {
+    for (const [error, reason] of [
+      [new StationUnreachableError(20_000), 'station-unreachable'],
+      [new StationKeyUnavailableError(), 'station-key-unavailable'],
+    ] as const) {
+      const session = await liveSession({ live: () => Promise.reject(error) });
+      await expect(session.start()).rejects.toThrow();
+
+      expect(session.outcomes).toEqual([{ outcome: 'failed', reason, stage: 'sdk-source-acquisition' }]);
+      expect(session.onVideoFailure).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('bounds stalled source acquisition and no-RTCP sessions', async () => {
+    vi.useFakeTimers();
+    let acquisitionSignal: AbortSignal | undefined;
+    const stalled = await liveSession({
+      live: (options) => {
+        acquisitionSignal = options?.signal;
+        return new Promise<LiveStreamHandle>(() => undefined);
+      },
+    });
+    const start = expect(stalled.start()).rejects.toThrow('source acquisition timed out');
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(stalled.outcomes, 'the SDK owns waits longer than this, so the bound sits above reaching a station').toEqual(
+      [],
+    );
+    expect(acquisitionSignal?.aborted).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await start;
+
+    expect(stalled.onVideoFailure).toHaveBeenCalledOnce();
+    expect(stalled.outcomes).toEqual([
+      { outcome: 'failed', reason: 'source-acquisition-timeout', stage: 'sdk-source-acquisition' },
+    ]);
+    expect(
+      acquisitionSignal?.aborted,
+      'an abandoned acquisition holds the station channel until the SDK stops waiting for it too',
+    ).toBe(true);
+
+    const noRtcp = await liveSession();
+    await noRtcp.start();
+    noRtcp.stream.video(KEYFRAME);
+    noRtcp.children[0]!.stderr.push('progress=continue\n');
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(noRtcp.onVideoFailure).toHaveBeenCalledOnce();
+    expect(noRtcp.stream.stop).toHaveBeenCalledOnce();
+    expect(noRtcp.outcomes).toEqual([
+      { outcome: 'streaming' },
+      { outcome: 'failed', reason: 'no-controller-rtcp', stage: 'controller-rtcp' },
+    ]);
+    vi.useRealTimers();
+  });
+});
+
+describe('isolated return-audio adaptation', () => {
+  it('binds the advertised return-audio endpoint before acknowledging stream start', async () => {
+    let releaseAudio!: () => void;
+    const audioReleased = new Promise<void>((resolve) => (releaseAudio = resolve));
+    let reservations = 0;
+    const returned: SyntheticReturnAudioProcess[] = [];
+    const media = new FfmpegLiveMedia(
+      '/synthetic/ffmpeg',
+      undefined,
+      () => process(),
+      async () => {
+        const audio = reservations++ === 1;
+        return {
+          port: audio ? 41001 : 41000,
+          onMessage: vi.fn(),
+          close: vi.fn(() => (audio ? audioReleased : undefined)),
+        };
+      },
+      () => {
+        const child = returnAudioProcess();
+        returned.push(child);
+        return child;
+      },
+    );
+    const prepared = await media.prepare({
+      addressVersion: 'ipv4',
+      targetAddress: '192.0.2.10',
+      video: {
+        port: 50100,
+        srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+        srtpKey: Buffer.alloc(16),
+        srtpSalt: Buffer.alloc(14),
+      },
+      audio: {
+        port: 50101,
+        srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+        srtpKey: Buffer.alloc(16),
+        srtpSalt: Buffer.alloc(14),
+      },
+    });
+    let started = false;
+    const start = prepared
+      .start(
+        { live: async () => new SyntheticLiveStream(), talkback: async () => new SyntheticTalkback() },
+        { video: NEGOTIATED_VIDEO, audio: AAC_ELD_16 },
+      )
+      .then(() => (started = true));
+    await settle();
+
+    expect(started).toBe(false);
+    expect(returned).toHaveLength(0);
+
+    releaseAudio();
+    await settle();
+    expect(returned).toHaveLength(1);
+    expect(started).toBe(false);
+    await start;
+    expect(started).toBe(true);
+    prepared.stop();
+  });
+
+  it('transcodes HomeKit return audio to 16 kHz mono AAC-LC ADTS before opening one SDK handle', async () => {
+    const handle = new SyntheticTalkback();
+    const talkback = vi.fn(async () => handle);
+    const session = await talkbackSession(talkback);
+
+    expect(session.ports[1]!.close).toHaveBeenCalledOnce();
+    expect(session.returned).toHaveLength(1);
+    expect(session.returnedArgs[0]).toEqual(
+      expect.arrayContaining([
+        '-protocol_whitelist',
+        'pipe,udp,rtp,crypto',
+        '-f',
+        'sdp',
+        '-c:a',
+        'libfdk_aac',
+        '-profile:a',
+        'aac_low',
+        '-ar',
+        '16k',
+        '-ac',
+        '1',
+        '-b:a',
+        '32k',
+        '-f',
+        'adts',
+        'pipe:1',
+      ]),
+    );
+    expect(inputOptions(session.returnedArgs[0]!)).toEqual(
+      expect.arrayContaining(['-protocol_whitelist', 'pipe,udp,rtp,crypto', '-f', 'sdp', '-c:a', 'libfdk_aac']),
+    );
+    const sdp = Buffer.concat(session.returned[0]!.input).toString();
+    expect(sdp).toContain('m=audio 41001 RTP/AVP 110');
+    expect(sdp).toContain('a=rtpmap:110 MPEG4-GENERIC/16000/1');
+    expect(sdp).toContain('sizelength=13;indexlength=3;indexdeltalength=3; config=F8F0212C00BC00');
+    expect(sdp).toContain('a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:');
+    expect(talkback).not.toHaveBeenCalled();
+
+    const first = Buffer.from([0xff, 0xf1, 0x60]);
+    const second = Buffer.from([0x40, 0x03, 0xff, 0xfc]);
+    session.returned[0]!.stdout.write(first);
+    await settle();
+    session.returned[0]!.stdout.write(second);
+    await settle();
+
+    expect(talkback).toHaveBeenCalledOnce();
+    expect(Buffer.concat(handle.written)).toEqual(Buffer.concat([first, second]));
+    expect(session.talkbackOutcomes).toEqual([{ outcome: 'talking' }]);
+    session.prepared.stop();
+    await settle();
+    expect(handle.stop).toHaveBeenCalledOnce();
+  });
+
+  it('copies HomeKit return audio, unchanged AAC-ELD, into FLV on fd 3', async () => {
+    const session = await talkbackSession(async () => new SyntheticTalkback());
+    const args = session.returnedArgs[0]!;
+    const fd3 = args.slice(args.lastIndexOf('-map'));
+    expect(fd3).toEqual([
+      '-map',
+      '0:a:0',
+      '-vn',
+      '-c:a',
+      'copy',
+      '-flvflags',
+      'no_duration_filesize',
+      '-f',
+      'flv',
+      'pipe:3',
+    ]);
+    session.prepared.stop();
+  });
+
+  it('feeds an aac-eld speaker the ELD access units, not the ADTS output', async () => {
+    const handle = new SyntheticTalkback('aac-eld');
+    const session = await talkbackSession(async () => handle);
+    const child = session.returned[0]!;
+    child.stdout.write(Buffer.from([0xff, 0xf1, 0x60, 0x40]));
+    await settle();
+    const units = [Buffer.alloc(120, 1), Buffer.alloc(118, 2)];
+    child.eld.write(flvStream(ELD_TALKBACK_CONFIG, units));
+    await settle();
+
+    expect(handle.written).toEqual(units);
+    expect(session.talkbackOutcomes).toEqual([{ outcome: 'talking' }]);
+    session.prepared.stop();
+  });
+
+  it('reassembles an FLV tag split across pipe reads', async () => {
+    const handle = new SyntheticTalkback('aac-eld');
+    const session = await talkbackSession(async () => handle);
+    const child = session.returned[0]!;
+    child.stdout.write(Buffer.from([0xff, 0xf1]));
+    await settle();
+    const bytes = flvStream(ELD_TALKBACK_CONFIG, [Buffer.alloc(130, 7)]);
+    for (let at = 0; at < bytes.length; at += 17) {
+      child.eld.write(bytes.subarray(at, at + 17));
+      await settle();
+    }
+    expect(handle.written).toEqual([Buffer.alloc(130, 7)]);
+    session.prepared.stop();
+  });
+
+  it('drains the unused ELD output once an aac-lc speaker is chosen, so FFmpeg cannot stall on it', async () => {
+    const handle = new SyntheticTalkback('aac-lc');
+    const session = await talkbackSession(async () => handle);
+    const child = session.returned[0]!;
+    child.stdout.write(Buffer.from([0xff, 0xf1, 0x60]));
+    await settle();
+    expect(child.eld.readableFlowing).toBe(true);
+    child.eld.write(flvStream(ELD_TALKBACK_CONFIG, [Buffer.alloc(120, 1)]));
+    await settle();
+    expect(Buffer.concat(handle.written)).toEqual(Buffer.from([0xff, 0xf1, 0x60]));
+    session.prepared.stop();
+  });
+
+  it('fails the talkback once, without throwing, when an ELD unit is refused with a synchronous error', async () => {
+    const handle = new SyntheticTalkback('aac-eld');
+    const refusing = new Writable({
+      objectMode: true,
+      highWaterMark: 1,
+      write(chunk: Buffer, _encoding, callback) {
+        if (chunk.length > 640) {
+          handle.emit('error', new Error('access unit too long'));
+          return;
+        }
+        callback();
+      },
+    });
+    (handle as { sink: Writable }).sink = refusing;
+    const session = await talkbackSession(async () => handle);
+    const child = session.returned[0]!;
+    child.stdout.write(Buffer.from([0xff, 0xf1]));
+    await settle();
+    expect(() =>
+      child.eld.write(flvStream(ELD_TALKBACK_CONFIG, [Buffer.alloc(700, 1), Buffer.alloc(100, 2)])),
+    ).not.toThrow();
+    await settle();
+
+    expect(session.talkbackOutcomes.filter((outcome) => outcome.outcome === 'failed')).toEqual([
+      { outcome: 'failed', reason: 'device-audio-failed' },
+    ]);
+    session.prepared.stop();
+  });
+
+  it('closes both return-audio outputs when the session stops, even while they are held', async () => {
+    const handle = new SyntheticTalkback('aac-eld');
+    handle.sink.pause();
+    const session = await talkbackSession(async () => handle);
+    const child = session.returned[0]!;
+    child.stdout.write(Buffer.from([0xff, 0xf1]));
+    await settle();
+    child.eld.write(
+      flvStream(
+        ELD_TALKBACK_CONFIG,
+        Array.from({ length: 12 }, () => Buffer.alloc(100, 3)),
+      ),
+    );
+    await settle();
+    session.prepared.stop();
+    await settle();
+    expect(child.stdout.destroyed).toBe(true);
+    expect(child.eld.destroyed).toBe(true);
+  });
+
+  it('holds the ELD output, with one drain wait, while the SDK refuses more frames', async () => {
+    const handle = new SyntheticTalkback('aac-eld');
+    handle.sink.pause();
+    const session = await talkbackSession(async () => handle);
+    const child = session.returned[0]!;
+    child.stdout.write(Buffer.from([0xff, 0xf1]));
+    await settle();
+    child.eld.write(
+      flvStream(
+        ELD_TALKBACK_CONFIG,
+        Array.from({ length: 133 }, () => Buffer.alloc(100, 3)),
+      ),
+    );
+    await settle();
+    expect(child.eld.isPaused()).toBe(true);
+    expect(handle.sink.listenerCount('drain')).toBeLessThanOrEqual(1);
+    handle.sink.resume();
+    await settle();
+    expect(child.eld.isPaused()).toBe(false);
+    session.prepared.stop();
+  });
+
+  it('extends a source budget only while HomeKit return audio is being consumed', async () => {
+    const handle = new SyntheticTalkback();
+    const session = await talkbackSession(async () => handle);
+    session.returned[0]!.stdout.write(Buffer.from([0xff, 0xf1, 1]));
+    await settle();
+
+    const extend = vi.fn();
+    handle.budget({ graceMs: 10_000, extend });
+    expect(extend).toHaveBeenCalledOnce();
+
+    session.prepared.stop();
+    await settle();
+    handle.budget({ graceMs: 10_000, extend });
+    expect(extend).toHaveBeenCalledOnce();
+  });
+
+  it('cleans a device-audio failure without stopping outbound video or audio', async () => {
+    const handle = new SyntheticTalkback();
+    const session = await talkbackSession(async () => handle);
+    session.stream.video(KEYFRAME);
+    session.stream.audio({ codec: 'aac-lc', data: Buffer.from([0xff, 0xf1, 1]) });
+    session.returned[0]!.stdout.write(Buffer.from([0xff, 0xf1, 1]));
+    await settle();
+
+    handle.fail();
+    await settle();
+
+    expect(handle.stop).toHaveBeenCalledOnce();
+    expect(session.returned[0]!.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(session.children).toHaveLength(2);
+    expect(session.children.every((child) => !vi.mocked(child.kill).mock.calls.length)).toBe(true);
+    expect(session.stream.stop).not.toHaveBeenCalled();
+    expect(session.onVideoFailure).not.toHaveBeenCalled();
+    expect(session.talkbackOutcomes).toEqual([
+      { outcome: 'talking' },
+      { outcome: 'failed', reason: 'device-audio-failed' },
+    ]);
+  });
+
+  it('reports an SDK-stopped talkback path while outbound media continues', async () => {
+    const handle = new SyntheticTalkback();
+    const session = await talkbackSession(async () => handle);
+    session.stream.video(KEYFRAME);
+    session.returned[0]!.stdout.write(Buffer.from([0xff, 0xf1, 1]));
+    await settle();
+
+    handle.emit('stop');
+    await settle();
+
+    expect(session.returned[0]!.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(session.children[0]!.kill).not.toHaveBeenCalled();
+    expect(session.stream.stop).not.toHaveBeenCalled();
+    expect(session.talkbackOutcomes).toEqual([
+      { outcome: 'talking' },
+      { outcome: 'failed', reason: 'device-audio-failed' },
+    ]);
+  });
+
+  it('reports return-audio adaptation failure without coupling it to outbound media', async () => {
+    const handle = new SyntheticTalkback();
+    const talkback = vi.fn(async () => handle);
+    const session = await talkbackSession(talkback);
+    session.stream.video(KEYFRAME);
+
+    session.returned[0]!.emit('error', new Error('synthetic return adaptation failure'));
+    await settle();
+
+    expect(talkback).not.toHaveBeenCalled();
+    expect(session.returned[0]!.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(session.children[0]!.kill).not.toHaveBeenCalled();
+    expect(session.stream.stop).not.toHaveBeenCalled();
+    expect(session.onVideoFailure).not.toHaveBeenCalled();
+    expect(session.talkbackOutcomes).toEqual([{ outcome: 'failed', reason: 'adaptation-failed' }]);
+    expect(
+      session.notices,
+      'return audio fails only talkback, so without a report of its own its stderr has no account anywhere',
+    ).toEqual([
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+      { role: 'return-audio', event: 'spawn-failed' },
+    ]);
+  });
+
+  /** A return-audio input that timed out is a controller that sent no audio, which is reported as such. */
+  it('reports a return-audio input that timed out as a controller that sent no audio', async () => {
+    const session = await talkbackSession(vi.fn(async () => new SyntheticTalkback()));
+    session.stream.video(KEYFRAME);
+    session.returned[0]!.stderr.write('[in#0/sdp @ 0x0] Error during demuxing: Operation timed out\n');
+    await settle();
+
+    session.returned[0]!.emit('exit', 0, null);
+    await settle();
+
+    expect(session.talkbackOutcomes).toEqual([{ outcome: 'failed', reason: 'no-controller-audio' }]);
+    expect(session.onVideoFailure).not.toHaveBeenCalled();
+  });
+
+  /** The same timeout with no video yet from the camera is the source's failure, not the controller's. */
+  it('reports a return-audio input that timed out before any camera video as the source being unavailable', async () => {
+    const session = await talkbackSession(vi.fn(async () => new SyntheticTalkback()));
+    session.returned[0]!.stderr.write('[in#0/sdp @ 0x0] Error during demuxing: Operation timed out\n');
+    await settle();
+
+    session.returned[0]!.emit('exit', 0, null);
+    await settle();
+
+    expect(session.talkbackOutcomes).toEqual([{ outcome: 'failed', reason: 'source-unavailable' }]);
+  });
+
+  /**
+   * A return-audio adaptation that stops accepting the media it is being given has ended the talkback, and
+   * says so on the pipe rather than in an exit status. It is reported in its own right, because the exit that
+   * follows is the one this session asked for and carries no cause of its own.
+   */
+  it('reports a return-audio adaptation that stops accepting media, on any of its pipes', async () => {
+    for (const pipe of ['stdin', 'stdout', 'eld'] as const) {
+      const session = await talkbackSession(vi.fn(async () => new SyntheticTalkback()));
+      session.stream.video(KEYFRAME);
+      session.returned[0]!.stderr.write('Error during demuxing: Broken pipe\n');
+      await settle();
+
+      session.returned[0]![pipe].emit('error', Object.assign(new Error('EPIPE'), { code: 'EPIPE' }));
+      await settle();
+
+      expect(session.talkbackOutcomes, pipe).toEqual([{ outcome: 'failed', reason: 'adaptation-failed' }]);
+      expect(session.notices, pipe).toContainEqual({
+        role: 'return-audio',
+        event: 'input-failed',
+        stderr: ['Error during demuxing: Broken pipe'],
+      });
+      expect(session.onVideoFailure, pipe).not.toHaveBeenCalled();
+    }
+  });
+
+  it('contains a synchronous SDK talkback acquisition failure inside return audio', async () => {
+    const session = await talkbackSession(() => {
+      throw new Error('synthetic synchronous talkback failure');
+    });
+    session.stream.video(KEYFRAME);
+
+    expect(() => session.returned[0]!.stdout.write(Buffer.from([0xff, 0xf1, 1]))).not.toThrow();
+    await settle();
+
+    expect(session.returned[0]!.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(session.children[0]!.kill).not.toHaveBeenCalled();
+    expect(session.stream.stop).not.toHaveBeenCalled();
+    expect(session.talkbackOutcomes).toEqual([{ outcome: 'failed', reason: 'source-unavailable' }]);
+  });
+
+  it('cleans a handle whose writable return-audio seam cannot be opened', async () => {
+    const handle = new SyntheticTalkback();
+    vi.spyOn(handle, 'writable').mockImplementation(() => {
+      throw new Error('synthetic writable failure');
+    });
+    const session = await talkbackSession(async () => handle);
+
+    session.returned[0]!.stdout.write(Buffer.from([0xff, 0xf1, 1]));
+    await settle();
+
+    expect(handle.stop).toHaveBeenCalledOnce();
+    expect(session.returned[0]!.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(session.stream.stop).not.toHaveBeenCalled();
+    expect(session.talkbackOutcomes).toEqual([{ outcome: 'failed', reason: 'device-audio-failed' }]);
+  });
+
+  it('does not report recovery when the SDK rejects the first return-audio write synchronously', async () => {
+    const handle = new SyntheticTalkback();
+    vi.spyOn(handle.sink, 'write').mockImplementation(() => {
+      handle.emit('error', new Error('synthetic frame rejection'));
+      return true;
+    });
+    const session = await talkbackSession(async () => handle);
+
+    session.returned[0]!.stdout.write(Buffer.from([0xff, 0xf1, 1]));
+    await settle();
+
+    expect(handle.stop).toHaveBeenCalledOnce();
+    expect(session.talkbackOutcomes).toEqual([{ outcome: 'failed', reason: 'device-audio-failed' }]);
+  });
+
+  it('stops a talkback handle that resolves after HomeKit cancelled the session', async () => {
+    let resolveTalkback!: (handle: TalkbackHandle) => void;
+    const talkback = vi.fn(() => new Promise<TalkbackHandle>((resolve) => (resolveTalkback = resolve)));
+    const session = await talkbackSession(talkback);
+    session.returned[0]!.stdout.write(Buffer.from([0xff, 0xf1, 1]));
+    await settle();
+    expect(talkback).toHaveBeenCalledOnce();
+
+    session.prepared.stop();
+    const late = new SyntheticTalkback();
+    resolveTalkback(late);
+    await settle();
+
+    expect(late.stop).toHaveBeenCalledOnce();
+    expect(late.written).toEqual([]);
+  });
+
+  it('finishes whole-session cleanup when the SDK handle throws synchronously on stop', async () => {
+    const handle = new SyntheticTalkback();
+    handle.stop.mockImplementation(() => {
+      throw new Error('synthetic synchronous stop failure');
+    });
+    const session = await talkbackSession(async () => handle);
+    session.stream.video(KEYFRAME);
+    session.returned[0]!.stdout.write(Buffer.from([0xff, 0xf1, 1]));
+    await settle();
+
+    expect(() => session.prepared.stop()).not.toThrow();
+    expect(session.children[0]!.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(session.stream.stop).toHaveBeenCalledOnce();
+    expect(session.ports.every(({ close }) => close.mock.calls.length > 0)).toBe(true);
+  });
+});
+
+describe('adaptation binary identity', () => {
+  /**
+   * A bundled static build and a distribution build on the same host advertise different encoder sets, so
+   * without the binary's own banner an adaptation failure can be attributed to FFmpeg in general and no
+   * further. A path that names nothing runnable answers with no banner at all, and that absence is what
+   * distinguishes a missing or wrong configured path from an encoder the resolved build does not have.
+   */
+  it('reports the resolved path, which build it is, and the binary\u2019s own banner', async () => {
+    const probe = vi.fn(async () => 'ffmpeg version 8.0 Copyright (c) 2000-2026 the FFmpeg developers');
+
+    await expect(resolveFfmpegIdentity('/synthetic/bin/ffmpeg', 'configured', probe)).resolves.toEqual({
+      path: '/synthetic/bin/ffmpeg',
+      source: 'configured',
+      version: 'ffmpeg version 8.0 Copyright (c) 2000-2026 the FFmpeg developers',
+    });
+    expect(probe).toHaveBeenCalledWith('/synthetic/bin/ffmpeg');
+  });
+
+  it('reports a binary that did not answer without inventing a version for it', async () => {
+    await expect(resolveFfmpegIdentity('/synthetic/absent', 'bundled', async () => undefined)).resolves.toEqual({
+      path: '/synthetic/absent',
+      source: 'bundled',
+    });
+    await expect(
+      resolveFfmpegIdentity('/synthetic/absent', 'configured', async () => {
+        throw new Error('spawn /synthetic/absent ENOENT');
+      }),
+      'a probe that throws is a binary that cannot be asked to encode, which is the same answer',
+    ).resolves.toEqual({ path: '/synthetic/absent', source: 'configured' });
+  });
+
+  it('reads the real banner off the bundled binary rather than trusting its path', async () => {
+    const bundled = await resolveFfmpegIdentity(bundledFfmpegPath!, 'bundled');
+    const absent = await resolveFfmpegIdentity(`${bundledFfmpegPath!}-synthetic-absent`, 'configured');
+
+    expect(bundled.version, 'the default probe runs the binary, so this is the build that would encode').toMatch(
+      /^ffmpeg version /,
+    );
+    expect(
+      absent.version,
+      'a path naming nothing runnable answers nothing, which is what tells it from a missing encoder',
+    ).toBeUndefined();
+  });
+});
+
+/** What a synthetic encoder coded for one qualification run, in the fields `trace_headers` reports. */
+interface CodedSelection {
+  profile_idc: number;
+  constraint_set1_flag: number;
+  level_idc: number;
+  pic_width_in_mbs_minus1: number;
+  pic_height_in_map_units_minus1: number;
+  frames: number;
+  bytes: number;
+}
+
+const DARWIN: EncoderHost = { platform: 'darwin', arch: 'arm64', configured: false };
+/** A configured binary on Linux x64, which is tried for QSV, NVENC, AMF and VAAPI in that order. */
+const CONFIGURED_LINUX: EncoderHost = { platform: 'linux', arch: 'x64', configured: true };
+const ALL_SELECTIONS = ['baseline', 'main', 'high'].flatMap((profile) =>
+  ['3.1', '3.2', '4.0'].map((level) => `${profile}@${level}`),
+);
+/** Every selection qualified. */
+const ALL_QUALIFIED = Object.fromEntries(ALL_SELECTIONS.map((selection) => [selection, 'qualified']));
+/** The selection qualification codes Main 3.1 at, so a session's arguments can be compared with it. */
+const QUALIFIED_MAIN: NegotiatedLiveVideo = { ...NEGOTIATED_VIDEO, maxBitRate: 299, mtu: 1378 };
+
+/**
+ * A qualification run that codes exactly what it was asked for, unless `coded` answers otherwise for one
+ * encoder and selection, recording every argument list it was given and the timeout it was given it under.
+ *
+ * An encode is answered with `bytes` of output, and the trace of it with one SPS and one packet per frame in
+ * the layout `trace_headers` writes, or with a failed run where `coded` answered `untraced`.
+ */
+function qualificationRun(
+  coded: (encoder: string, selection: string, honest: CodedSelection) => CodedSelection | 'failed' | 'untraced' = (
+    _e,
+    _s,
+    c,
+  ) => c,
+) {
+  const runs: Array<{ args: string[]; timeoutMs: number }> = [];
+  let last: CodedSelection | undefined;
+  const run: QualificationRun = async (_executable, args, _input, timeoutMs) => {
+    runs.push({ args: [...args], timeoutMs });
+    if (args.includes('-bsf:v')) {
+      if (!last) {
+        return undefined;
+      }
+      const { frames, bytes: _bytes, ...fields } = last!;
+      const stderr = [
+        '[trace_headers @ 0x1] Sequence Parameter Set',
+        ...Object.entries(fields).map(([name, value]) => `[trace_headers @ 0x1] 8   ${name}   0101 = ${value}`),
+        ...Array.from({ length: frames }, () => '[trace_headers @ 0x1] Packet: 600 bytes, dts 0, duration 1.'),
+      ].join('\n');
+      return { stdout: Buffer.alloc(0), stderr };
+    }
+    const value = (name: string) => args[args.indexOf(name) + 1]!;
+    const [width, height, rate, seconds] = /size=(\d+)x(\d+):rate=(\d+):duration=(\d+)/
+      .exec(value('-i'))!
+      .slice(1)
+      .map(Number) as [number, number, number, number];
+    const profile = value('-profile:v');
+    const level = args.includes('-level:v') ? value('-level:v').replace('.', '') : '31';
+    const named = profile.replace('constrained_', '');
+    const idc = { baseline: 66, main: 77, high: 100 }[named] ?? Number(profile);
+    const honest: CodedSelection = {
+      profile_idc: idc,
+      constraint_set1_flag: profile === 'constrained_baseline' ? 1 : 0,
+      level_idc: Number(level),
+      pic_width_in_mbs_minus1: width / 16 - 1,
+      pic_height_in_map_units_minus1: Math.ceil(height / 16) - 1,
+      frames: rate * seconds,
+      bytes: 50_000,
+    };
+    const selection = `${{ 66: 'baseline', 77: 'main', 100: 'high' }[idc]}@${level[0]}.${level[1]}`;
+    const answer = coded(value('-c:v'), selection, honest);
+    if (answer === 'failed') {
+      return undefined;
+    }
+    last = answer === 'untraced' ? undefined : answer;
+    return { stdout: Buffer.alloc(last?.bytes ?? 0), stderr: '' };
+  };
+  return { run, runs };
+}
+
+/** One `FfmpegLiveMedia` whose qualification and sessions are both observable, opened one session at a time. */
+function hardwareMedia({ copy = false, constantQuality = false, small = false } = {}) {
+  const spawned: string[][] = [];
+  const children: SyntheticProcess[] = [];
+  const notices: AdaptationNotice[] = [];
+  const media = new FfmpegLiveMedia(
+    '/synthetic/ffmpeg',
+    { report: (notice) => notices.push(notice) },
+    (_executable, args) => {
+      const child = process();
+      spawned.push([...args]);
+      children.push(child);
+      return child;
+    },
+    async () => ({ port: 41000, onMessage: vi.fn(), close: vi.fn() }),
+    undefined,
+    small ? SMALL_VIDEO_PACKET_SIZE : undefined,
+    copy,
+    constantQuality,
+  );
+  const open = async (
+    video: NegotiatedLiveVideo = QUALIFIED_MAIN,
+    liveVideoSettings?: LiveVideoSettings,
+    encodeVariant?: number,
+  ) => {
+    const stream = new SyntheticLiveStream();
+    const prepared = await media.prepare({
+      ...(liveVideoSettings ? { liveVideoSettings } : {}),
+      addressVersion: 'ipv4',
+      targetAddress: '192.0.2.10',
+      video: {
+        port: 50100,
+        srtpCryptoSuite: 'AES_CM_128_HMAC_SHA1_80',
+        srtpKey: Buffer.alloc(16),
+        srtpSalt: Buffer.alloc(14),
+      },
+    });
+    await prepared.start(
+      { live: async () => stream },
+      { video, ...(encodeVariant === undefined ? {} : { encodeVariant }) },
+    );
+    stream.video(KEYFRAME);
+    const args = spawned.at(-1)!;
+    return { prepared, child: children.at(-1)!, encoder: args[args.indexOf('-c:v') + 1], args };
+  };
+  return { media, notices, open };
+}
+
+/** The arguments one encoder was given, from its name to the end of the shared keyframe policy. */
+function encoderSlice(args: readonly string[]): string[] {
+  return args.slice(args.indexOf('-c:v'), args.indexOf('-sc_threshold') + 2);
+}
+
+/** The arguments each encoder tried on `host` was given for Main 3.1, its name and the shared tail aside. */
+async function mainArguments(host: EncoderHost): Promise<Map<string, string[]>> {
+  const { run, runs } = qualificationRun();
+  await hardwareMedia().media.qualify(host, run);
+  const tried = new Map<string, string[]>();
+  for (const { args } of runs.filter(({ args }) => args.includes('-c:v'))) {
+    const name = args[args.indexOf('-c:v') + 1]!;
+    if (['main', '77'].includes(args[args.indexOf('-profile:v') + 1]!) && !tried.has(name)) {
+      tried.set(name, encoderSlice(args).slice(2, -6));
+    }
+  }
+  return tried;
+}
+
+describe('hardware encoder qualification', () => {
+  /**
+   * Each hardware encoder spells profile, level and rate control its own way, and each is tried only where
+   * its binary can carry it. These are the arguments qualification gives a Main 3.1 1280x720@30 selection at
+   * 299 kbps, whose budget after transport is 287 kbps; the scale and pad chain and the keyframe policy are
+   * the session's own.
+   */
+  it('gives each encoder its own spelling of the selection, on the hosts that may carry it', async () => {
+    const rate = ['-b:v', '287k', '-maxrate', '287k'];
+    const vf = (upload = '') => [
+      '-vf',
+      `scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2${upload}`,
+      '-fpsmax',
+      '30',
+    ];
+
+    expect(await mainArguments(DARWIN)).toEqual(
+      new Map([
+        [
+          'h264_videotoolbox',
+          [
+            ...['-profile:v', 'main', '-level:v', '3.1', '-realtime', '1', '-prio_speed', '1', '-bf', '0'],
+            ...['-pix_fmt', 'yuv420p', ...rate, ...vf()],
+          ],
+        ],
+      ]),
+    );
+    expect([...(await mainArguments({ platform: 'win32', arch: 'x64', configured: false })).keys()]).toEqual([
+      'h264_qsv',
+    ]);
+    expect(await mainArguments({ platform: 'linux', arch: 'x64', configured: false })).toEqual(
+      new Map([
+        [
+          'h264_amf',
+          [
+            ...['-profile:v', 'main', '-level:v', '3.1', '-usage', 'ultralowlatency', '-bf', '0'],
+            ...['-pix_fmt', 'yuv420p', ...rate, '-bufsize', '287k', ...vf()],
+          ],
+        ],
+      ]),
+    );
+    expect(await mainArguments({ platform: 'linux', arch: 'arm64', configured: false })).toEqual(
+      new Map([['h264_v4l2m2m', ['-profile:v', '77', '-pix_fmt', 'yuv420p', '-b:v', '287k', ...vf()]]]),
+    );
+    expect(await mainArguments({ platform: 'freebsd', arch: 'x64', configured: false })).toEqual(new Map());
+
+    expect(await mainArguments(CONFIGURED_LINUX)).toEqual(
+      new Map([
+        [
+          'h264_qsv',
+          [
+            ...['-profile:v', 'main', '-level:v', '31', '-pix_fmt', 'nv12', '-bf', '0', '-look_ahead', '0'],
+            ...['-async_depth', '1', ...rate, ...vf()],
+          ],
+        ],
+        [
+          'h264_nvenc',
+          [
+            ...['-profile:v', 'main', '-level:v', '3.1', '-preset', 'p1', '-tune', 'ull', '-zerolatency', '1'],
+            ...['-bf', '0', '-pix_fmt', 'yuv420p', '-rc', 'cbr', ...rate, '-bufsize', '287k', ...vf()],
+          ],
+        ],
+        [
+          'h264_amf',
+          [
+            ...['-profile:v', 'main', '-level:v', '3.1', '-usage', 'ultralowlatency', '-bf', '0'],
+            ...['-pix_fmt', 'yuv420p', ...rate, '-bufsize', '287k', ...vf()],
+          ],
+        ],
+        [
+          'h264_vaapi',
+          [
+            ...['-vaapi_device', '/dev/dri/renderD128', '-profile:v', 'main', '-level:v', '3.1', '-bf', '0'],
+            ...['-async_depth', '1', ...rate, ...vf(',format=nv12,hwupload')],
+          ],
+        ],
+      ]),
+    );
+
+    const { run, runs } = qualificationRun();
+    await hardwareMedia().media.qualify(CONFIGURED_LINUX, run);
+    const profiles = (name: string) =>
+      new Set(runs.filter(({ args }) => args.includes(name)).map(({ args }) => args[args.indexOf('-profile:v') + 1]));
+    expect(profiles('h264_vaapi'), 'VAAPI and AMF spell Baseline only as Constrained Baseline').toEqual(
+      new Set(['constrained_baseline', 'main', 'high']),
+    );
+    expect(profiles('h264_amf')).toEqual(new Set(['constrained_baseline', 'main', 'high']));
+    expect(
+      runs.some(({ args }) => args.includes('-allow_sw')),
+      'no encoder may substitute software',
+    ).toBe(false);
+  });
+
+  /**
+   * Qualification proves every stage against each advertised profile and level: the encoder runs the session's
+   * own arguments, opens, and codes what the selection asked for, which a trace of the coded parameter sets
+   * states. A Baseline coded as Constrained Baseline, and a High coded as Main, are below what was negotiated
+   * and decodable by anything that decodes it.
+   */
+  it('qualifies an encoder whose coded output matches every selection', async () => {
+    const { run, runs } = qualificationRun((_encoder, _selection, honest) =>
+      honest.profile_idc === 66
+        ? { ...honest, constraint_set1_flag: 1 }
+        : honest.profile_idc === 100
+          ? { ...honest, profile_idc: 77 }
+          : honest,
+    );
+    const qualified = await hardwareMedia().media.qualify(DARWIN, run);
+
+    expect(qualified).toEqual({ h264_videotoolbox: ALL_QUALIFIED });
+    expect(runs.find(({ args }) => args.includes('-bsf:v'))?.args, 'the second FFmpeg only traces').toEqual(
+      expect.arrayContaining(['-f', 'h264', '-i', 'pipe:0', '-c', 'copy', '-bsf:v', 'trace_headers', '-f', 'null']),
+    );
+    expect(
+      runs.find(({ args }) => args.includes('testsrc2=size=1920x1080:rate=30:duration=2'))?.args,
+      'level 4.0 is qualified at the largest advertised geometry',
+    ).toEqual(expect.arrayContaining(['-level:v', '4.0', '-f', 'h264', 'pipe:1']));
+  });
+
+  /** A selection that fails qualification is recorded with the first check it failed. */
+  it.each<[string, unknown, (honest: CodedSelection) => CodedSelection | 'failed' | 'untraced']>([
+    ['a coded profile above the negotiated one', 'profile', (honest) => ({ ...honest, profile_idc: 100 })],
+    ['a Baseline that is not Constrained Baseline', 'profile', (honest) => ({ ...honest, profile_idc: 66 })],
+    ['another level', 'level', (honest) => ({ ...honest, level_idc: 32 })],
+    ['another width', 'geometry', (honest) => ({ ...honest, pic_width_in_mbs_minus1: 59 })],
+    ['another height', 'geometry', (honest) => ({ ...honest, pic_height_in_map_units_minus1: 33 })],
+    ['a frame short', 'frames', (honest) => ({ ...honest, frames: 59 })],
+    [
+      'more bytes than the budget and its one second of buffer, with both',
+      ['bytes', 107_626, 107_625],
+      (honest) => ({ ...honest, bytes: 107_626 }),
+    ],
+    ['an encoder that exited non-zero or outlived its timeout', 'encode', () => 'failed'],
+    ['a coded stream the trace could not read', 'trace', () => 'untraced'],
+  ])('rejects %s as %s', async (_case, outcome, mismatch) => {
+    const { run } = qualificationRun((_encoder, selection, honest) =>
+      selection === 'main@3.1' ? mismatch(honest) : honest,
+    );
+    const qualified = await hardwareMedia().media.qualify(DARWIN, run);
+
+    expect(qualified.h264_videotoolbox).toEqual({ ...ALL_QUALIFIED, 'main@3.1': outcome });
+  });
+
+  /**
+   * Each run is bounded, and so is qualification as a whole: a selection it has not finished when its minute is
+   * spent stays unqualified, recorded as `budget`.
+   */
+  it('bounds each run and leaves unqualified what its budget did not reach', async () => {
+    vi.useFakeTimers();
+    try {
+      const { run: honest } = qualificationRun();
+      const timeouts: number[] = [];
+      const run: QualificationRun = async (executable, args, input, timeoutMs) => {
+        timeouts.push(timeoutMs);
+        vi.advanceTimersByTime(4_000);
+        return honest(executable, args, input, timeoutMs);
+      };
+      const qualified = await hardwareMedia().media.qualify(DARWIN, run);
+
+      expect(timeouts, 'a run is given at most 10 s, and never more than is left of the minute').toEqual([
+        ...Array<number>(13).fill(10_000),
+        8_000,
+        4_000,
+      ]);
+      expect(Object.values(qualified.h264_videotoolbox!), 'two 4 s runs a selection finish seven inside 60 s').toEqual([
+        ...Array<string>(7).fill('qualified'),
+        'budget',
+        'budget',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('a live session on a qualified encoder', () => {
+  /**
+   * A session is coded by the first encoder qualified for its own profile and level, with exactly the arguments
+   * that encoder was qualified on, and a selection nothing qualified for is coded by libx264. The `started`
+   * record names the encoder, so a support archive states which one served the session.
+   */
+  it('uses the first encoder qualified for its selection, and libx264 for one nothing qualified', async () => {
+    const { run, runs } = qualificationRun((encoder, selection, honest) =>
+      encoder === 'h264_qsv' || selection === 'high@4.0' ? 'failed' : honest,
+    );
+    const { media, notices, open } = hardwareMedia();
+    await media.qualify(CONFIGURED_LINUX, run);
+
+    const main = await open();
+    expect(main.encoder).toBe('h264_nvenc');
+    expect(encoderSlice(main.args), 'a session runs what was qualified').toEqual(
+      encoderSlice(
+        runs.find(
+          ({ args }) =>
+            args.includes('h264_nvenc') && args.includes('main') && args.includes('3.1') && !args.includes('4.0'),
+        )!.args,
+      ),
+    );
+    main.prepared.stop();
+
+    const high = await open({ ...QUALIFIED_MAIN, width: 1920, height: 1080, profile: 'high', level: '4.0' });
+    expect(high.encoder).toBe('libx264');
+    expect(high.args).toEqual(expect.arrayContaining(['-preset', 'superfast', '-tune', 'zerolatency']));
+    high.prepared.stop();
+
+    expect(notices.filter(({ event }) => event === 'started')).toEqual([
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'h264_nvenc',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+      {
+        role: 'live-video',
+        event: 'started',
+        cause: 'first',
+        encoder: 'libx264',
+        source: 'h264',
+        sourceWidth: 1280,
+        sourceHeight: 720,
+      },
+    ]);
+  });
+
+  /**
+   * A qualified encoder that exits before its first output in a real session serves nothing for the rest of
+   * the run, and says so: the next session goes to the next encoder qualified for it, and the last to libx264.
+   * An exit after output is a run that worked, and disqualifies nothing.
+   */
+  it('disqualifies an encoder that exits before output, and the next session moves on', async () => {
+    const { run } = qualificationRun((encoder, _selection, honest) => (encoder === 'h264_qsv' ? 'failed' : honest));
+    const { media, notices, open } = hardwareMedia();
+    await media.qualify(CONFIGURED_LINUX, run);
+
+    const streamed = await open();
+    streamed.child.stderr.push('progress=continue\n');
+    await settle();
+    streamed.child.emit('exit', 1, null);
+    await settle();
+    const served: string[] = [];
+    for (let session = 0; session < 4; session += 1) {
+      const next = await open();
+      served.push(next.encoder!);
+      next.child.emit('exit', 1, null);
+      await settle();
+    }
+
+    expect(served).toEqual(['h264_nvenc', 'h264_amf', 'h264_vaapi', 'libx264']);
+    expect(notices.filter(({ event }) => event === 'encoder-disqualified')).toEqual([
+      { role: 'live-video', event: 'encoder-disqualified', encoder: 'h264_nvenc' },
+      { role: 'live-video', event: 'encoder-disqualified', encoder: 'h264_amf' },
+      { role: 'live-video', event: 'encoder-disqualified', encoder: 'h264_vaapi' },
+    ]);
+  });
+
+  /** A copied source and a constant-quality session have no bit-rate ceiling to qualify, so hardware codes neither. */
+  it('leaves passthrough and constant quality to their own arguments', async () => {
+    const copy = hardwareMedia({ copy: true });
+    await copy.media.qualify(DARWIN, qualificationRun().run);
+    expect((await copy.open()).encoder).toBe('copy');
+    expect(copy.notices[0]).toEqual({
+      role: 'live-video',
+      event: 'started',
+      cause: 'first',
+      encoder: 'copy',
+      source: 'h264',
+      sourceWidth: 1280,
+      sourceHeight: 720,
+    });
+
+    const quality = hardwareMedia({ constantQuality: true });
+    await quality.media.qualify(DARWIN, qualificationRun().run);
+    const constant = await quality.open();
+    expect(constant.encoder).toBe('libx264');
+    expect(constant.args[constant.args.indexOf('-crf') + 1]).toBe('23');
+    expect(constant.args).not.toContain('-b:v');
+  });
+
+  /**
+   * A live preview is coded by the encoder a session picks for an iPhone's Wi-Fi selection, High 4.0 1280x720 at
+   * 30 fps and 299 kbps over a 1378-byte MTU, with that session's argument list: only the output differs, the
+   * coded H.264 elementary stream on stdout instead of SRTP, which a second FFmpeg decodes into the pictures.
+   */
+  it('previews through the encoder and arguments a live session runs', async () => {
+    const { media, open } = hardwareMedia();
+    await media.qualify(DARWIN, qualificationRun().run);
+    const session = await open({ ...QUALIFIED_MAIN, profile: 'high', level: '4.0' });
+    session.prepared.stop();
+    const directory = await mkdtemp(join(tmpdir(), 'live-preview-'));
+    const ffmpeg = join(directory, 'ffmpeg');
+    await writeFile(ffmpeg, `#!/bin/sh\nprintf '%s\\n' "$@" > "$0.$$"\nexec cat\n`);
+    await chmod(ffmpeg, 0o755);
+    const stream = new SyntheticLiveStream();
+    const encoders: string[] = [];
+    const settings = { smallVideoPackets: false, liveVideoPassthrough: false, ignoreHomeBitRate: false };
+    const preview = startLivePreview(
+      ffmpeg,
+      media,
+      { live: async () => stream },
+      { ask: 'wifi', ...settings, hardwareVideoEncoder: true },
+      (_jpeg, coding) => coding.side === 'homekit' && encoders.push(coding.encoder),
+      () => undefined,
+      () => undefined,
+    );
+    await settle();
+    stream.video({ ...KEYFRAME, data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) });
+    await vi.waitFor(() => expect(encoders).toEqual(['h264_videotoolbox']));
+    preview.stop();
+    const runs = await Promise.all(
+      (await readdir(directory))
+        .filter((name) => name !== 'ffmpeg')
+        .map(async (name) => (await readFile(join(directory, name), 'utf8')).trimEnd().split('\n')),
+    );
+    await rm(directory, { recursive: true, force: true });
+
+    expect(session.encoder).toBe('h264_videotoolbox');
+    expect(runs.find((args) => args.includes('h264_videotoolbox'))).toEqual([
+      ...session.args.slice(0, session.args.indexOf('-payload_type')),
+      ...['-f', 'h264', 'pipe:1'],
+    ]);
+    expect(
+      runs.find((args) => args.includes('mjpeg')),
+      'the coded stream is decoded into pictures',
+    ).toEqual(expect.arrayContaining(['-f', 'h264', '-i', 'pipe:0', '-c:v', 'mjpeg']));
+  });
+
+  /**
+   * A camera that carries its own live video settings is coded with them, its packet size included, while another
+   * camera on the same adapter keeps the adapter's own.
+   */
+  it("codes a camera with its own settings, and another with the adapter's", async () => {
+    const { media, open } = hardwareMedia();
+    await media.qualify(DARWIN, qualificationRun().run);
+    const own = {
+      smallVideoPackets: true,
+      liveVideoPassthrough: false,
+      hardwareVideoEncoder: true,
+      ignoreHomeBitRate: true,
+    };
+    const overridden = await open(QUALIFIED_MAIN, own);
+    const global = await open(QUALIFIED_MAIN);
+    overridden.prepared.stop();
+    global.prepared.stop();
+
+    expect(overridden.args.slice(0, overridden.args.indexOf('-payload_type'))).toEqual(
+      media.videoAdaptation('h264', QUALIFIED_MAIN, [], own).args,
+    );
+    expect(overridden.args[overridden.args.indexOf('-crf') + 1]).toBe('23');
+    expect(overridden.args.at(-1)).toContain('pkt_size=1128');
+    expect(global.encoder, 'the other camera keeps the qualified hardware encoder').toBe('h264_videotoolbox');
+    expect(global.args.at(-1)).toContain('pkt_size=1378');
+  });
+
+  /**
+   * Settings a preview tries code its HomeKit side as a session of an adapter configured with them would, whatever
+   * the preview's own adapter has: every argument before the output is that session's, on the cellular ask too.
+   */
+  it('codes a preview with the settings it tries as a session configured with them', async () => {
+    const preview = hardwareMedia();
+    await preview.media.qualify(DARWIN, qualificationRun().run);
+    const ask: NegotiatedLiveVideo = { ...QUALIFIED_MAIN, profile: 'high', level: '4.0', width: 640, height: 360 };
+    const off = {
+      smallVideoPackets: false,
+      liveVideoPassthrough: false,
+      hardwareVideoEncoder: true,
+      ignoreHomeBitRate: false,
+    };
+    const cases = [
+      [{ ...off, smallVideoPackets: true, ignoreHomeBitRate: true }, { small: true, constantQuality: true }, true],
+      [{ ...off, liveVideoPassthrough: true }, { copy: true }, true],
+      [{ ...off, hardwareVideoEncoder: false }, {}, false],
+      [{ ...off, smallVideoPackets: true }, { small: true }, true],
+    ] as const;
+    for (const [settings, configured, qualified] of cases) {
+      const live = hardwareMedia(configured);
+      if (qualified) await live.media.qualify(DARWIN, qualificationRun().run);
+      const session = await live.open(ask);
+      session.prepared.stop();
+      expect(preview.media.videoAdaptation('h264', ask, [], settings).args).toEqual(
+        session.args.slice(0, session.args.indexOf('-payload_type')),
+      );
+    }
+  });
+});
+
+/**
+ * A negotiated frame rate is a ceiling, not a cadence, and the output is constant-rate.
+ *
+ * Pinning the rate with `-r` makes the encoder interpolate a cadence a bare Annex-B pipe never states, which
+ * collapses a session onto one instant. Bounding it leaves the encoder filling a gap in arrival with a duplicate
+ * of the last picture, which costs a full encode and a share of the negotiated bit rate for a frame carrying
+ * nothing new: measured on the bundled encoder against a 15 fps arrival stalled 1.5 seconds after every second
+ * of media, 266 frames of which 146 were duplicates, against 120 frames and none when the arrival timestamps
+ * were passed through, at the same 0.90x real time either way. What the duplicates buy is a dense presentation
+ * timeline, which is what a controller displays without visibly jumping at every gap.
+ *
+ * `-fpsmax` states that ceiling for a constant-rate output only, and FFmpeg refuses it beside any other
+ * frame-rate mode, so the two never appear together.
+ */
+describe('live output frame rate', () => {
+  it('bounds the rate for a constant-rate output, without pinning it', async () => {
+    const session = await liveSession();
+    await session.start();
+    session.stream.video(KEYFRAME);
+
+    const args = session.spawned[0]!;
+    expect(args[args.indexOf('-fpsmax') + 1]).toBe('30');
+    expect(args).not.toContain('-r');
+    expect(args, 'FFmpeg refuses a frame-rate mode beside -fpsmax').not.toContain('-fps_mode:v');
+    session.prepared.stop();
+  });
+});
+
+/**
+ * A guided live-media capture codes each attempt of a `libx264` session with one fixed change to its arguments, by
+ * the attempt's index, and leaves every other encoder, and every index past the last, on its own arguments.
+ */
+describe('live encode variants', () => {
+  it('changes one fixed set of libx264 arguments per attempt', async () => {
+    const vf = ['-vf', 'scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2'];
+    const keyframes = ['30', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0'];
+    const libx264 = (preset: string, rate: string, buffer: string) => [
+      ...['-c:v', 'libx264', '-preset', preset, '-tune', 'zerolatency', '-threads', '4'],
+      ...['-profile:v', 'main', '-level:v', '3.1'],
+      ...['-pix_fmt', 'yuv420p', '-b:v', rate, '-maxrate', rate, '-bufsize', buffer],
+    ];
+    const { notices, open } = hardwareMedia();
+    const slices = [];
+    for (const variant of [undefined, 0, 1, 2, 3, 4, 5, 6]) {
+      slices.push(encoderSlice((await open(QUALIFIED_MAIN, undefined, variant)).args));
+    }
+    const unchanged = [...libx264('superfast', '287k', '287k'), ...vf, '-fpsmax', ...keyframes];
+    expect(slices).toEqual([
+      unchanged,
+      unchanged,
+      [...libx264('ultrafast', '1500k', '3000k'), '-color_range', 'mpeg', ...vf, '-r', ...keyframes],
+      [...libx264('superfast', '287k', '287k'), '-color_range', 'mpeg', ...vf, '-fpsmax', ...keyframes],
+      [...libx264('superfast', '287k', '287k'), ...vf, '-r', ...keyframes],
+      [...libx264('superfast', '287k', '574k'), ...vf, '-fpsmax', ...keyframes],
+      [...libx264('superfast', '1500k', '3000k'), ...vf, '-fpsmax', ...keyframes],
+      unchanged,
+    ]);
+    expect(notices.map(({ variant }) => variant)).toEqual([undefined, 0, 1, 2, 3, 4, 5, undefined]);
+
+    const quality = hardwareMedia({ constantQuality: true });
+    const constant = await quality.open(QUALIFIED_MAIN, undefined, 1);
+    expect(constant.args).toEqual((await quality.open()).args);
+    expect(quality.notices[0], 'a variant that changed nothing is not recorded as applied').not.toHaveProperty(
+      'variant',
+    );
+  });
+});
+
+/**
+ * `-g` and `-keyint_min` are the negotiated frame rate doubled, and scene-cut detection is off, so a live
+ * session refreshes every two negotiated seconds and nothing else inserts one.
+ *
+ * Nothing in a negotiated selection states a refresh cadence, so this interval is plugin policy, and it is the
+ * only repair an unretransmitted SRTP session has. What it costs and what it does not buy are in
+ * docs/architecture.md.
+ */
+describe('live keyframe interval', () => {
+  it('codes a refresh every two negotiated seconds and lets nothing else insert one', async () => {
+    const session = await liveSession();
+    await session.start();
+    session.stream.video(KEYFRAME);
+
+    const args = session.spawned[0]!;
+    expect(args[args.indexOf('-g') + 1]).toBe('60');
+    expect(args[args.indexOf('-keyint_min') + 1]).toBe('60');
+    expect(args[args.indexOf('-sc_threshold') + 1]).toBe('0');
+    session.prepared.stop();
+  });
+
+  it('takes the interval from the negotiated rate rather than from a fixed frame count', async () => {
+    const session = await liveSession(undefined, { video: { ...NEGOTIATED_VIDEO, fps: 15 } });
+    await session.start();
+    session.stream.video(KEYFRAME);
+
+    const args = session.spawned[0]!;
+    expect(args[args.indexOf('-g') + 1]).toBe('30');
+    expect(args[args.indexOf('-keyint_min') + 1]).toBe('30');
+    session.prepared.stop();
+  });
+});
+
+/**
+ * The negotiated bit rate bounds what the accessory transmits, so the encoder is given the ceiling less the
+ * transport its own packetization will add to it.
+ *
+ * An encoder coding inside its ceiling still transmits over it whenever the transport is unreserved, which is
+ * what the measured overshoot was on every camera tried. The evidence, and the decision that the ceiling
+ * covers the transport rather than the coded stream, are in docs/architecture.md.
+ *
+ * Every expected budget below is written out rather than recomputed, because a test that re-derives the
+ * formula only asserts that the formula equals itself.
+ *
+ * The VBV buffer is one second of the budget rather than two. A buffer is an allowance a window may exceed
+ * the rate by, so a two-second buffer owes a 45-second session 4.4 percent over its ceiling on arithmetic
+ * alone.
+ */
+describe('live output bit rate', () => {
+  it('reserves the transport its own packetization adds out of the negotiated ceiling', async () => {
+    const session = await liveSession();
+    await session.start();
+    session.stream.video(KEYFRAME);
+
+    const args = session.spawned[0]!;
+    expect(args[args.indexOf('-b:v') + 1]).toBe('288k');
+    expect(args[args.indexOf('-maxrate') + 1]).toBe('288k');
+    session.prepared.stop();
+  });
+
+  it('bounds one second of VBV buffer rather than two, so a window is not owed a second buffer', async () => {
+    const session = await liveSession();
+    await session.start();
+    session.stream.video(KEYFRAME);
+
+    const args = session.spawned[0]!;
+    expect(args[args.indexOf('-bufsize') + 1]).toBe('288k');
+    expect(args[args.indexOf('-bufsize') + 1]).toBe(args[args.indexOf('-maxrate') + 1]);
+    session.prepared.stop();
+  });
+
+  it('reserves more from a smaller MTU, because the same media is carried in more packets', async () => {
+    const session = await liveSession(undefined, { video: { ...NEGOTIATED_VIDEO, mtu: 600 } });
+    await session.start();
+    session.stream.video(KEYFRAME);
+
+    const args = session.spawned[0]!;
+    expect(args[args.indexOf('-maxrate') + 1]).toBe('281k');
+    session.prepared.stop();
+  });
+
+  it('reserves less at a lower negotiated frame rate, because fewer frames end in a partial packet', async () => {
+    const session = await liveSession(undefined, { video: { ...NEGOTIATED_VIDEO, fps: 15 } });
+    await session.start();
+    session.stream.video(KEYFRAME);
+
+    const args = session.spawned[0]!;
+    expect(args[args.indexOf('-maxrate') + 1]).toBe('290k');
+    session.prepared.stop();
+  });
+
+  it('keeps a budget a tiny ceiling cannot pay for positive, so the encoder still starts', async () => {
+    const session = await liveSession(undefined, { video: { ...NEGOTIATED_VIDEO, maxBitRate: 1 } });
+    await session.start();
+    session.stream.video(KEYFRAME);
+
+    const args = session.spawned[0]!;
+    expect(args[args.indexOf('-maxrate') + 1]).toBe('1k');
+    expect(args[args.indexOf('-bufsize') + 1]).toBe('1k');
+    session.prepared.stop();
+  });
+});

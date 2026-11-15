@@ -1,28 +1,518 @@
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="app.css" />
 
-<div id="app">
-  <div class="d-flex justify-content-center align-items-center" style="min-height: 200px;">
-    <div class="spinner-border text-primary" role="status">
-      <span class="visually-hidden">Loading...</span>
+<main class="shell" data-ui-shell>
+  <header class="masthead" data-masthead>
+    <span class="eufy-logo" aria-hidden="true">
+      <img class="logo-light" src="assets/logo.svg" alt="" />
+      <img class="logo-dark" src="assets/logo-dark.svg" alt="" />
+    </span>
+    <div>
+      <p class="eyebrow" data-i18n="brand"></p>
+      <h1 data-i18n="pageTitle" data-page-title></h1>
     </div>
-  </div>
-</div>
+    <button
+      type="button"
+      class="dashboard-action masthead-action"
+      data-masthead-diagnostics
+      data-i18n-aria-label="menuDiagnostics"
+    >
+      <img src="assets/icons/bug-report.svg" alt="" />
+      <span class="diagnostics-capturing" data-i18n="diagnosticsCapturing"></span>
+    </button>
+  </header>
 
-<script src="utils/countries.js"></script>
-<script src="utils/device-images.js"></script>
-<script src="utils/helpers.js"></script>
-<script src="services/api.js"></script>
-<script src="services/config.js"></script>
-<script src="components/toggle.js"></script>
-<script src="components/select.js"></script>
-<script src="components/number-input.js"></script>
-<script src="components/guard-modes.js"></script>
-<script src="components/device-card.js"></script>
-<script src="views/login.js"></script>
-<script src="views/dashboard.js"></script>
-<script src="views/device-detail.js"></script>
-<script src="views/unsupported-detail.js"></script>
-<script src="views/settings.js"></script>
-<script src="views/diagnostics.js"></script>
-<script src="views/recordings.js"></script>
-<script src="app.js"></script>
+  <aside class="legacy-notice" data-legacy-notice hidden aria-labelledby="legacy-notice-title">
+    <img class="notice-icon" src="assets/icons/warning.svg" alt="" />
+    <div>
+      <p class="eyebrow" data-i18n="legacyEyebrow"></p>
+      <h2 id="legacy-notice-title" data-i18n="legacyTitle"></h2>
+      <p data-i18n="legacySummary"></p>
+      <p class="legacy-settings" data-legacy-settings></p>
+      <p role="status" data-legacy-status></p>
+    </div>
+    <button type="button" data-legacy-acknowledge data-i18n="acknowledge"></button>
+  </aside>
+
+  <aside class="first-setup" data-first-setup hidden aria-labelledby="first-setup-title">
+    <p class="eyebrow" data-i18n="firstSetupEyebrow"></p>
+    <h2 id="first-setup-title" data-i18n="firstSetupTitle"></h2>
+    <p data-i18n="firstSetupIntro"></p>
+    <p class="first-setup-reason">
+      <strong data-i18n="firstSetupReasonLabel"></strong>
+      <span data-i18n="firstSetupReasonBody"></span>
+    </p>
+    <a
+      href="https://support.eufylife.com/s/article/Share-Your-eufySecurity-Devices-With-Your-Family"
+      target="_blank"
+      rel="noopener noreferrer"
+      data-i18n="shareLink"
+    ></a>
+    <div class="first-setup-confirmation">
+      <label>
+        <input type="checkbox" data-first-setup-ack />
+        <span data-i18n="firstSetupAcknowledgement"></span>
+      </label>
+      <button type="button" data-first-setup-continue disabled data-i18n="firstSetupContinue"></button>
+    </div>
+  </aside>
+
+  <section class="dashboard" data-dashboard hidden aria-labelledby="dashboard-title">
+    <div class="dashboard-status" data-dashboard-state>
+      <img class="status-icon" src="assets/icons/inventory.svg" alt="" />
+      <div>
+        <p class="eyebrow" data-i18n="devicesEyebrow"></p>
+        <h2 id="dashboard-title" data-dashboard-title></h2>
+      </div>
+      <div class="dashboard-actions" role="group" data-i18n-aria-label="dashboardActionsLabel">
+        <button type="button" class="dashboard-action" data-dashboard-authenticate data-i18n-aria-label="menuRelogin">
+          <img src="assets/icons/settings_backup_restore.svg" alt="" />
+        </button>
+        <button type="button" class="dashboard-action" data-menu-diagnostics data-i18n-aria-label="menuDiagnostics">
+          <img src="assets/icons/bug-report.svg" alt="" />
+          <span class="diagnostics-name" data-i18n="menuDiagnostics"></span>
+          <span class="diagnostics-capturing" data-i18n="diagnosticsCapturing"></span>
+        </button>
+        <button type="button" class="dashboard-action" data-menu-wizard data-i18n-aria-label="menuWizard">
+          <img src="assets/icons/auto_fix_high.svg" alt="" />
+        </button>
+        <button type="button" class="dashboard-action" data-menu-advanced data-i18n-aria-label="menuAdvanced">
+          <img src="assets/icons/settings.svg" alt="" />
+        </button>
+      </div>
+    </div>
+    <p class="summary" data-dashboard-summary></p>
+
+    <aside class="update-pending" data-update-pending hidden aria-labelledby="update-pending-title">
+      <img class="notice-icon" src="assets/icons/warning.svg" alt="" />
+      <div>
+        <h2 id="update-pending-title" data-i18n="updatePendingTitle"></h2>
+        <p data-update-pending-summary></p>
+        <p class="legacy-settings" data-update-pending-version></p>
+      </div>
+      <button type="button" data-update-restart data-i18n="updatePendingAction"></button>
+    </aside>
+    <div data-device-groups></div>
+
+    <section
+      class="dashboard-panel device-panel"
+      data-device-settings
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="device-settings-title"
+    >
+      <div class="dashboard-panel-header">
+        <button type="button" class="dashboard-page-back" data-device-close data-i18n-aria-label="closeDetails">
+          <span aria-hidden="true">←</span>
+        </button>
+        <div>
+          <p class="eyebrow" data-device-settings-eyebrow></p>
+          <h2 id="device-settings-title" data-device-settings-title></h2>
+        </div>
+      </div>
+      <div class="preference-grid" data-device-settings-controls></div>
+    </section>
+
+    <section class="dashboard-panel advanced-panel" data-advanced-settings hidden aria-labelledby="advanced-title">
+      <div class="dashboard-panel-header">
+        <button type="button" class="dashboard-page-back" data-advanced-close data-i18n-aria-label="closeAdvanced">
+          <span aria-hidden="true">←</span>
+        </button>
+        <img class="dashboard-page-icon" src="assets/icons/settings.svg" alt="" />
+        <div>
+          <p class="eyebrow" data-i18n="advancedEyebrow"></p>
+          <h2 id="advanced-title" data-i18n="advancedTitle"></h2>
+          <p class="summary" data-i18n="advancedSummary"></p>
+        </div>
+      </div>
+      <div class="advanced-fields">
+        <label>
+          <span data-i18n="advancedPollingLabel"></span>
+          <input type="number" min="0" step="1" data-advanced-polling />
+          <small data-i18n="advancedPollingHelp"></small>
+        </label>
+        <label>
+          <span data-i18n="advancedConcurrentMediaLabel"></span>
+          <input type="number" min="0" step="1" data-advanced-concurrent-media />
+          <small data-i18n="advancedConcurrentMediaHelp"></small>
+        </label>
+        <div class="advanced-field">
+          <span class="advanced-field-label" data-i18n="advancedWarmUpLabel"></span>
+          <div class="warm-up-transfer">
+            <div class="warm-up-column">
+              <p id="warm-up-available-title" data-i18n="advancedWarmUpAvailable"></p>
+              <ul data-warm-up-available aria-labelledby="warm-up-available-title"></ul>
+            </div>
+            <div class="warm-up-controls">
+              <button type="button" data-warm-up-add data-i18n-aria-label="advancedWarmUpAdd">
+                <img class="warm-up-arrow" src="assets/icons/keyboard_arrow_right.svg" alt="" />
+              </button>
+              <button type="button" data-warm-up-add-all data-i18n-aria-label="advancedWarmUpAddAll">
+                <img class="warm-up-arrow" src="assets/icons/keyboard_double_arrow_right.svg" alt="" />
+              </button>
+              <button type="button" data-warm-up-remove data-i18n-aria-label="advancedWarmUpRemove">
+                <img class="warm-up-arrow" src="assets/icons/keyboard_arrow_left.svg" alt="" />
+              </button>
+              <button type="button" data-warm-up-remove-all data-i18n-aria-label="advancedWarmUpRemoveAll">
+                <img class="warm-up-arrow" src="assets/icons/keyboard_double_arrow_left.svg" alt="" />
+              </button>
+            </div>
+            <div class="warm-up-column">
+              <p id="warm-up-chosen-title" data-i18n="advancedWarmUpChosen"></p>
+              <ul data-warm-up-chosen aria-labelledby="warm-up-chosen-title"></ul>
+            </div>
+          </div>
+          <small data-i18n="advancedWarmUpHelp"></small>
+        </div>
+        <label>
+          <span data-i18n="advancedFfmpegLabel"></span>
+          <input type="text" data-advanced-ffmpeg />
+          <small data-i18n="advancedFfmpegHelp"></small>
+        </label>
+        <label>
+          <span data-i18n="advancedSmallVideoPacketsLabel"></span>
+          <input type="checkbox" data-advanced-small-video-packets />
+          <small data-i18n="advancedSmallVideoPacketsHelp"></small>
+        </label>
+        <label>
+          <span data-i18n="advancedLiveVideoPassthroughLabel"></span>
+          <input type="checkbox" data-advanced-live-video-passthrough />
+          <small data-i18n="advancedLiveVideoPassthroughHelp"></small>
+        </label>
+        <label>
+          <span data-i18n="advancedHardwareVideoEncoderLabel"></span>
+          <input type="checkbox" data-advanced-hardware-video-encoder />
+          <small data-i18n="advancedHardwareVideoEncoderHelp"></small>
+        </label>
+        <label>
+          <span data-i18n="advancedHdLiveVideoLabel"></span>
+          <input type="checkbox" data-advanced-hd-live-video />
+          <small data-i18n="advancedHdLiveVideoHelp"></small>
+        </label>
+        <label>
+          <span data-i18n="advancedIgnoreHomeBitRateLabel"></span>
+          <input type="checkbox" data-advanced-ignore-home-bit-rate />
+          <small data-i18n="advancedIgnoreHomeBitRateHelp"></small>
+        </label>
+      </div>
+      <p class="advanced-device-help" data-i18n="advancedDeviceHelp"></p>
+      <p class="advanced-status" role="status" aria-live="polite" data-advanced-status></p>
+    </section>
+
+    <section class="dashboard-panel wizard-panel" data-setup-wizard hidden aria-labelledby="wizard-title">
+      <div class="dashboard-panel-header">
+        <button type="button" class="dashboard-page-back" data-wizard-close data-i18n-aria-label="closeWizard">
+          <span aria-hidden="true">←</span>
+        </button>
+        <img class="dashboard-page-icon" src="assets/icons/auto_fix_high.svg" alt="" />
+        <div>
+          <p class="eyebrow" data-wizard-progress></p>
+          <h2 id="wizard-title" data-wizard-title></h2>
+          <p class="summary" data-wizard-eyebrow></p>
+        </div>
+      </div>
+      <p class="summary" data-wizard-restart hidden data-i18n="wizardRestartSummary"></p>
+      <nav class="wizard-map" data-wizard-map data-i18n-aria-label="wizardMapLabel"></nav>
+      <div class="wizard-stage" data-wizard-stage>
+        <div class="wizard-live" data-wizard-live>
+          <figure>
+            <img data-wizard-live-image alt="" draggable="false" hidden />
+            <figcaption class="wizard-live-label" data-wizard-live-camera data-i18n="wizardLiveCamera"></figcaption>
+          </figure>
+          <figure>
+            <img data-wizard-live-homekit alt="" draggable="false" hidden />
+            <span class="wizard-live-spinner" data-wizard-live-homekit-spinner hidden aria-hidden="true"></span>
+            <figcaption class="wizard-live-label" data-wizard-live-encoder></figcaption>
+          </figure>
+          <button type="button" class="wizard-live-play" data-wizard-live-play data-i18n-aria-label="wizardLivePlay">
+            <img src="assets/icons/play_arrow.svg" alt="" />
+          </button>
+          <button
+            type="button"
+            class="wizard-live-play wizard-live-stop"
+            data-wizard-live-stop
+            hidden
+            data-i18n-aria-label="wizardLiveStop"
+          >
+            <img src="assets/icons/stop.svg" alt="" />
+          </button>
+          <span class="wizard-live-spinner" data-wizard-live-spinner hidden aria-hidden="true"></span>
+          <p class="wizard-live-status" role="status" aria-live="polite" data-wizard-live-status></p>
+        </div>
+      </div>
+      <form class="wizard-card" data-wizard-live-controls hidden aria-labelledby="wizard-live-title">
+        <h3 id="wizard-live-title" data-i18n="wizardLiveTitle"></h3>
+        <p class="preference-note" data-i18n="wizardLiveHelp"></p>
+        <div class="preference-grid">
+          <label class="wizard-setting" data-setting>
+            <span class="setting-label" data-i18n="wizardLiveAsk"></span>
+            <select name="ask">
+              <option value="wifi" data-i18n="wizardLiveAskWifi"></option>
+              <option value="cellular" data-i18n="wizardLiveAskCellular"></option>
+            </select>
+          </label>
+          <p class="preference-representation" data-i18n="wizardLiveThisCamera"></p>
+          <div data-setting>
+            <label class="toggle">
+              <input type="checkbox" name="liveVideoPassthrough" />
+              <span class="setting-label" data-i18n="advancedLiveVideoPassthroughLabel"></span>
+            </label>
+            <p data-i18n="advancedLiveVideoPassthroughHelp"></p>
+          </div>
+          <div data-setting>
+            <label class="toggle">
+              <input type="checkbox" name="ignoreHomeBitRate" />
+              <span class="setting-label" data-i18n="advancedIgnoreHomeBitRateLabel"></span>
+            </label>
+            <p data-i18n="advancedIgnoreHomeBitRateHelp"></p>
+          </div>
+          <div class="wizard-nav">
+            <button type="button" data-wizard-live-save data-i18n="wizardLiveSave"></button>
+          </div>
+          <p class="preference-representation" data-i18n="wizardLiveAllCameras"></p>
+          <div data-setting>
+            <label class="toggle">
+              <input type="checkbox" name="hardwareVideoEncoder" />
+              <span class="setting-label" data-i18n="advancedHardwareVideoEncoderLabel"></span>
+            </label>
+            <p data-i18n="advancedHardwareVideoEncoderHelp"></p>
+          </div>
+          <div data-setting>
+            <label class="toggle">
+              <input type="checkbox" name="smallVideoPackets" />
+              <span class="setting-label" data-i18n="advancedSmallVideoPacketsLabel"></span>
+            </label>
+            <p data-i18n="advancedSmallVideoPacketsHelp"></p>
+          </div>
+        </div>
+      </form>
+      <p class="summary" data-wizard-live-diagnose hidden>
+        <span data-i18n="wizardLiveDiagnoseHelp"></span>
+        <button type="button" data-wizard-live-diagnose-start data-i18n="wizardLiveDiagnose"></button>
+      </p>
+      <section class="wizard-card" data-wizard-homekit aria-labelledby="wizard-homekit-title">
+        <h3 id="wizard-homekit-title" data-i18n="wizardHomeKitTitle"></h3>
+        <p class="preference-note" data-i18n="wizardHomeKitHelp"></p>
+        <div class="preference-grid" data-wizard-controls></div>
+      </section>
+      <section class="wizard-card" data-wizard-eufy hidden aria-labelledby="wizard-eufy-title">
+        <h3 id="wizard-eufy-title" data-i18n="wizardEufySettings"></h3>
+        <p class="preference-note" data-i18n="wizardEufyHelp"></p>
+        <div class="preference-grid" data-wizard-settings></div>
+      </section>
+      <div class="wizard-nav">
+        <button type="button" data-wizard-finish></button>
+      </div>
+    </section>
+  </section>
+
+  <section class="dashboard-panel diagnostics-panel" data-diagnostics hidden aria-labelledby="diagnostics-title">
+    <div class="dashboard-panel-header">
+      <button
+        type="button"
+        class="dashboard-page-back"
+        data-diagnostics-close
+        data-i18n-aria-label="closeDiagnostics"
+      >
+        <span aria-hidden="true">←</span>
+      </button>
+      <img class="dashboard-page-icon" src="assets/icons/bug-report.svg" alt="" />
+      <div>
+        <p class="eyebrow" data-i18n="diagnosticsEyebrow"></p>
+        <h2 id="diagnostics-title" data-i18n="diagnosticsTitle"></h2>
+      </div>
+    </div>
+    <div class="diagnostics-stage">
+      <div class="diagnostics-wizard diagnostics-surface" data-diagnostics-wizard>
+        <div class="diagnostics-question" data-diagnostics-question>
+          <h3
+            id="diagnostics-question-heading"
+            tabindex="-1"
+            data-diagnostics-question-text
+            data-i18n="diagnosticsTilesHeading"
+          ></h3>
+          <p class="diagnostics-note" data-i18n="diagnosticsPrivacy"></p>
+          <div class="diagnostics-tiles" role="group" aria-labelledby="diagnostics-question-heading">
+            <button type="button" data-diagnostics-tile="startup-authentication">
+              <span data-i18n="diagnosticsProfileStartup"></span>
+              <small data-i18n="diagnosticsStartupSummary"></small>
+            </button>
+            <button type="button" data-diagnostics-tile="device-representation">
+              <span data-i18n="diagnosticsProfileDevices"></span>
+              <small data-i18n="diagnosticsDevicesSummary"></small>
+            </button>
+            <button type="button" data-diagnostics-tile="control-state">
+              <span data-i18n="diagnosticsProfileControl"></span>
+              <small data-i18n="diagnosticsControlSummary"></small>
+            </button>
+            <button type="button" data-diagnostics-tile="live-media">
+              <span data-i18n="diagnosticsProfileLiveMedia"></span>
+              <small data-i18n="diagnosticsLiveSummary"></small>
+            </button>
+            <button type="button" data-diagnostics-tile="hksv-recording">
+              <span data-i18n="diagnosticsProfileRecording"></span>
+              <small data-i18n="diagnosticsRecordingSummary"></small>
+            </button>
+            <button type="button" data-diagnostics-tile="dashboard-ui">
+              <span data-i18n="diagnosticsProfileDashboard"></span>
+              <small data-i18n="diagnosticsDashboardSummary"></small>
+            </button>
+            <button type="button" data-diagnostics-tile="other">
+              <span data-i18n="diagnosticsProfileOther"></span>
+              <small data-i18n="diagnosticsOtherSummary"></small>
+            </button>
+          </div>
+          <div class="diagnostics-cameras" data-diagnostics-cameras hidden>
+            <h3 id="diagnostics-cameras-heading" data-i18n="diagnosticsEncodeCameras"></h3>
+            <div
+              class="diagnostics-tiles diagnostics-camera-tiles"
+              role="group"
+              aria-labelledby="diagnostics-cameras-heading"
+              data-diagnostics-camera-list
+            ></div>
+            <div class="diagnostics-actions">
+              <button type="button" data-diagnostics-cameras-back data-i18n="diagnosticsBack"></button>
+              <button type="button" data-diagnostics-cameras-start data-i18n="diagnosticsEncodeStart"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="diagnostics-guidance diagnostics-surface" data-diagnostics-guidance hidden>
+        <h3 tabindex="-1" data-diagnostics-phase-title></h3>
+        <div class="diagnostics-encode" data-diagnostics-encode hidden>
+          <p aria-live="polite" data-diagnostics-encode-step></p>
+          <img class="diagnostics-encode-preview" alt="" data-diagnostics-encode-preview hidden />
+          <div class="diagnostics-actions" data-diagnostics-encode-answer hidden>
+            <button type="button" data-encode-answer="live-picture-seen" data-i18n="diagnosticsEncodeSeen"></button>
+            <button type="button" data-encode-answer="live-picture-not-seen" data-i18n="diagnosticsEncodeNotSeen"></button>
+          </div>
+        </div>
+        <div>
+          <span class="guidance-label" data-i18n="diagnosticsActionLabel"></span>
+          <p data-diagnostics-guidance-action></p>
+        </div>
+        <div class="diagnostics-actions" data-diagnostics-actions hidden>
+          <button type="button" data-diagnostics-cancel data-i18n="diagnosticsCancel"></button>
+          <button type="button" data-diagnostics-reproduction disabled data-i18n="diagnosticsNowFinish"></button>
+        </div>
+        <p class="diagnostics-note" data-diagnostics-capture-note></p>
+      </div>
+      <dialog class="blocking-dialog diagnostics-result" data-diagnostics-result aria-labelledby="diagnostics-result-heading">
+        <h2 id="diagnostics-result-heading" tabindex="-1" data-diagnostics-result-heading data-i18n="diagnosticsEvidenceReady"></h2>
+        <p data-diagnostics-handoff-note hidden></p>
+        <button type="button" data-diagnostics-export disabled hidden data-i18n="diagnosticsArchiveExport"></button>
+        <div class="diagnostics-handoff" data-diagnostics-handoff hidden>
+          <a data-diagnostics-issue target="_blank" rel="noopener noreferrer" data-i18n="diagnosticsOpenIssue"></a>
+          <a
+            data-diagnostics-existing-issue
+            target="_blank"
+            rel="noopener noreferrer"
+            data-i18n="diagnosticsExistingIssue"
+          ></a>
+        </div>
+        <button
+          type="button"
+          class="diagnostics-quiet-action"
+          data-diagnostics-download-again
+          hidden
+          data-i18n="diagnosticsDownloadAgain"
+        ></button>
+        <button
+          type="button"
+          class="diagnostics-quiet-action"
+          data-diagnostics-start-another
+          data-i18n="diagnosticsStartAnother"
+        ></button>
+        <p class="diagnostics-status" role="status" aria-live="polite" data-diagnostics-result-status></p>
+      </dialog>
+      <p class="diagnostics-status" role="status" aria-live="polite" data-diagnostics-status></p>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="authentication-status" data-authentication="ready" data-setup-content hidden>
+    <div class="status-row">
+      <div>
+        <p class="eyebrow" data-i18n="setupStatusEyebrow"></p>
+        <h2 id="authentication-status" data-i18n="authReady"></h2>
+      </div>
+      <span class="status" data-i18n="available"></span>
+    </div>
+
+    <p class="summary" data-i18n="authSummary"></p>
+
+    <div class="handoff" role="note" aria-label="" data-i18n-aria-label="accountConnectionLabel">
+      <strong data-i18n="oneAccountSession"></strong>
+      <p data-i18n="sessionDetails"></p>
+    </div>
+
+    <ol class="steps" aria-label="" data-i18n-aria-label="setupSequenceLabel">
+      <li class="current" aria-current="step"><span>1</span><strong data-i18n="stepAuthenticate"></strong></li>
+      <li><span>2</span><strong data-i18n="stepDiscover"></strong></li>
+      <li><span>3</span><strong data-i18n="stepDevices"></strong></li>
+    </ol>
+
+    <form class="authentication-form" data-auth-form>
+      <label>
+        <span data-i18n="accountLabel"></span>
+        <input type="email" autocomplete="username" required data-account />
+      </label>
+      <label>
+        <span data-i18n="passwordLabel"></span>
+        <input type="password" autocomplete="current-password" required data-password />
+      </label>
+      <div class="field-row">
+        <label>
+          <span data-i18n="countryLabel"></span>
+          <input type="text" inputmode="text" maxlength="2" pattern="[A-Za-z]{2}" required data-country />
+        </label>
+        <label>
+          <span data-i18n="trustedDeviceLabel"></span>
+          <input type="text" maxlength="128" required data-trusted-device-name />
+        </label>
+      </div>
+      <button type="submit" data-auth-submit data-i18n="authenticate"></button>
+    </form>
+
+    <form class="challenge-form" data-challenge-form hidden>
+      <img class="captcha" alt="" data-challenge-image hidden />
+      <label>
+        <span data-challenge-label></span>
+        <input type="text" inputmode="numeric" autocomplete="one-time-code" required data-challenge-answer />
+      </label>
+      <button type="submit" data-challenge-submit data-i18n="continueAuthentication"></button>
+    </form>
+    <p class="authentication-status" role="status" aria-live="polite" data-auth-status></p>
+  </section>
+
+  <p class="footnote" data-i18n="footnote"></p>
+
+  <dialog class="blocking-dialog" data-reauth-dialog aria-labelledby="reauth-title" aria-describedby="reauth-summary">
+    <h2 id="reauth-title" data-i18n="reauthTitle"></h2>
+    <p id="reauth-summary" data-i18n="reauthSummary"></p>
+    <button type="button" data-reauth-action data-i18n="reauthAction"></button>
+  </dialog>
+
+  <dialog
+    class="blocking-dialog"
+    closedby="any"
+    data-attention-dialog
+    aria-labelledby="attention-title"
+    aria-describedby="attention-summary"
+  >
+    <h2 id="attention-title" data-attention-title></h2>
+    <p id="attention-summary" data-attention-summary></p>
+    <p class="diagnostics-note" data-i18n="diagnosticsPrivacy"></p>
+    <div class="diagnostics-choice-actions">
+      <button
+        type="button"
+        class="diagnostics-secondary-action"
+        data-attention-choose
+        data-i18n="attentionChooseAnother"
+      ></button>
+      <button type="button" data-attention-diagnose data-i18n="attentionDiagnose"></button>
+    </div>
+  </dialog>
+</main>
+
+<script src="js/dashboard.js"></script>
+<script src="js/app.js"></script>

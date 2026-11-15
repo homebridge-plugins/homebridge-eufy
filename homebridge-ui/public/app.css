@@ -1,0 +1,2471 @@
+/*
+ * The scales this sheet holds to. A value outside one of them is a defect, not a preference.
+ *
+ * Spacing is a 4px grid. 2px appears only as an optical nudge, never as a gap or padding step.
+ * Radius, edge intensity, text level, and easing are tokens; no rule states one of them as a literal.
+ * Weight is 400 body, 500 label, 600 emphasis, 700 heading.
+ * Depth is edges. A border carries structure and only a floating layer carries a shadow.
+ */
+:root {
+  color-scheme: light dark;
+  --accent: #00bfc4;
+  --accent-ink: #006f73;
+  --on-accent: #07383a;
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, var(--panel));
+
+  /*
+   * The four text levels: default, supporting, metadata, and disabled.
+   *
+   * The supporting and disabled levels are mixed against the panel rather than stated, so a host theme that
+   * moves `--bs-body-color` carries all four levels with it. The mix is redeclared in the dark block because a
+   * custom property resolves `var()` where it is declared, not where it is used.
+   */
+  --ink: var(--bs-body-color, #182033);
+  --ink-secondary: color-mix(in srgb, var(--ink) 78%, var(--panel));
+  --muted: var(--bs-secondary-color, #667085);
+  --ink-disabled: color-mix(in srgb, var(--muted) 55%, var(--panel));
+
+  --alert: #d99a21;
+  --fault: #b42318;
+  --ok: #1a7f4b;
+
+  /*
+   * The two edge intensities. `--line` divides and encloses; `--line-strong` is for a control the user must
+   * find without looking for it. Both are alpha over the surface, so an edge belongs to whatever it sits on.
+   */
+  --line: rgb(23 32 44 / 11%);
+  --line-strong: rgb(23 32 44 / 19%);
+
+  --radius-sm: 4px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-panel: 16px;
+  --radius-pill: 999px;
+
+  --focus-ring: 2px solid var(--accent-ink);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  /* The one shadow in the sheet, for a layer that floats over content it does not belong to. */
+  --shadow-overlay:
+    0 0 0 1px rgb(23 32 44 / 6%),
+    0 4px 12px rgb(23 32 44 / 10%);
+
+  --panel: #ffffff;
+  --tile-bg: #edf2f7;
+  --tile-ink: #17202c;
+  --tile-muted: #475569;
+  --tile-gradient: rgb(237 242 247 / 94%);
+  --tile-stripe: rgb(23 32 44 / 7%);
+  --tile-badge-bg: rgb(255 255 255 / 78%);
+  --tile-badge-border: rgb(23 32 44 / 28%);
+  --tile-badge-halo: rgb(4 8 14 / 85%);
+  --tile-image-filter: brightness(0.92) saturate(0.85) contrast(1.05);
+  --tile-scene-filter: brightness(0.88) saturate(0.95);
+  --tile-scene-gradient: rgb(23 32 44 / 82%);
+
+  /*
+   * The copy over a scene, which does not vary by theme.
+   *
+   * A product cutout sits on the tile's own surface and takes the theme's ink. A scene is a photograph under a
+   * dark gradient in both themes, so the name over it is light in both: taking the theme's ink there would put
+   * dark text on a dark photograph every time the interface is in light mode.
+   */
+  --tile-scene-ink: #f4f7fb;
+  --tile-scene-muted: #d6deea;
+  --tile-scene-stripe: rgb(255 255 255 / 12%);
+  --tile-disabled-filter: brightness(0.82) grayscale(0.65) contrast(1.05);
+  --tile-icon-filter: none;
+  --tile-tooltip-bg: #ffffff;
+  --tile-tooltip-ink: #17202c;
+}
+
+html,
+body {
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow-x: hidden;
+  background: transparent;
+  color: var(--ink);
+  font:
+    14px/1.5 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  accent-color: var(--accent);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.shell {
+  width: min(100%, 720px);
+  height: auto !important;
+  max-height: none !important;
+  margin: 0 auto;
+  overflow: visible !important;
+  scrollbar-width: none;
+  padding: 4px 0 20px;
+  color: var(--ink);
+}
+
+.shell::-webkit-scrollbar {
+  display: none;
+}
+
+.masthead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.eufy-logo {
+  width: 100px;
+  flex: 0 0 auto;
+  padding: 4px;
+}
+
+.eufy-logo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.eufy-logo .logo-dark {
+  display: none;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+p,
+small {
+  text-wrap: pretty;
+}
+
+h1 {
+  margin-bottom: 0;
+  font-size: clamp(22px, 5vw, 30px);
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+}
+
+h2 {
+  margin-bottom: 0;
+  font-size: 18px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.eyebrow {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  padding: clamp(16px, 5vw, 32px);
+}
+
+.legacy-notice,
+.update-pending {
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  padding: clamp(16px, 4vw, 24px);
+}
+
+.dashboard {
+  margin: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.dashboard-panel {
+  display: grid;
+  gap: 20px;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.dashboard-panel-header {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.dashboard-panel-header > div {
+  min-width: 0;
+}
+
+.dashboard-panel-header .summary {
+  margin: 4px 0 0;
+}
+
+.dashboard-page-back {
+  display: grid;
+  width: 40px;
+  min-height: 40px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.dashboard-page-icon {
+  width: 24px;
+  height: 24px;
+  opacity: 0.72;
+}
+
+.diagnostics-panel .summary {
+  margin-bottom: 0;
+}
+
+.diagnostics-status {
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
+.diagnostics-panel select,
+.wizard-setting select {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 8px 12px;
+}
+
+.diagnostics-actions:not([hidden]) {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.diagnostics-stage {
+  display: grid;
+  gap: 12px;
+}
+
+.diagnostics-surface {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--panel);
+  padding: clamp(16px, 4vw, 24px);
+}
+
+.diagnostics-question {
+  display: grid;
+  gap: 16px;
+}
+
+.diagnostics-question > h3,
+.diagnostics-guidance > h3 {
+  margin: 0;
+}
+
+.diagnostics-guidance > h3 {
+  font-size: inherit;
+}
+
+.diagnostics-question > h3 {
+  font-size: clamp(17px, 4vw, 21px);
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+button.diagnostics-quiet-action {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 40px;
+  align-items: center;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.diagnostics-guidance {
+  display: grid;
+  gap: 12px;
+}
+
+.diagnostics-guidance > div {
+  border-top: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  padding-top: 8px;
+}
+
+.diagnostics-guidance p {
+  margin-bottom: 0;
+}
+
+.guidance-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--accent-ink);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.diagnostics-guidance .diagnostics-actions button,
+.diagnostics-cameras .diagnostics-actions button {
+  flex: 1 1 0;
+}
+
+.diagnostics-actions:has(> [data-diagnostics-reproduction][hidden]) > [data-diagnostics-cancel] {
+  flex: 0 0 auto;
+  padding-inline: 24px;
+}
+
+.diagnostics-guidance [data-diagnostics-cancel],
+.diagnostics-encode [data-encode-answer='live-picture-not-seen'],
+.diagnostics-cameras [data-diagnostics-cameras-back] {
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+}
+
+/* A guided live capture's step is the instruction, so the general one is not repeated beside it. */
+.diagnostics-guidance:has(> [data-diagnostics-encode]:not([hidden])) > div:has(> [data-diagnostics-guidance-action]) {
+  display: none;
+}
+
+.diagnostics-result h2,
+.diagnostics-result p {
+  margin-bottom: 0;
+}
+
+.diagnostics-note {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.diagnostics-result[open] {
+  display: grid;
+  max-width: 560px;
+  gap: 8px;
+}
+
+/*
+ * The download is a button because it acts here; the two ways to report are anchors because they navigate to
+ * GitHub, side by side because either one finishes the handoff.
+ */
+.diagnostics-result [data-diagnostics-export],
+.diagnostics-handoff a {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-control);
+  padding: 8px 12px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+/*
+ * The dialog sits in the top layer, which adds nothing to the page height Homebridge sizes its iframe by, so the
+ * stage keeps room for it rather than leaving it to scroll inside a sliver.
+ */
+.diagnostics-stage:has(> .diagnostics-result[open]) {
+  min-height: 320px;
+}
+
+.diagnostics-handoff:not([hidden]) {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.diagnostics-handoff [data-diagnostics-issue] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.diagnostics-handoff [data-diagnostics-existing-issue] {
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+}
+
+.diagnostics-result [data-diagnostics-result-status]:empty {
+  display: none;
+}
+
+.diagnostics-result [data-diagnostics-download-again],
+.diagnostics-result [data-diagnostics-start-another] {
+  justify-self: center;
+}
+
+/*
+ * The opening screen: every area at once, three to a row, each label over its one-line summary.
+ *
+ * Each tile carries a Material Symbols outline glyph (Apache-2.0) as a mask rather than an element. A mask lets
+ * the glyph take the tile's own colour in every state instead of being baked into an image. The data URI is inline, so
+ * the panel renders the same on a host with no route to the internet.
+ */
+.diagnostics-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.diagnostics-tiles button {
+  display: flex;
+  min-height: 88px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 8px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: break-word;
+  text-align: center;
+}
+
+.diagnostics-tiles button::before {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  background: currentColor;
+  content: '';
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
+}
+
+.diagnostics-tiles small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.diagnostics-tiles button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.diagnostics-tiles [data-diagnostics-tile='startup-authentication']::before {
+  mask-image: url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%20-960%20960%20960%22%3E%3Cpath%20d=%22M480-120v-80h280v-560H480v-80h280q33%200%2056.5%2023.5T840-760v560q0%2033-23.5%2056.5T760-120H480Zm-80-160-55-58%20102-102H120v-80h327L345-622l55-58%20200%20200-200%20200Z%22/%3E%3C/svg%3E');
+}
+
+.diagnostics-tiles [data-diagnostics-tile='device-representation']::before {
+  mask-image: url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%20-960%20960%20960%22%3E%3Cpath%20d=%22M400-560ZM160-160q-33%200-56.5-23.5T80-240v-480q0-33%2023.5-56.5T160-800h640q33%200%2056.5%2023.5T880-720H160v480h80v80h-80Zm640-80v-320H640v320h160Zm-180%2080q-25%200-42.5-17.5T560-220v-360q0-25%2017.5-42.5T620-640h200q25%200%2042.5%2017.5T880-580v360q0%2025-17.5%2042.5T820-160H620Zm100-300q13%200%2021.5-9t8.5-21q0-13-8.5-21.5T720-520q-12%200-21%208.5t-9%2021.5q0%2012%209%2021t21%209ZM340-160l-20-70q-19-17-29.5-40T280-320q0-27%2010.5-50t29.5-40l20-70h120l20%2070q19%2017%2029.5%2040t10.5%2050q0%2027-10.5%2050T480-230l-20%2070H340Zm60-100q26%200%2043-17.5t17-42.5q0-25-18-42.5T400-380q-24%200-42%2017t-18%2043q0%2026%2017%2043t43%2017Zm320-140Z%22/%3E%3C/svg%3E');
+}
+
+.diagnostics-tiles [data-diagnostics-tile='control-state']::before {
+  mask-image: url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%20-960%20960%20960%22%3E%3Cpath%20d=%22M440-120v-240h80v80h320v80H520v80h-80Zm-320-80v-80h240v80H120Zm160-160v-80H120v-80h160v-80h80v240h-80Zm160-80v-80h400v80H440Zm160-160v-240h80v80h160v80H680v80h-80Zm-480-80v-80h400v80H120Z%22/%3E%3C/svg%3E');
+}
+
+.diagnostics-camera-tiles button::before,
+.diagnostics-tiles [data-diagnostics-tile='live-media']::before {
+  mask-image: url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%20-960%20960%20960%22%3E%3Cpath%20d=%22M160-160q-33%200-56.5-23.5T80-240v-480q0-33%2023.5-56.5T160-800h480q33%200%2056.5%2023.5T720-720v180l160-160v440L720-420v180q0%2033-23.5%2056.5T640-160H160Zm0-80h480v-480H160v480Zm0%200v-480%20480Z%22/%3E%3C/svg%3E');
+}
+
+.diagnostics-tiles [data-diagnostics-tile='hksv-recording']::before {
+  mask-image: url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%20-960%20960%20960%22%3E%3Cpath%20d=%22m160-800%2080%20160h120l-80-160h80l80%20160h120l-80-160h80l80%20160h120l-80-160h120q33%200%2056.5%2023.5T880-720v480q0%2033-23.5%2056.5T800-160H160q-33%200-56.5-23.5T80-240v-480q0-33%2023.5-56.5T160-800Zm0%20240v320h640v-320H160Zm0%200v320-320Z%22/%3E%3C/svg%3E');
+}
+
+.diagnostics-tiles [data-diagnostics-tile='dashboard-ui']::before {
+  mask-image: url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%20-960%20960%20960%22%3E%3Cpath%20d=%22M520-600v-240h320v240H520ZM120-440v-400h320v400H120Zm400%20320v-400h320v400H520Zm-400%200v-240h320v240H120Zm80-400h160v-240H200v240Zm400%20320h160v-240H600v240Zm0-480h160v-80H600v80ZM200-200h160v-80H200v80Zm160-320Zm240-160Zm0%20240ZM360-280Z%22/%3E%3C/svg%3E');
+}
+
+.diagnostics-tiles [data-diagnostics-tile='other']::before {
+  mask-image: url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%20-960%20960%20960%22%3E%3Cpath%20d=%22M513.5-254.5Q528-269%20528-290t-14.5-35.5Q499-340%20478-340t-35.5%2014.5Q428-311%20428-290t14.5%2035.5Q457-240%20478-240t35.5-14.5ZM442-394h74q0-33%207.5-52t42.5-52q26-26%2041-49.5t15-56.5q0-56-41-86t-97-30q-57%200-92.5%2030T342-618l66%2026q5-18%2022.5-39t53.5-21q32%200%2048%2017.5t16%2038.5q0%2020-12%2037.5T506-526q-44%2039-54%2059t-10%2073Zm38%20314q-83%200-156-31.5T197-197q-54-54-85.5-127T80-480q0-83%2031.5-156T197-763q54-54%20127-85.5T480-880q83%200%20156%2031.5T763-763q54%2054%2085.5%20127T880-480q0%2083-31.5%20156T763-197q-54%2054-127%2085.5T480-80Zm0-80q134%200%20227-93t93-227q0-134-93-227t-227-93q-134%200-227%2093t-93%20227q0%20134%2093%20227t227%2093Zm0-320Z%22/%3E%3C/svg%3E');
+}
+
+.advanced-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+}
+
+.advanced-field {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.advanced-field-label {
+  font-weight: 500;
+}
+
+.advanced-fields label {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.advanced-fields input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 8px 12px;
+  font: inherit;
+}
+
+.advanced-fields input[type='checkbox'] {
+  justify-self: start;
+  width: auto;
+  min-height: 0;
+}
+
+.advanced-fields small,
+.advanced-device-help {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.advanced-device-help {
+  margin-bottom: 0;
+}
+
+.advanced-status {
+  min-height: 20px;
+  margin-bottom: 0;
+  color: var(--fault);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.legacy-notice,
+.update-pending {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.notice-icon,
+.status-icon {
+  width: 24px;
+  height: 24px;
+  opacity: 0.72;
+}
+
+.legacy-notice p,
+.update-pending p {
+  margin-bottom: 4px;
+}
+
+.legacy-notice button {
+  width: auto;
+  padding-inline: 16px;
+}
+
+.legacy-settings {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dashboard-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.dashboard-status > div:not(.dashboard-actions) {
+  min-width: 0;
+  flex: 1;
+}
+
+.dashboard-status .status-icon {
+  flex: 0 0 auto;
+}
+
+.dashboard-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.dashboard-action {
+  position: relative;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0;
+}
+
+.dashboard-action img {
+  width: 20px;
+  height: 20px;
+  opacity: 0.72;
+}
+
+.dashboard-action::after {
+  content: attr(aria-label);
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  right: 0;
+  width: max-content;
+  max-width: 192px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 4px 8px;
+  box-shadow: var(--shadow-overlay);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition:
+    opacity 150ms var(--ease-out),
+    transform 150ms var(--ease-out);
+}
+
+.dashboard-action[data-collecting],
+.dashboard-action:has(.diagnostics-name) {
+  width: auto;
+  grid-auto-flow: column;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.dashboard-action[data-collecting] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+}
+
+/*
+ * The dashboard's diagnostics action is named in words at rest, and a capture under way replaces that name
+ * beside the icon, so neither rests on the icon or on colour alone.
+ */
+.diagnostics-name,
+.diagnostics-capturing {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.diagnostics-capturing,
+.dashboard-action[data-collecting] .diagnostics-name {
+  display: none;
+}
+
+.dashboard-action[data-collecting] .diagnostics-capturing {
+  display: inline;
+}
+
+/* A problem the dashboard shows: an alert ring, and a dot so the state does not rest on colour alone. */
+.dashboard-action[data-attention] {
+  border-color: var(--alert);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--alert) 24%, transparent);
+}
+
+.dashboard-action[data-attention]::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--panel);
+  border-radius: var(--radius-pill);
+  background: var(--alert);
+}
+
+.dashboard-action:hover::after,
+.dashboard-action:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.blocking-dialog {
+  max-width: 420px;
+  border: 0;
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  box-shadow: var(--shadow-overlay);
+  color: var(--ink);
+  padding: 24px;
+}
+
+.blocking-dialog::backdrop {
+  background: rgb(0 0 0 / 30%);
+  backdrop-filter: blur(5px);
+}
+
+.blocking-dialog h2 {
+  margin: 0 0 8px;
+}
+
+.blocking-dialog p {
+  margin: 0 0 20px;
+  color: var(--ink-secondary);
+}
+
+.device-group + .device-group {
+  margin-top: 24px;
+}
+
+.device-group > h2 {
+  margin-bottom: 8px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* The grid measures itself against this, so a row height can be stated as a fraction of a column width. */
+.device-group {
+  container-type: inline-size;
+}
+
+.device-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /*
+   * A row is half a column tall, so a camera spanning two of them plus the gap between is exactly square and two
+   * short tiles stack into the height one camera holds. Stated in container units because the row has to follow
+   * the column, and the column is a fraction of a width only the container knows.
+   */
+  grid-auto-rows: calc(((100cqw - 24px) / 3 - 12px) / 2);
+  /* Short tiles fill the space beside a camera rather than starting a row of their own. */
+  grid-auto-flow: row dense;
+  gap: 12px;
+}
+
+.device-tile {
+  position: relative;
+  min-width: 0;
+  grid-row: span 2;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--tile-bg);
+  transition: border-color 150ms var(--ease-out);
+}
+
+/*
+ * A device with no camera frame to show gets half the height, so two stack into the space one camera occupies.
+ *
+ * The square is the camera's, because a frame is what fills it and what the eye finds a camera by. A sensor's
+ * tile carries a product photograph that reads at any height and two lines of copy, so the other half is spent
+ * on nothing, and a household of sensors pushes the cameras off the screen.
+ */
+.device-tile:not([data-device-class='camera']) {
+  grid-row: span 1;
+}
+
+/* Half a tile is too little for the photograph to sit behind the copy, so it keeps to a strip beside it. */
+.device-tile:not([data-device-class='camera']) .device-summary {
+  justify-content: center;
+}
+
+.device-tile:not([data-device-class='camera']) .device-art img[data-device-artwork] {
+  inset: 8px 8px 8px auto;
+  width: 36%;
+  height: calc(100% - 16px);
+}
+
+.device-tile:not([data-device-class='camera']) .device-copy {
+  max-width: 60%;
+}
+
+/*
+ * The explanation on a short tile gives up the icon and the deep padding to fit, because the words are the point
+ * and the badge on the front face already carries the same icon.
+ */
+.device-tile:not([data-device-class='camera']) .diagnostic-panel {
+  gap: 2px;
+  padding: 12px;
+}
+
+/*
+ * A device's settings are a page rather than a face on the tile, so they are read at the page's scale and have as
+ * much room as the device needs. The tile is the summary and the way in; nothing about its size bounds this.
+ */
+.device-panel .preference-grid {
+  gap: 20px;
+  max-width: 560px;
+}
+
+.device-panel .preference-grid label,
+.device-panel .preference-grid .setting-label,
+.device-panel .preference-grid p {
+  font-size: 13px;
+}
+
+.device-panel .preference-representation {
+  font-size: 13px;
+}
+
+/*
+ * A finger has no hover and no precision, so every row it can act on is at least 44px tall where the pointer is
+ * coarse. This is the whole interaction on an iPhone: there is no second way in.
+ */
+@media (pointer: coarse) {
+  .device-panel .preference-grid .toggle {
+    min-height: 44px;
+  }
+
+  /*
+   * The segment's fill is painted on its inner span, so the span is what grows. Giving the height to the label
+   * instead leaves the selected fill short of the row it sits in, which reads as the buttons being misaligned
+   * with the selection rather than as a tall label.
+   */
+  .device-panel .snapshot-segment span {
+    display: grid;
+    min-height: 44px;
+    place-items: center;
+  }
+
+  .dashboard-page-back {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+.device-tile:not([data-device-class='camera']) .diagnostic-panel img {
+  display: none;
+}
+
+.device-tile-changed {
+  border-color: var(--alert);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--alert) 24%, transparent);
+}
+
+.device-tile-changed::after {
+  content: '';
+  position: absolute;
+  z-index: 5;
+  top: 12px;
+  left: 12px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--tile-bg);
+  border-radius: var(--radius-pill);
+  background: var(--alert);
+  pointer-events: none;
+}
+
+.device-summary {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  overflow: hidden;
+  padding: 16px;
+  list-style: none;
+}
+
+.device-open-control {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.device-tile[data-artwork-scene] .device-art img[data-device-artwork] {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: var(--tile-scene-filter);
+}
+
+/*
+ * A scene fills the tile, so the name needs the gradient to start higher and finish darker than over a cutout,
+ * and to reach full strength above the copy rather than at the tile's floor: a two-stop ramp ending at 100% is
+ * still interpolating where the name and the status sit, which leaves them on whatever the photograph is doing.
+ */
+.device-tile[data-artwork-scene] .device-summary::after {
+  background: linear-gradient(to bottom, transparent 15%, var(--tile-scene-gradient) 78%);
+}
+
+.device-tile[data-artwork-scene] .device-copy {
+  color: var(--tile-scene-ink);
+}
+
+.device-tile[data-artwork-scene] .device-copy p {
+  color: var(--tile-scene-muted);
+}
+
+/* A scene the user has withdrawn from HomeKit keeps the withdrawn treatment: the scene filter is narrower. */
+.device-tile-disabled[data-artwork-scene] .device-art img[data-device-artwork] {
+  filter: var(--tile-disabled-filter);
+}
+
+.device-tile[data-artwork-scene] .device-summary::before {
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent 0,
+    transparent 12px,
+    var(--tile-scene-stripe) 12px,
+    var(--tile-scene-stripe) 20px
+  );
+}
+
+.device-summary::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 40%, var(--tile-gradient) 100%);
+  pointer-events: none;
+}
+
+.device-tile-disabled .device-summary::before {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent 0,
+    transparent 12px,
+    var(--tile-stripe) 12px,
+    var(--tile-stripe) 20px
+  );
+  pointer-events: none;
+}
+
+.device-tile-disabled .device-art img[data-device-artwork] {
+  filter: var(--tile-disabled-filter);
+}
+
+/*
+ * The two grounds a tile can have, and why they are not one.
+ *
+ * A packaged product photograph is a cutout on a flat ground: it is contained, inset, and desaturated so the
+ * grid reads as a catalogue of devices. A camera's own last image is a scene, and a scene has no cutout to
+ * inset — contained, it would sit in a box inside a box, and desaturated it would lose the very detail that
+ * makes the camera recognisable. It covers the tile instead, and the gradient the name already sits on is what
+ * keeps that name legible over it.
+ *
+ * The placeholder is centred with its icon rather than sat on the tile's floor, where it printed on top of the
+ * device name for every device with no artwork on file.
+ */
+.device-art {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 8px;
+  background: var(--tile-bg);
+  color: var(--tile-ink);
+  font-weight: 700;
+}
+
+.device-art img[data-device-artwork] {
+  position: absolute;
+  inset: 24px;
+  width: calc(100% - 48px);
+  height: calc(100% - 48px);
+  object-fit: contain;
+  opacity: 1;
+  filter: var(--tile-image-filter);
+}
+
+.device-art .device-class-icon {
+  width: 56px;
+  height: 56px;
+  opacity: 0.42;
+}
+
+.device-art span {
+  overflow: hidden;
+  max-width: 90%;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  opacity: 0.75;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+}
+
+.device-art[data-artwork-loaded] .device-class-icon,
+.device-art[data-artwork-loaded] span {
+  opacity: 0;
+}
+
+.device-copy {
+  z-index: 2;
+  min-width: 0;
+  color: var(--tile-ink);
+}
+
+.device-copy h3 {
+  overflow: hidden;
+  margin: 0 0 2px;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  text-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.device-copy p {
+  overflow: hidden;
+  margin: 0;
+  color: var(--tile-muted);
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A status displaces the model on the tile's second line, so it keeps that line's metrics and adds its dot. */
+.device-copy p.device-status {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.device-status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+}
+
+/* The flex container cannot ellipsis its own text, so the label carries the truncation the model line has. */
+.device-status-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One semantic per tone, named once, so the three rules below carry every one of them. */
+.device-copy p.device-status-live {
+  --status-ink: var(--ok);
+}
+
+.device-copy p.device-status-alert {
+  --status-ink: var(--alert);
+}
+
+.device-copy p.device-status-fault {
+  --status-ink: var(--fault);
+}
+
+/*
+ * A coloured status label mixes toward the ink of whichever ground it sits on; its dot keeps the flat colour.
+ *
+ * No semantic clears contrast at 13px against both the pale panel and a scene's gradient, and the dot is a
+ * graphical mark rather than readable content, so only the word is mixed. A quiet status states nothing coloured
+ * and takes the second line's own muted ink, which needs no rule.
+ */
+.device-copy p:is(.device-status-live, .device-status-alert, .device-status-fault) {
+  color: color-mix(in srgb, var(--status-ink) 75%, var(--tile-ink));
+}
+
+.device-tile[data-artwork-scene]
+  .device-copy
+  p:is(.device-status-live, .device-status-alert, .device-status-fault) {
+  color: color-mix(in srgb, var(--status-ink) 75%, var(--tile-scene-ink));
+}
+
+.device-status-dot {
+  background: var(--status-ink, currentcolor);
+}
+
+.device-badges {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.device-badges span {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--tile-badge-border);
+  border-radius: var(--radius-pill);
+  background: var(--tile-badge-bg);
+  backdrop-filter: blur(5px);
+}
+
+.device-badges img {
+  width: 16px;
+  height: 16px;
+  filter: var(--tile-icon-filter);
+}
+
+/*
+ * The gauge carries no plate, so its own halo separates it from whatever is behind it instead.
+ *
+ * The second documented exception to one shadow: this states the glyph's edge against unknown artwork rather
+ * than floating a layer over content, which is why it is not `--shadow-overlay`. The halo does not flip with the
+ * theme because the glyph does not either.
+ */
+.device-badges .device-badge-battery {
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+  filter: drop-shadow(0 1px 2px var(--tile-badge-halo));
+}
+
+/*
+ * The gauge lies on its side with its terminal to the left, and takes the next step up the scale.
+ *
+ * With no plate around it the glyph is the whole indicator, so it carries at 18px where a plated badge reads at
+ * 16px. It keeps the tile's own icon colour here, which is the ink of the pale panel a product cutout sits on.
+ */
+.device-badges .device-badge-battery img {
+  width: 18px;
+  height: 18px;
+  transform: rotate(-90deg);
+}
+
+/*
+ * Over a scene the glyph goes light whatever the theme, and gains a ring, because its ground is a photograph of
+ * unknown luminance.
+ *
+ * The tile's two grounds are opposites — that frame, and the pale panel — so one glyph colour loses on one of
+ * them. This is the same split `--tile-scene-ink` exists for, applied to the one icon that sits on both. On the
+ * panel a plain shadow is enough and a ring would only dirty a flat surface.
+ */
+.device-tile[data-artwork-scene] .device-badges .device-badge-battery img {
+  filter: invert(1);
+}
+
+.device-tile[data-artwork-scene] .device-badges .device-badge-battery {
+  filter: drop-shadow(0 0 1px var(--tile-badge-halo)) drop-shadow(0 1px 2px var(--tile-badge-halo));
+}
+
+.device-badges .device-badge-troubleshoot {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+.device-badges .device-badge-troubleshoot img {
+  width: 28px;
+  height: 28px;
+}
+
+.device-badges span::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 8px);
+  right: 0;
+  width: max-content;
+  max-width: 168px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--tile-tooltip-bg);
+  color: var(--tile-tooltip-ink);
+  padding: 4px 8px;
+  box-shadow: var(--shadow-overlay);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.3;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition:
+    opacity 150ms var(--ease-out),
+    transform 150ms var(--ease-out);
+}
+
+.device-badges span:hover::after,
+.device-badges span:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.diagnostic-panel {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 16px;
+  text-align: center;
+}
+
+.diagnostic-panel img {
+  width: 32px;
+  height: 32px;
+  filter: var(--tile-icon-filter);
+}
+
+.diagnostic-panel strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.diagnostic-panel p {
+  margin: 0;
+  color: var(--tile-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.preference-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.preference-grid p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* What the device becomes, read before the switch that decides whether it becomes it. */
+.preference-representation {
+  color: var(--tile-muted);
+  font-weight: 600;
+}
+
+.preference-grid label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: default;
+}
+
+.preference-grid .preference-changed {
+  font-weight: 700;
+}
+
+/*
+ * The guard-mode map: four HomeKit states against nine station modes, one pairing per row.
+ *
+ * A table because the content is one, which also gives each select its own row label without a second element
+ * beside it. Row rules and no box: the panel's own surface encloses it, and the one control in the row is the
+ * select, which carries the only border here.
+ */
+.arming-setting {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.arming-setting > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 12px;
+  align-items: center;
+  gap: 4px 8px;
+  cursor: pointer;
+}
+
+/* `display: grid` on a summary drops the native marker, so the affordance is drawn back in as a caret. */
+.arming-setting > summary::marker,
+.arming-setting > summary::-webkit-details-marker {
+  content: '';
+  display: none;
+}
+
+.arming-setting > summary::after {
+  content: '';
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform 140ms var(--ease-out);
+}
+
+.arming-setting[open] > summary::after {
+  transform: rotate(-135deg);
+}
+
+/* The map as one line, which is the answer most households only ever read. */
+.arming-summary {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arming-setting[open] > summary {
+  margin-bottom: 8px;
+}
+
+.arming-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.arming-table thead th {
+  padding: 0 0 4px;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.arming-table tbody tr + tr th,
+.arming-table tbody tr + tr td {
+  border-top: 1px solid var(--line);
+}
+
+.arming-table th[scope='row'] {
+  width: 38%;
+  padding: 4px 8px 4px 0;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.arming-table th[scope='row'] label {
+  cursor: pointer;
+}
+
+.arming-table td {
+  padding: 4px 0;
+}
+
+.arming-table select {
+  width: 100%;
+  min-height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+/* The changed row carries the weight, so a pending map reads as which pairing moved rather than as a heavier table. */
+.arming-setting .snapshot-help {
+  margin-top: 8px;
+}
+
+.arming-table select.preference-control-changed {
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+@media (pointer: coarse) {
+  .arming-table select {
+    min-height: 44px;
+  }
+}
+
+.preference-grid .preference-changed .snapshot-description {
+  font-weight: 400;
+}
+
+.setting-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.snapshot-setting {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.snapshot-segments {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+}
+
+.snapshot-segments .snapshot-segment {
+  position: relative;
+  display: block;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.snapshot-segment + .snapshot-segment {
+  border-left: 1px solid var(--line);
+}
+
+.snapshot-segment input {
+  position: absolute;
+  width: 1px;
+  min-height: 0;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.snapshot-segment span {
+  display: block;
+  padding: 8px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+  transition:
+    background 150ms var(--ease-out),
+    color 150ms var(--ease-out);
+}
+
+.snapshot-segment input:checked + span {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.snapshot-description {
+  min-height: 32px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.preference-grid .toggle {
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  cursor: pointer;
+}
+
+.preference-grid .toggle input {
+  appearance: none;
+  position: relative;
+  width: 36px;
+  min-height: 20px;
+  height: 20px;
+  margin: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--muted) 28%, var(--panel));
+  padding: 0;
+  transition:
+    background 140ms var(--ease-out),
+    border-color 140ms var(--ease-out);
+}
+
+/* The knob, the one element in the sheet whose shadow states a physical position rather than a layer. */
+.preference-grid .toggle input::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-pill);
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 22%);
+  transition: transform 140ms var(--ease-out);
+}
+
+.preference-grid .toggle input:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.preference-grid .toggle input:checked::before {
+  transform: translateX(16px);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.first-setup {
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--accent-soft);
+  padding: 16px 20px;
+}
+
+.first-setup h2 {
+  margin-bottom: 8px;
+}
+
+.first-setup p {
+  margin-bottom: 8px;
+}
+
+.first-setup-reason {
+  color: var(--ink-secondary);
+}
+
+.first-setup a {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.first-setup-confirmation {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.first-setup-confirmation label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.first-setup-confirmation input {
+  appearance: none;
+  display: grid;
+  place-content: center;
+  width: 18px;
+  min-height: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  border: 2px solid var(--accent-ink);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  padding: 0;
+}
+
+.first-setup-confirmation input::before {
+  content: '';
+  width: 8px;
+  height: 4px;
+  border-bottom: 2px solid var(--on-accent);
+  border-left: 2px solid var(--on-accent);
+  transform: rotate(-45deg) scale(0);
+}
+
+.first-setup-confirmation input:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.first-setup-confirmation input:checked::before {
+  transform: rotate(-45deg) scale(1);
+}
+
+.status-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.status {
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary {
+  margin: 16px 0;
+  color: var(--ink-secondary);
+  font-size: 15px;
+}
+
+.handoff {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--accent-soft);
+  padding: 12px 16px;
+}
+
+.handoff p {
+  margin: 4px 0 0;
+  color: var(--ink-secondary);
+  font-size: 12px;
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 24px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.steps li {
+  display: grid;
+  gap: 4px;
+  border-top: 3px solid var(--line);
+  padding-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.steps li.current {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.steps span {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.authentication-form,
+.challenge-form {
+  display: grid;
+  gap: 16px;
+}
+
+.authentication-form label,
+.challenge-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.35fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 8px 12px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.challenge-form {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+/* The plate the captcha image sits on, white in both themes because the image Eufy returns has a white ground. */
+.captcha {
+  width: min(100%, 260px);
+  min-height: 72px;
+  justify-self: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: #ffffff;
+  object-fit: contain;
+}
+
+.authentication-status {
+  min-height: 20px;
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+button {
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.footnote {
+  margin: 12px 4px 0;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+/*
+ * Two lists with a column of transfer buttons between them, sharing the parent's rows so the three columns line up.
+ *
+ * The buttons belong beside the lists, not beside the lists plus their titles: centred over the whole column they
+ * sit below the middle of what they act on, by half a title. Subgrid puts each list's title and body in the
+ * parent's own rows, which is what lets the buttons occupy the second row alone. Where subgrid is unavailable the
+ * columns keep their own rows and the buttons centre as they did.
+ */
+.warm-up-transfer {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  grid-template-rows: auto 1fr;
+  align-items: stretch;
+  gap: 8px;
+  font-weight: 400;
+}
+
+.warm-up-column {
+  display: grid;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.warm-up-column > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.warm-up-column ul {
+  list-style: none;
+  margin: 0;
+  /*
+   * Four rows, then scroll: the list is long enough that showing all of it pushes the help text off-screen.
+   * The height is the content of four rows at the current row metric, not a step on the spacing grid.
+   */
+  min-height: 172px;
+  max-height: 172px;
+  /*
+   * Centred in its row rather than filling it. The row is as tall as the button column beside it, which needs more
+   * than four rows of list, so a list pinned to the top of that row sits above the buttons that act on it.
+   */
+  align-self: center;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  padding: 4px;
+}
+
+.warm-up-column li {
+  margin: 0;
+}
+
+/* Concentric with the list that clips it: the list's 8px radius less its 4px padding. */
+.warm-up-column button {
+  width: 100%;
+  text-align: left;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Without this the click leaves no mark, so the user cannot tell whether the entry was taken. */
+.warm-up-column button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.warm-up-controls {
+  display: grid;
+  /*
+   * Both placed explicitly. Grid resolves items with a definite row before auto-placing the rest, so naming only
+   * the row let this claim the first column and pushed both lists along one.
+   */
+  grid-row: 2;
+  grid-column: 2;
+  align-content: center;
+  gap: 8px;
+}
+
+.warm-up-arrow {
+  width: 20px;
+  height: 20px;
+}
+
+.warm-up-controls button {
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+/*
+ * The diagnostics entry in the masthead, which is the header shown before an account exists.
+ *
+ * The dashboard's own entry disappears with the dashboard, so on the setup and authentication screens this is
+ * the only way to start collecting — and those are the screens a startup or sign-in failure is visible on.
+ */
+.masthead-action {
+  margin-inline-start: auto;
+  align-self: center;
+}
+
+/*
+ * Every interactive state in the sheet, in one place and in cascade order: the filled default first, then each
+ * variant that keeps its own surface.
+ *
+ * A variant is declared beside the rule that gives it its resting surface, far above here, so a `:hover` written
+ * there would lose to the filled default's `:hover` on source order alone and repaint a secondary button in the
+ * accent. Ordering them here is what keeps a "No" button from turning teal under the pointer.
+ */
+button {
+  transition:
+    background 150ms var(--ease-out),
+    border-color 150ms var(--ease-out),
+    transform 100ms var(--ease-out);
+}
+
+button:hover:not(:disabled, .wizard-live-play) {
+  background: color-mix(in srgb, var(--accent) 88%, var(--on-accent));
+}
+
+button:active:not(:disabled, .device-open-control, .wizard-live-play) {
+  transform: scale(0.97);
+}
+
+button:disabled {
+  background: color-mix(in srgb, var(--accent) 28%, var(--panel));
+  color: color-mix(in srgb, var(--on-accent) 60%, var(--panel));
+  cursor: not-allowed;
+}
+
+.dashboard-page-back:hover:not(:disabled),
+.warm-up-controls button:hover:not(:disabled),
+.warm-up-column button:hover:not(:disabled),
+.warm-up-column button:focus-visible {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--ink) 5%, var(--panel));
+}
+
+button.diagnostics-quiet-action:hover:not(:disabled) {
+  background: transparent;
+  color: var(--ink);
+}
+
+.dashboard-action:hover,
+.dashboard-action:focus-visible {
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+}
+
+.device-open-control:hover {
+  background: transparent;
+}
+
+.wizard-map-device:hover:not(:disabled, [aria-current='step']) {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.wizard-map-device[aria-current='step']:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* The frame is black in both themes, so the icon's fill is a fixed deep teal the white glyph reads against; the
+   button itself covers the whole frame and stays transparent. */
+.wizard-live-play:hover:not(:disabled) img,
+.wizard-live-play:focus-visible img {
+  background: color-mix(in srgb, var(--accent) 55%, #000000);
+}
+
+/*
+ * The tile is the dashboard's primary target and artwork covers everything but its edge, so the edge carries the
+ * hover. A step in `--line` alone was too quiet to register as feedback; the accent in the edge is not.
+ */
+.device-tile:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+}
+
+.warm-up-controls button:disabled,
+.warm-up-column button:disabled {
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--ink-disabled);
+  cursor: default;
+}
+
+/*
+ * The one keyboard focus ring, on everything that takes focus.
+ *
+ * The device tiles are the dashboard's primary interaction and the diagnostics panel's buttons carry no class, so
+ * both used to fall through to the user agent's own ring — a hairline with no offset, thinner and lower in
+ * contrast than the ring the rest of the interface draws. Naming the focusables once is what keeps the ring from
+ * drifting into a fourth variant.
+ */
+:is(button, input, select, textarea, a, [tabindex]):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+input:focus-visible {
+  border-color: var(--accent);
+}
+
+/*
+ * The segmented control's ring, drawn inside.
+ *
+ * Its radio input is a 1px sliver and the group clips overflow, so a ring on the input is invisible and a ring
+ * outside the label is cut off. The visible segment carries it, inset.
+ */
+.snapshot-segment input:focus-visible {
+  outline: none;
+}
+
+.snapshot-segment input:focus-visible + span {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button:active {
+    transform: none;
+  }
+}
+
+@media (max-width: 420px) {
+  /*
+   * Two across rather than three. Seven areas still fit on one screen at this width, and a third column
+   * leaves each label about ninety pixels, where the longest of them runs to four lines.
+   */
+  .diagnostics-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* The row keeps its three actions on one line by leaving the diagnostics action to its icon. */
+  .diagnostics-name {
+    display: none;
+  }
+
+  .status-row {
+    display: grid;
+  }
+
+  .status {
+    justify-self: start;
+  }
+
+  .field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .legacy-notice {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .legacy-notice button {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .device-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: calc(((100cqw - 12px) / 2 - 12px) / 2);
+  }
+}
+
+@media (max-width: 540px) {
+  /*
+   * Stacked rather than side by side: one list above, one below, and the buttons between them. Two lists abreast
+   * leave nothing readable at this width, and the transfer reads along the axis it moves the device.
+   *
+   * Everything the wide layout pinned is undone here — the shared rows, the spans, and the column the buttons
+   * claimed — because that arrangement exists only to line three columns up against each other.
+   */
+  .warm-up-transfer {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  .warm-up-column {
+    grid-row: auto;
+    grid-template-rows: auto 1fr;
+  }
+
+  .warm-up-column ul {
+    align-self: stretch;
+  }
+
+  .warm-up-controls {
+    grid-row: auto;
+    grid-column: 1;
+    grid-auto-flow: column;
+    justify-content: center;
+  }
+
+  /* The chevrons point the way the device travels, which is now down the page rather than across it. */
+  .warm-up-arrow {
+    transform: rotate(90deg);
+  }
+}
+
+@media (max-width: 520px) {
+  .diagnostics-actions button {
+    width: 100%;
+  }
+
+  /* Two actions side by side leave each a sliver of a label at this width, so they stack. */
+  .diagnostics-handoff:not([hidden]) {
+    grid-template-columns: 1fr;
+  }
+
+  .diagnostics-choice-actions {
+    display: grid;
+    gap: 8px;
+  }
+
+  .device-grid {
+    grid-template-columns: 1fr;
+    /* One column is already a stack, so the row unit and the spans give way to the tile's own ratio. */
+    grid-auto-rows: auto;
+  }
+
+  .device-tile,
+  .device-tile:not([data-device-class='camera']) {
+    grid-row: auto;
+  }
+
+  .device-summary {
+    min-height: 0;
+  }
+
+  .device-tile {
+    aspect-ratio: 2 / 1;
+    min-height: 152px;
+  }
+
+  .device-art img[data-device-artwork] {
+    inset: 12px 4% 12px auto;
+    width: 76%;
+    height: calc(100% - 24px);
+    object-fit: contain;
+    object-position: center right;
+  }
+
+  .diagnostic-panel {
+    gap: 4px;
+    padding: 32px 16px 8px;
+  }
+}
+
+.shell[data-theme='dark'] {
+  color-scheme: dark;
+  --accent: #00bfc4;
+  --accent-ink: #67e1e4;
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, var(--panel));
+  --ink: #edf1f7;
+  --ink-secondary: color-mix(in srgb, var(--ink) 78%, var(--panel));
+  --muted: #aab3c2;
+  --ink-disabled: color-mix(in srgb, var(--muted) 55%, var(--panel));
+  --alert: #d9a53f;
+  --fault: #fda29b;
+  --ok: #6cd39a;
+  --line: rgb(255 255 255 / 10%);
+  --line-strong: rgb(255 255 255 / 18%);
+  --shadow-overlay: 0 0 0 1px rgb(255 255 255 / 9%);
+  --panel: #262d39;
+  --tile-bg: #17202c;
+  --tile-ink: #f4f7fb;
+  --tile-muted: #d6deea;
+  --tile-gradient: rgb(8 14 24 / 90%);
+  --tile-stripe: rgb(255 255 255 / 7%);
+  --tile-badge-bg: rgb(8 14 24 / 72%);
+  --tile-badge-border: rgb(255 255 255 / 36%);
+  --tile-badge-halo: rgb(4 8 14 / 85%);
+  --tile-image-filter: brightness(0.58) saturate(0.85) contrast(1.05);
+  --tile-scene-filter: brightness(0.62) saturate(0.95);
+  --tile-scene-gradient: rgb(4 8 14 / 88%);
+  --tile-disabled-filter: brightness(0.48) grayscale(0.65) contrast(1.05);
+  --tile-icon-filter: invert(1);
+  --tile-tooltip-bg: #080e18;
+  --tile-tooltip-ink: #f4f7fb;
+}
+
+.shell[data-theme='dark'] .notice-icon,
+.shell[data-theme='dark'] .status-icon,
+.shell[data-theme='dark'] .dashboard-page-icon,
+.shell[data-theme='dark'] .dashboard-action img,
+.shell[data-theme='dark'] .warm-up-arrow,
+.shell[data-theme='dark'] .device-class-icon {
+  filter: invert(1);
+}
+
+.shell[data-theme='dark'] .eufy-logo .logo-light {
+  display: none;
+}
+
+.shell[data-theme='dark'] .eufy-logo .logo-dark {
+  display: block;
+}
+
+/* Sized by its container alone, never by a picture, and never selected or dragged by a click on it. One 16:9 frame
+   split down the middle: the camera's left half beside the right half of the same view as HomeKit receives it. */
+.wizard-live {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: #000000;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.wizard-live figure {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  clip-path: inset(0 50% 0 0);
+}
+
+.wizard-live figure + figure {
+  clip-path: inset(0 0 0 50%);
+}
+
+/* Until the HomeKit side has a picture, the camera's picture shows whole, with no split and no labels. */
+.wizard-live:has(figure + figure > img[hidden]) figure {
+  clip-path: none;
+}
+
+.wizard-live:has(figure + figure > img[hidden]) :is(.wizard-live-label, figure + figure),
+.wizard-live:has(figure + figure > img[hidden])::after {
+  display: none;
+}
+
+.wizard-live::after {
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: 2px;
+  margin-left: -1px;
+  background: rgb(255 255 255 / 80%);
+  content: '';
+  pointer-events: none;
+}
+
+.wizard-live figure > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* The whole box plays and stops; the pill is the icon. */
+.wizard-live-play {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.wizard-live-play img {
+  box-sizing: border-box;
+  width: 72px;
+  height: 52px;
+  padding: 8px 18px;
+  border-radius: var(--radius-card);
+  background: rgb(0 0 0 / 70%);
+}
+
+/* Stop stays out of the picture until the pointer or the keyboard is on the video. */
+.wizard-live-stop {
+  opacity: 0;
+  transition: opacity 150ms var(--ease-out);
+}
+
+.wizard-live:hover .wizard-live-stop,
+.wizard-live-stop:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .wizard-live-stop {
+    opacity: 1;
+  }
+}
+
+/* The reason the box has no picture, centred and large; below the spinner or the play button when either shows. */
+.wizard-live-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  pointer-events: none;
+  padding: 24px;
+  color: var(--tile-scene-ink);
+  font-size: 1.5rem;
+  font-weight: 600;
+  text-align: center;
+  background: rgb(0 0 0 / 45%);
+}
+
+.wizard-live:has(.wizard-live-spinner:not([hidden]), [data-wizard-live-play]:not([hidden])) .wizard-live-status {
+  padding-top: 120px;
+}
+
+.wizard-live-status:empty {
+  display: none;
+}
+
+/* Over the picture, so showing it does not move the play and stop buttons under the pointer. */
+.wizard-live-label {
+  position: absolute;
+  inset: 0 50% auto 0;
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--tile-scene-ink);
+  background: linear-gradient(rgb(0 0 0 / 70%), transparent);
+}
+
+.wizard-live figure + figure .wizard-live-label {
+  inset: 0 0 auto 50%;
+  text-align: right;
+}
+
+.wizard-nav {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.wizard-map {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--panel);
+}
+
+.wizard-map-group {
+  flex: 1 1 180px;
+}
+
+.wizard-map-base {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.wizard-map-members {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line-strong);
+}
+
+.wizard-map-device {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* A HomeBase heading is a button and a standalone heading is not: the plain one takes the button's size. */
+p.wizard-map-base {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 4px 8px;
+}
+
+.wizard-map-device[aria-current='step'] {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.wizard-live figure + figure .wizard-live-spinner {
+  left: 75%;
+}
+
+.wizard-card {
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--panel);
+}
+
+.wizard-card h3 {
+  margin: 0 0 4px;
+}
+
+.wizard-live-spinner {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
+  border: 4px solid rgb(255 255 255 / 30%);
+  border-top-color: var(--tile-scene-ink);
+  border-radius: var(--radius-pill);
+  animation: wizard-live-spin 0.9s linear infinite;
+}
+
+@keyframes wizard-live-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wizard-live-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+.wizard-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wizard-setting select {
+  width: auto;
+  min-width: 160px;
+  margin-top: 0;
+}
+
+/* A live capture's camera step takes the place of the areas until it starts or goes back. */
+.diagnostics-question:has(> [data-diagnostics-cameras]:not([hidden])) > :not([data-diagnostics-cameras]) {
+  display: none;
+}
+
+.diagnostics-cameras:not([hidden]) {
+  display: grid;
+  gap: 12px;
+}
+
+.diagnostics-cameras > h3 {
+  margin: 0;
+  font-size: clamp(17px, 4vw, 21px);
+  line-height: 1.35;
+}
+
+.diagnostics-camera-tiles button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.diagnostics-encode-preview {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  border-radius: var(--radius-card);
+  background: #000;
+}
+
+.diagnostics-encode-preview[hidden] {
+  display: none;
+}
+
+.diagnostics-encode [data-diagnostics-encode-step] {
+  margin: 0;
+  font-size: clamp(16px, 3.6vw, 19px);
+  font-weight: 600;
+  line-height: 1.4;
+}

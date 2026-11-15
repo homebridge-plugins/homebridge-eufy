@@ -1,0 +1,742 @@
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { describe, expect, it, vi } from 'vitest';
+
+import {
+  createDiagnosticLogger,
+  createSdkLogger,
+  GuidedDiagnostics,
+  reportAdaptationNotice,
+  reportHomeKitEvent,
+  reportLiveVideoEncoders,
+  reportStationClaim,
+} from '../../src/diagnostics.js';
+
+/**
+ * Which camera a media record is about.
+ *
+ * One adapter serves every camera of a household, so a record naming only the adapter states that something
+ * happened to one of them. The alias is the one the conditions about that accessory already carry, which is what
+ * makes two records about one camera readable as one camera. The identity itself is never retained.
+ */
+describe('the accessory a media record names', () => {
+  it('carries the support-case alias for its device and never the device', () => {
+    const debug = vi.fn();
+    const alias = 'accessory-1a3abd19-1355-416e-a698-ed95767be1cb';
+    const serial = 'T8172P10254111FB';
+    const aliasFor = (identity: string) => (identity === serial ? alias : undefined);
+
+    reportHomeKitEvent({ debug }, { adapter: 'camera.streaming', event: 'live-session-streaming', serial }, aliasFor);
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-failed',
+        outcome: 'failed',
+        reason: 'source-acquisition-timeout',
+        stage: 'sdk-source-acquisition',
+        serial,
+      },
+      aliasFor,
+    );
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-video-selected',
+        operation: 'start',
+        profile: 'high',
+        level: '4.0',
+        width: 1280,
+        height: 720,
+        fps: 30,
+        mtu: 1378,
+        addressVersion: 'ipv4',
+        serial,
+      },
+      aliasFor,
+    );
+    reportHomeKitEvent(
+      { debug },
+      { adapter: 'motion.sensor', event: 'motion-detection', observation: 'valid', serial },
+      aliasFor,
+    );
+
+    expect(records(debug).map((record) => record.accessory)).toEqual([alias, alias, alias, alias]);
+    expect(JSON.stringify(records(debug))).not.toContain(serial);
+  });
+
+  it('carries no accessory where the caller resolves no alias, rather than an identity', () => {
+    const debug = vi.fn();
+    const serial = 'T8172P10254111FB';
+
+    reportHomeKitEvent({ debug }, { adapter: 'camera.streaming', event: 'live-session-streaming', serial });
+    reportHomeKitEvent(
+      { debug },
+      { adapter: 'camera.streaming', event: 'live-session-released', serial },
+      () => undefined,
+    );
+
+    for (const record of records(debug)) {
+      expect(record.accessory).toBeUndefined();
+    }
+    expect(JSON.stringify(records(debug))).not.toContain(serial);
+  });
+});
+
+/**
+ * The two facts a stream nobody can see is diagnosed from.
+ *
+ * Everything before them was already traced: HomeKit's selection, the station's key, the warm-up window, the
+ * media command and its retries, the first inbound unit, the first keyframe. Everything after was too: a
+ * failure with its reason and stage, the adaptation's exit, the release.
+ *
+ * Between the last of the first group and the first of the second there was nothing. So a stream that never
+ * appeared could not be told apart: the SDK handed over a keyframe, and whether an adaptation was ever started
+ * for it, and whether anything it produced reached the negotiated output, were both invisible. That gap is
+ * where three wrong conclusions came from.
+ */
+const records = (debug: ReturnType<typeof vi.fn>) =>
+  debug.mock.calls.map(([message]) => JSON.parse(message as string) as Record<string, unknown>);
+
+/**
+ * An adaptation trace is levelled by what it reports, not by the fact that it is one.
+ *
+ * Every one of these was a failure once, so stamping the class `warn` was the same thing as levelling each
+ * record. `started` and `output` are not failures — one is a process beginning, the other a process reported
+ * for what it wrote on the way to an intended stop — and levelling them as warnings puts four warnings in a
+ * support log for every stream that worked, which is what a real fleet showed after `started` was added.
+ */
+describe('the level an adaptation record carries', () => {
+  const levelOf = (event: string, extra: Record<string, unknown> = {}) => {
+    const debug = vi.fn();
+    reportAdaptationNotice({ debug }, { role: 'live-video', event, ...extra } as never);
+    return records(debug)[0]?.level;
+  };
+
+  it('is debug for a process that started, which is a stream working', () => {
+    expect(levelOf('started')).toBe('debug');
+  });
+
+  it('is debug for the output of a process asked to stop, teardown being how a session ends', () => {
+    expect(levelOf('output', { code: 255, stderr: ['bitrate= 281.9kbits/s'] })).toBe('debug');
+  });
+
+  it.each(['spawn-failed', 'input-failed', 'exited-before-output', 'exited-while-streaming'])(
+    'is warn for %s',
+    (event) => {
+      expect(levelOf(event, { stderr: ['Invalid data found'] })).toBe('warn');
+    },
+  );
+});
+
+describe('an adaptation that has started', () => {
+  it('is recorded, so a keyframe with no adaptation behind it is visible', () => {
+    const debug = vi.fn();
+    reportAdaptationNotice({ debug }, { role: 'live-video', event: 'started' });
+    expect(records(debug)[0]).toMatchObject({ scope: 'ffmpeg', role: 'live-video', event: 'started' });
+  });
+
+  it('is recorded per role, so video and audio are told apart', () => {
+    const debug = vi.fn();
+    reportAdaptationNotice({ debug }, { role: 'live-video', event: 'started' });
+    reportAdaptationNotice({ debug }, { role: 'live-audio', event: 'started' });
+    expect(records(debug).map((r) => r.role)).toEqual(['live-video', 'live-audio']);
+  });
+
+  it('carries no argument list, which is where the key material and the address are', () => {
+    const debug = vi.fn();
+    reportAdaptationNotice({ debug }, { role: 'live-video', event: 'started', stderr: ['srtp://192.0.2.10:5000'] });
+    expect(JSON.stringify(records(debug))).not.toContain('192.0.2.10');
+  });
+
+  /**
+   * The record names the encoder that codes the session and the codec its source delivers, each from a closed
+   * set, so a copied stream is told from a converted one and a conversion from its cause.
+   */
+  it('names the encoder it codes with and the source codec, and only ones this build names', () => {
+    const debug = vi.fn();
+    reportAdaptationNotice({ debug }, { role: 'live-video', event: 'started', encoder: 'copy', source: 'h264' });
+    reportAdaptationNotice(
+      { debug },
+      { role: 'live-video', event: 'started', encoder: 'h264_videotoolbox', source: 'h265' },
+    );
+    reportAdaptationNotice({ debug }, {
+      role: 'live-video',
+      event: 'started',
+      encoder: '/synthetic/encoder',
+      source: '/synthetic/codec',
+    } as never);
+    expect(records(debug).map(({ encoder, source }) => [encoder, source])).toEqual([
+      ['copy', 'h264'],
+      ['h264_videotoolbox', 'h265'],
+      [undefined, undefined],
+    ]);
+  });
+});
+
+describe('the encoders live video is coded by', () => {
+  /** Once qualification ends the log states which encoders serve live video, in the order a session picks them. */
+  it('names every qualified hardware encoder this build knows, then libx264', () => {
+    const info = vi.fn();
+    reportLiveVideoEncoders(
+      { info },
+      {
+        h264_amf: { 'main@3.1': 'qualified', 'high@4.0': 'encode' },
+        h264_qsv: { 'main@3.1': 'encode' },
+        '/synthetic/encoder': { 'main@3.1': 'qualified' },
+      },
+    );
+    reportLiveVideoEncoders({ info }, {});
+    expect(info.mock.calls).toEqual([
+      ['[live-video-encoders] Live video encoders, in order of use: h264_amf, libx264.'],
+      ['[live-video-encoders] Live video encoders, in order of use: libx264.'],
+    ]);
+  });
+});
+
+describe('a hardware encoder disqualified during a session', () => {
+  /** An encoder that stops serving for the rest of the run is a failure a reader acts on, named by the encoder. */
+  it('is recorded as a warning that names the encoder', () => {
+    const debug = vi.fn();
+    reportAdaptationNotice({ debug }, { role: 'live-video', event: 'encoder-disqualified', encoder: 'h264_amf' });
+    expect(records(debug)[0]).toMatchObject({
+      scope: 'ffmpeg',
+      level: 'warn',
+      role: 'live-video',
+      event: 'encoder-disqualified',
+      encoder: 'h264_amf',
+    });
+  });
+});
+
+describe('a session that reached the negotiated output', () => {
+  it('is recorded, so output produced is told apart from output never produced', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent({ debug }, { adapter: 'camera.streaming', event: 'live-session-streaming' });
+    expect(records(debug)[0]).toMatchObject({ scope: 'homekit', event: 'live-session-streaming' });
+  });
+
+  it('records a talkback that started, so a working one is told apart from one never opened', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent({ debug }, { adapter: 'camera.streaming', event: 'live-talkback-started' });
+    expect(records(debug)[0]).toMatchObject({ scope: 'homekit', event: 'live-talkback-started' });
+  });
+
+  it('carries nothing beyond the fact itself', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent({ debug }, {
+      adapter: 'camera.streaming',
+      event: 'live-session-streaming',
+    } as never);
+    const record = records(debug)[0]!;
+    expect(Object.keys(record).sort()).toEqual(['adapter', 'event', 'level', 'scope']);
+  });
+});
+
+/**
+ * An arbitration decision survives the file sink, not only the reporter.
+ *
+ * The retained record is rebuilt from what was written rather than trusted, so a decision the sink does not
+ * recognise reaches a console nobody reads and is dropped before any support archive — which is how the two
+ * candidate defects behind a refused live request stayed indistinguishable.
+ */
+describe('an arbitration decision over a station', () => {
+  it('states the claims it was taken between', () => {
+    const debug = vi.fn();
+    reportStationClaim({ debug }, { action: 'yielded', claim: 'snapshot', to: 'live' });
+    expect(records(debug)[0]).toMatchObject({
+      scope: 'homekit',
+      event: 'station-claim',
+      action: 'yielded',
+      claim: 'snapshot',
+      against: 'live',
+    });
+  });
+
+  it('drops a decision naming a claim this plugin does not arbitrate', () => {
+    const debug = vi.fn();
+    reportStationClaim({ debug }, { action: 'held', claim: 'talkback' });
+    expect(debug).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What the controller was doing when a session ended, which is what a frozen picture cannot be told from
+ * without.
+ *
+ * The output is constant-rate, so a controller shown nothing new keeps acknowledging a stream that stopped
+ * advancing: the count states whether it ever acknowledged at all, and the recency whether it still was at the
+ * end. A release carrying neither is a session nothing was ever received on.
+ */
+describe('the controller evidence a release carries', () => {
+  it('records how often the controller acknowledged, and how long before the release it last did', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-released',
+        release: 'requested',
+        reports: 14,
+        sinceLastReportMs: 240,
+      },
+    );
+    expect(records(debug)[0]).toMatchObject({
+      event: 'live-session-released',
+      release: 'requested',
+      reports: 14,
+      sinceLastReportMs: 240,
+    });
+  });
+
+  it('drops a recency no session could have measured, and keeps the release', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-released',
+        release: 'failed',
+        reports: 0,
+        sinceLastReportMs: 999_999,
+      },
+    );
+    const record = records(debug)[0]!;
+    expect(record).toMatchObject({ event: 'live-session-released', release: 'failed', reports: 0 });
+    expect(record).not.toHaveProperty('sinceLastReportMs');
+  });
+});
+
+/**
+ * A session that never got a source names what withheld it, and not merely that it failed.
+ *
+ * A reason the record vocabulary does not name is dropped whole, so a station that did not connect would
+ * otherwise leave a failed session with no reason anywhere, and nothing to separate it from the camera's own
+ * faults.
+ */
+describe('a session that got no source', () => {
+  it('records why, rather than a failure with no reason', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-failed',
+        outcome: 'failed',
+        reason: 'station-unreachable',
+        stage: 'sdk-source-acquisition',
+      },
+    );
+    expect(records(debug)[0]).toMatchObject({
+      scope: 'homekit',
+      event: 'live-session-failed',
+      reason: 'station-unreachable',
+      stage: 'sdk-source-acquisition',
+    });
+  });
+
+  it('records a release that came before any source, and not as a failure', () => {
+    const debug = vi.fn();
+    reportHomeKitEvent(
+      { debug },
+      {
+        adapter: 'camera.streaming',
+        event: 'live-session-released',
+        release: 'requested',
+        stage: 'sdk-source-acquisition',
+      },
+    );
+    expect(records(debug)[0]).toMatchObject({
+      event: 'live-session-released',
+      release: 'requested',
+      stage: 'sdk-source-acquisition',
+    });
+  });
+});
+
+/**
+ * A warm-up the SDK ended without a keyframe keeps the SDK's own stage and reason on the record, and a value
+ * outside the SDK's vocabulary is dropped while the failure itself is kept.
+ */
+describe("the SDK's account of a failed warm-up", () => {
+  it('records its stage and reason', () => {
+    const debug = vi.fn();
+    const failed = {
+      adapter: 'camera.streaming',
+      event: 'live-session-failed',
+      outcome: 'failed',
+      reason: 'source-error',
+      stage: 'first-source-keyframe',
+    } as const;
+    reportHomeKitEvent({ debug }, { ...failed, sourceStage: 'awaiting-keyframe', sourceReason: 'warm-timeout' });
+    reportHomeKitEvent({ debug }, { ...failed, sourceStage: 'T8000P0000000000', sourceReason: 'free text' });
+
+    const [carried, dropped] = records(debug);
+    expect(carried).toMatchObject({ ...failed, sourceStage: 'awaiting-keyframe', sourceReason: 'warm-timeout' });
+    expect(dropped).toMatchObject(failed);
+    expect(dropped).not.toHaveProperty('sourceStage');
+    expect(dropped).not.toHaveProperty('sourceReason');
+  });
+});
+
+/**
+ * How much source media a recording was given, which is what separates its two failure modes.
+ *
+ * A recording whose source delivered nothing closes an empty pipe, and FFmpeg reports that as
+ * `moov atom not found` — the same words an adaptation fed malformed fragments would produce. Observed on a
+ * real fleet as one such failure with nothing to say which it was, seventeen seconds after the motion that
+ * triggered it.
+ *
+ * The count answers it outright: zero is a source that never delivered, and any other number moves the
+ * question to the adaptation. It is a tally, so it is retained as a bounded integer.
+ */
+describe('what a recording reports about the media it was handed', () => {
+  it('carries the number of source fragments it wrote', () => {
+    const debug = vi.fn();
+    reportAdaptationNotice({ debug }, { role: 'recording', event: 'output', code: 183, sourceFragments: 0 });
+    expect(records(debug)[0]).toMatchObject({ role: 'recording', sourceFragments: 0 });
+  });
+
+  it('keeps a count that is not a tally out of the record', () => {
+    const debug = vi.fn();
+    reportAdaptationNotice({ debug }, {
+      role: 'recording',
+      event: 'output',
+      code: 1,
+      sourceFragments: -3,
+    } as never);
+    expect(records(debug)[0]).not.toHaveProperty('sourceFragments');
+  });
+});
+
+/** A live video adaptation records the picture size its source announced, which tells a portrait camera apart. */
+describe('what a live video adaptation reports about its source picture', () => {
+  it('carries the source width and height together, and neither when one is not a size', () => {
+    const debug = vi.fn();
+    const started = { role: 'live-video', event: 'started', source: 'h265' } as const;
+    reportAdaptationNotice({ debug }, { ...started, sourceWidth: 1600, sourceHeight: 2200 });
+    reportAdaptationNotice({ debug }, { ...started, sourceWidth: 1600, sourceHeight: -1 } as never);
+    expect(records(debug)[0]).toMatchObject({ sourceWidth: 1600, sourceHeight: 2200 });
+    expect(records(debug)[1]).not.toHaveProperty('sourceWidth');
+  });
+});
+
+/**
+ * Which pull a live trace belongs to, so several cameras' records can be told apart.
+ *
+ * A phase says what happened and nothing about where. Four cameras warming off one HomeBase produced four
+ * identical `warming` records on a real fleet, and the only way to attribute them was to correlate the
+ * surrounding media commands by time — which is guesswork, and it read one camera's failure onto another.
+ *
+ * The SDK now states an opaque per-process handle. It is retained verbatim BECAUSE it is opaque: it resolves
+ * to no device, means nothing in the next run, and is bounded in shape — a value shaped like a serial is
+ * dropped rather than passed through, since this record is the one a support archive keeps.
+ */
+describe('the pull a live trace belongs to', () => {
+  const traceOf = (source: unknown) => {
+    const debug = vi.fn();
+    const sdk = createSdkLogger({ debug })!;
+    sdk.debug('[live] start trace', { phase: 'warming', retryMs: 2000, deadlineMs: 20000, source });
+    return records(debug)[0];
+  };
+
+  it('is retained, so two cameras warming together are two records and not one repeated', () => {
+    expect(traceOf('pull-3')).toMatchObject({ phase: 'warming', source: 'pull-3' });
+    expect(traceOf('station-1:2')).toMatchObject({ source: 'station-1:2' });
+  });
+
+  it('is dropped where it is not an opaque handle, a serial being what this record may never carry', () => {
+    expect(traceOf('T8010P2320172199:2')).not.toHaveProperty('source');
+    expect(traceOf('T8010P2320172199')).not.toHaveProperty('source');
+  });
+
+  it('is absent where the SDK sent none, rather than invented', () => {
+    expect(traceOf(undefined)).not.toHaveProperty('source');
+  });
+});
+
+/**
+ * A started request that reached neither a streaming outcome nor a failure.
+ *
+ * Every request is meant to end in one or the other, and a controller badges the camera either way. One ending
+ * in neither leaves an operator looking at a failure this log has no record of, and nobody can diagnose what
+ * was never written down. Observed once on a real controller: a selection, then no adaptation, no source
+ * command, and no outcome at all.
+ */
+describe('a request that reached no outcome', () => {
+  it('is recorded, with how long was waited', () => {
+    const debug = vi.fn();
+
+    reportHomeKitEvent({ debug }, { adapter: 'camera.streaming', event: 'live-request-unaccounted', afterMs: 30_000 });
+
+    expect(records(debug)[0]).toMatchObject({
+      scope: 'homekit',
+      event: 'live-request-unaccounted',
+      afterMs: 30_000,
+    });
+  });
+
+  it('carries nothing beyond the wait, the path that dropped it having left nothing else', () => {
+    const debug = vi.fn();
+
+    reportHomeKitEvent({ debug }, { adapter: 'camera.streaming', event: 'live-request-unaccounted', afterMs: 12_345 });
+
+    const record = records(debug)[0]!;
+    expect(Object.keys(record).sort()).toEqual(['adapter', 'afterMs', 'event', 'level', 'scope']);
+  });
+
+  it('is withheld where the wait is not a finite number, rather than logged as nonsense', () => {
+    const debug = vi.fn();
+
+    reportHomeKitEvent({ debug }, {
+      adapter: 'camera.streaming',
+      event: 'live-request-unaccounted',
+      afterMs: Number.NaN,
+    } as never);
+
+    expect(debug).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A request refused before it reached the source.
+ *
+ * Each of these answers a controller instantly and is badged instantly, and none was recorded. That is why a
+ * badge appearing at the moment of a switch had no counterpart in any log, and why five explanations for it
+ * were proposed and ruled out by measurement rather than read off a record.
+ */
+describe('a request refused before the source', () => {
+  it('records each bounded reason', () => {
+    for (const reason of ['disabled', 'at-capacity', 'cancelled', 'prepare-failed'] as const) {
+      const debug = vi.fn();
+
+      reportHomeKitEvent({ debug }, { adapter: 'camera.streaming', event: 'live-request-refused', reason });
+
+      expect(records(debug)[0]).toMatchObject({ scope: 'homekit', event: 'live-request-refused', reason });
+    }
+  });
+
+  it('carries the reason alone, no port, key or session identity travelling with it', () => {
+    const debug = vi.fn();
+
+    reportHomeKitEvent({ debug }, { adapter: 'camera.streaming', event: 'live-request-refused', reason: 'cancelled' });
+
+    expect(Object.keys(records(debug)[0]!).sort()).toEqual(['adapter', 'event', 'level', 'reason', 'scope']);
+  });
+
+  it('withholds a reason outside the bounded set rather than logging it', () => {
+    const debug = vi.fn();
+
+    reportHomeKitEvent({ debug }, {
+      adapter: 'camera.streaming',
+      event: 'live-request-refused',
+      reason: 'something-invented',
+    } as never);
+
+    expect(debug).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What a live record says once the file sink has retained it, rather than what its reporter emitted.
+ *
+ * The reporter and the sink each rebuild the record from an allowlist, so a spy on the reporter cannot show
+ * what the log a support archive is assembled from actually holds.
+ */
+describe('a live record that reached the support archive', () => {
+  /**
+   * Drives the production logger over an authorized live-media window and returns what the log file holds.
+   *
+   * The retained `timestamp` is dropped so the remaining keys can be compared exactly rather than as a subset.
+   */
+  const retained = async (record: Readonly<Record<string, unknown>>) => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-live-retained-'));
+    await new GuidedDiagnostics(root).authorize('live-media', 'now');
+    const logger = createDiagnosticLogger({ debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root);
+    if ('scope' in record) {
+      logger.debug?.(JSON.stringify(record));
+    } else {
+      reportHomeKitEvent(logger, record as Parameters<typeof reportHomeKitEvent>[1]);
+    }
+    await logger.flush?.();
+    const path = join(root, 'logs', 'homebridge-eufy.jsonl');
+    if (!existsSync(path)) {
+      return [];
+    }
+    return readFileSync(path, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const { timestamp, ...rest } = JSON.parse(line) as Record<string, unknown>;
+        expect(timestamp).toEqual(expect.any(String));
+        return rest;
+      });
+  };
+
+  it('keeps an arbitration decision over a station, which a refused request is otherwise unattributable', async () => {
+    await expect(
+      retained({
+        scope: 'homekit',
+        level: 'debug',
+        event: 'station-claim',
+        action: 'yielded',
+        claim: 'snapshot',
+        against: 'live',
+      }),
+    ).resolves.toEqual([
+      {
+        scope: 'homekit',
+        level: 'debug',
+        event: 'station-claim',
+        action: 'yielded',
+        claim: 'snapshot',
+        against: 'live',
+      },
+    ]);
+  });
+
+  it('keeps an event no adapter was offered, by kind and target alone', async () => {
+    await expect(retained({ event: 'event-unrouted', kind: 'motion', target: 'station' })).resolves.toEqual([
+      { scope: 'homekit', level: 'debug', event: 'event-unrouted', kind: 'motion', target: 'station' },
+    ]);
+    await expect(retained({ event: 'event-unrouted', kind: 'T8160P0000000000', target: 'station' })).resolves.toEqual(
+      [],
+    );
+  });
+
+  it('keeps a received push by its event type, device knowledge and decoded count alone', async () => {
+    const record = { scope: 'sdk', level: 'debug', subsystem: 'push', event: 'push-received', eventType: 3101 };
+    await expect(retained({ ...record, device: 'known', events: 0, deviceSn: 'synthetic' })).resolves.toEqual([
+      { ...record, device: 'known', events: 0 },
+    ]);
+    await expect(retained({ ...record, device: 'synthetic', events: 0 })).resolves.toEqual([]);
+  });
+
+  it('keeps how each realtime plane settled, by state and counts alone', async () => {
+    const record = { scope: 'sdk', level: 'debug', subsystem: 'push', event: 'realtime-readiness', state: 'partial' };
+    await expect(
+      retained({ ...record, failed: 1, token: 'synthetic', mqtt: { failed: 1, host: 'synthetic' }, wiredP2p: 'x' }),
+    ).resolves.toEqual([{ ...record, failed: 1, mqtt: { failed: 1 } }]);
+  });
+
+  it('keeps a request refused before the source, the badge an operator saw having no other counterpart', async () => {
+    await expect(
+      retained({ adapter: 'camera.streaming', event: 'live-request-refused', reason: 'at-capacity' }),
+    ).resolves.toEqual([
+      {
+        scope: 'homekit',
+        level: 'debug',
+        adapter: 'camera.streaming',
+        event: 'live-request-refused',
+        reason: 'at-capacity',
+      },
+    ]);
+  });
+
+  it('keeps a request that reached no outcome, with the wait that is all it carries', async () => {
+    await expect(
+      retained({ adapter: 'camera.streaming', event: 'live-request-unaccounted', afterMs: 30_000 }),
+    ).resolves.toEqual([
+      {
+        scope: 'homekit',
+        level: 'debug',
+        adapter: 'camera.streaming',
+        event: 'live-request-unaccounted',
+        afterMs: 30_000,
+      },
+    ]);
+  });
+
+  it('keeps a session that reached the negotiated output', async () => {
+    await expect(retained({ adapter: 'camera.streaming', event: 'live-session-streaming' })).resolves.toEqual([
+      { scope: 'homekit', level: 'debug', adapter: 'camera.streaming', event: 'live-session-streaming' },
+    ]);
+  });
+
+  it('keeps a talkback that started', async () => {
+    await expect(retained({ adapter: 'camera.streaming', event: 'live-talkback-started' })).resolves.toEqual([
+      { scope: 'homekit', level: 'debug', adapter: 'camera.streaming', event: 'live-talkback-started' },
+    ]);
+  });
+
+  it('keeps the geometry a camera-native camera negotiated, which is the shape the fault is about', async () => {
+    await expect(
+      retained({
+        adapter: 'camera.streaming',
+        event: 'live-video-selected',
+        operation: 'start',
+        profile: 'high',
+        level: '4.0',
+        width: 1600,
+        height: 1200,
+        fps: 30,
+        mtu: 1378,
+        addressVersion: 'ipv6',
+      }),
+    ).resolves.toEqual([
+      {
+        scope: 'homekit',
+        level: 'debug',
+        adapter: 'camera.streaming',
+        event: 'live-video-selected',
+        operation: 'start',
+        profile: 'high',
+        levelName: '4.0',
+        width: 1600,
+        height: 1200,
+        fps: 30,
+        mtu: 1378,
+        addressVersion: 'ipv6',
+      },
+    ]);
+  });
+
+  /**
+   * A packet size larger than the path can carry is the fault this field exists to expose, so an unexpected
+   * value is retained rather than filtered for being unexpected. Only a value that is not a datagram size at
+   * all is refused.
+   */
+  it('keeps a packet size larger than any local path, that being the observation itself', async () => {
+    await expect(
+      retained({
+        adapter: 'camera.streaming',
+        event: 'live-video-selected',
+        operation: 'start',
+        profile: 'high',
+        level: '4.0',
+        width: 1280,
+        height: 720,
+        fps: 30,
+        mtu: 9000,
+        addressVersion: 'ipv4',
+      }),
+    ).resolves.toMatchObject([{ mtu: 9000, addressVersion: 'ipv4' }]);
+  });
+
+  /** The address family is a closed set of two, so a record naming anything else is not a HomeKit selection. */
+  it('refuses a live selection whose address family is not one HomeKit negotiates', async () => {
+    await expect(
+      retained({
+        adapter: 'camera.streaming',
+        event: 'live-video-selected',
+        operation: 'start',
+        profile: 'high',
+        level: '4.0',
+        width: 1280,
+        height: 720,
+        fps: 30,
+        mtu: 1378,
+        addressVersion: 'carrier-pigeon',
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it('refuses a HomeKit event name arriving under the SDK scope, the two vocabularies being separate', async () => {
+    await expect(
+      retained({ scope: 'sdk', level: 'debug', subsystem: 'p2p', event: 'live-request-refused' }),
+    ).resolves.toEqual([]);
+  });
+});

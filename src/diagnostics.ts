@@ -1,0 +1,3613 @@
+import { constants, createCipheriv, createHash, publicEncrypt, randomBytes, randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFile, chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { gunzip as gunzipCallback, gzip as gzipCallback } from 'node:zlib';
+
+import { LIVE_TRACE_MESSAGE, type AnyDeviceEvent, type Logger, type LiveTrace } from '@mega-yfue/eufy-sdk';
+
+export interface PlatformLogger {
+  debug?(message: string): void;
+  error(message: string): void;
+  info(message: string): void;
+  localize?(key: string, parameters?: Readonly<Record<string, string | number>>): string;
+  flush?(): Promise<void>;
+  warn(message: string): void;
+}
+
+interface HomeKitCondition {
+  code: string;
+  capability?: string;
+  member?: string;
+  active: boolean;
+  reason: string;
+}
+
+/** One write the device acknowledged and never applied, as the SDK reports it. */
+export interface UnconfirmedWrite {
+  serial: string;
+  /** The SDK property the write targeted, which is its vocabulary and not this plugin's. */
+  property: string;
+}
+
+/**
+ * The SDK properties whose unconfirmed write this plugin can name, and what it calls them.
+ *
+ * A write is acknowledged when the transport carried it, and the SDK reports separately where the device
+ * never applied it. Only a member this plugin actually writes is translated: anything else is a property
+ * some other consumer of the same account asked for, and claiming it would report a condition against an
+ * accessory this plugin never touched.
+ */
+const UNCONFIRMED_WRITE_MEMBERS: Readonly<Record<string, { capability: string; member: string }>> = {
+  enabled: { capability: 'camera', member: 'enabled' },
+  statusLed: { capability: 'camera', member: 'statusLed' },
+  nightVision: { capability: 'camera', member: 'nightVision' },
+};
+
+/**
+ * The condition an unconfirmed write is reported under, or nothing where this plugin did not write it.
+ *
+ * It shares the code a failed control operation already uses, because the user's situation is the same one —
+ * a control that did not take — and differs only in how it was learnt: no error was raised, the device simply
+ * never reported the value. The reason names that distinction so a support case can tell the two apart.
+ */
+export function unconfirmedWriteCondition(property: string): HomeKitCondition | undefined {
+  const named = Object.hasOwn(UNCONFIRMED_WRITE_MEMBERS, property) ? UNCONFIRMED_WRITE_MEMBERS[property] : undefined;
+  return named === undefined
+    ? undefined
+    : { code: 'camera-control-operation-failed', ...named, active: true, reason: 'not-confirmed' };
+}
+
+/**
+ * One redacted fact about a HomeKit adapter, and the accessory it belongs to.
+ *
+ * `serial` is an identity and is never retained. {@link reportHomeKitEvent} resolves it to a support-case alias,
+ * which is what names one camera of a household in a record that names no device.
+ */
+type HomeKitEventTrace = { adapter: string; serial?: string } & (
+  | { event: string; observation: string; announcedBy?: string }
+  | {
+      event: 'live-video-selected';
+      operation: (typeof HOMEKIT_LIVE_VIDEO_OPERATIONS)[number];
+      profile: (typeof HOMEKIT_LIVE_VIDEO_PROFILES)[number];
+      level: (typeof HOMEKIT_LIVE_VIDEO_LEVELS)[number];
+      width: number;
+      height: number;
+      fps: number;
+      mtu: number;
+      maxBitRate: number;
+      addressVersion: (typeof HOMEKIT_LIVE_ADDRESS_VERSIONS)[number];
+      camera?: number;
+      variant?: number;
+    }
+  | {
+      event: 'live-session-failed';
+      outcome: 'failed';
+      reason: string;
+      stage: (typeof HOMEKIT_LIVE_SESSION_STAGES)[number];
+      sourceStage?: string;
+      sourceReason?: string;
+    }
+  /**
+   * A session gave its source back, stating whether it was asked to or ended itself.
+   *
+   * A controller stops showing a picture either way, so this record is the only place the two differ. `stage`
+   * is present where the session was released before its source arrived.
+   */
+  | {
+      event: 'live-session-released';
+      release: string;
+      reports?: number;
+      sinceLastReportMs?: number;
+      stage?: 'sdk-source-acquisition';
+    }
+  /**
+   * The first adapted output reached the negotiated destination.
+   *
+   * The moment a controller can show a picture, and the only thing that separates an adaptation that produced
+   * nothing from one whose output a controller did not display. Carries the fact alone: a session identity,
+   * a port and a key all travel in the same neighbourhood.
+   */
+  | { event: 'live-session-streaming' }
+  | { event: 'live-talkback-started' }
+  /**
+   * A started request reached neither a streaming outcome nor a failure.
+   *
+   * Every request is meant to end in one or the other. One ending in neither leaves an operator looking at a
+   * failure this log has no record of, and nobody can diagnose what was never written down. Carries how long
+   * was waited and nothing else: the path that dropped the request left nothing else to carry.
+   */
+  | { event: 'live-request-unaccounted'; afterMs: number }
+  /**
+   * A stream request refused before it reached the source.
+   *
+   * Answered to a controller instantly, and badged by it instantly. Carries the bounded reason alone, which is
+   * enough to tell a momentary switch collision from a camera that is genuinely off or a host genuinely full.
+   */
+  | { event: 'live-request-refused'; reason: string }
+);
+
+/** An SDK event no adapter was offered, by the kind it was and what its serial named. */
+type UnroutedEventTrace = { event: 'event-unrouted'; kind: string; target: string };
+
+/** Why a live session gave its source back: a stop from outside it, or the session ending itself. */
+const LIVE_SESSION_RELEASES = ['requested', 'failed'] as const;
+
+/**
+ * The SDK event kinds a HomeKit adapter consumes, which are the kinds an unrouted-event record may name.
+ *
+ * Checked against the SDK's event union at build time, so a kind the SDK renames or removes fails the build.
+ */
+const UNROUTED_EVENT_KINDS = [
+  'alarm',
+  'armingModeChanged',
+  'batteryAlert',
+  'cameraEnabledChanged',
+  'contactState',
+  'cryingDetected',
+  'dogDetected',
+  'doorbellPress',
+  'lockState',
+  'motion',
+  'packageDelivered',
+  'packageStranded',
+  'packageTaken',
+  'personDetected',
+  'petDetection',
+  'smartLightState',
+  'soundDetected',
+  'strangerDetected',
+  'vehicleDetected',
+] as const satisfies readonly AnyDeviceEvent['eventName'][];
+/** What an unrouted event's serial named: none, another device's station, or a serial no adapter holds. */
+const UNROUTED_EVENT_TARGETS = ['none', 'station', 'unattached'] as const;
+
+/** The claims that contend for a station's one live channel, and the decisions taken over it. */
+const STATION_CLAIMS = ['live', 'recording', 'snapshot'] as const;
+const STATION_CLAIM_ACTIONS = ['held', 'yielded', 'refused', 'released'] as const;
+/**
+ * The widest camera index a station may name as the one it is serving.
+ *
+ * A base fans a bounded number of cameras over one session, and an index beyond that is a value this plugin
+ * did not expect rather than a channel. The index carries no identity: which camera holds it is stated by the
+ * records about that camera.
+ */
+const MAX_STATION_CHANNEL = 63;
+
+/** The bounded reasons a stream request is refused before it reaches the source. */
+const REFUSAL_REASONS = new Set(['disabled', 'at-capacity', 'cancelled', 'prepare-failed']);
+
+/**
+ * The live request and session events {@link sanitizeLiveSessionTrace} reconstructs a record from.
+ *
+ * Read by both halves of the path: {@link reportHomeKitEvent} builds the record and the file sink rebuilds it.
+ */
+const HOMEKIT_LIVE_REQUEST_EVENTS = new Set([
+  'live-request-refused',
+  'live-request-unaccounted',
+  'live-session-failed',
+  'live-session-released',
+  'live-session-streaming',
+  'live-talkback-started',
+]);
+
+/**
+ * The error identities an SDK record may name, which is all a record carries of one.
+ *
+ * A message is never among them, so an identity absent here is recorded as `Error` and reads as any other
+ * failure.
+ */
+const SDK_ERROR_TYPES = [
+  'DeviceChannelUnresolvedError',
+  'Error',
+  'RangeError',
+  'SessionExpiredError',
+  'StationKeyUnavailableError',
+  'StationUnreachableError',
+  'TypeError',
+] as const;
+
+/**
+ * The retained fields that stand for a device rather than describing one, which is the privacy class a manifest
+ * declares for them. Each holds a per-case alias: stable within one archive, and resolvable to a device only by
+ * the owner whose console paired it with a name.
+ */
+const PSEUDONYMOUS_FIELDS = new Set(['accessory', 'accessoryAliases']);
+
+const MAX_SDK_DETAILS = 16;
+const MAX_LOG_RECORD_BYTES = 64 * 1024;
+const MAX_CURRENT_LOG_BYTES = 50 * 1024 * 1024;
+const MAX_QUEUED_LOG_BYTES = 1024 * 1024;
+/**
+ * How much of one evidence class a support archive carries, applied to each class on its own.
+ *
+ * Per class rather than as one shared pool. The classes a fault is diagnosed from are small and the SDK's is
+ * not, so one pool let the noisiest class decide how far back any of them reached — and because the read fills
+ * newest-first, a long session lost the diagnostic classes at their oldest end while SDK records stayed. Only
+ * the SDK's class reaches this bound in practice.
+ */
+const MAX_SUPPORT_ARCHIVE_LOG_BYTES = 16 * 1024 * 1024;
+const MAX_SUPPORT_ARCHIVE_MARKER_BYTES = 1024 * 1024;
+const MAX_UI_EVENTS_BYTES = 64 * 1024;
+const MAX_PENDING_UI_EVENTS = 8;
+const SUPPORT_ARCHIVE_RETENTION_MS = 24 * 60 * 60 * 1_000;
+const LOG_ROTATIONS = 3;
+const LOG_DIRECTORY = 'logs';
+const LOG_FILE = 'homebridge-eufy.jsonl';
+const DIAGNOSTICS_DIRECTORY = 'diagnostics';
+const GUIDED_SESSION_FILE = 'session.json';
+const REPRODUCTION_MARKERS_FILE = 'reproduction-markers.jsonl';
+const UI_EVENTS_FILE = 'ui-events.jsonl';
+const HOST_ENVIRONMENT_FILE = 'host.json';
+const FLEET_FILE = 'fleet.json';
+/** The longest device model or adapter key retained, which bounds values this plugin does not choose alone. */
+const MAX_DEVICE_MODEL_LENGTH = 64;
+/** How many HomeKit services one fleet entry names, which is above what any single device is represented by. */
+const MAX_FLEET_SERVICES = 12;
+/** How much of an FFmpeg path or version banner is kept, which is more than either needs. */
+const MAX_FFMPEG_IDENTITY_LENGTH = 256;
+const DEBUG_AUTHORIZATION_MS = 72 * 60 * 60 * 1_000;
+
+/**
+ * The version declared by the nearest `package.json` above a resolved file, or `unknown` if none states one.
+ *
+ * The nearest manifest above a module is the one that owns it, which is the same rule Node itself applies, so
+ * this reports the build that is actually loaded rather than a version written down a second time. It walks
+ * rather than joining a fixed number of segments because the plugin's own module is a directory deeper once
+ * built, and an SDK resolved through a link answers from wherever the link points.
+ */
+function loadedBuild(module: string): string {
+  try {
+    return `${PLUGIN_VERSION}+${Math.trunc(statSync(module).mtimeMs)}`;
+  } catch {
+    return PLUGIN_VERSION;
+  }
+}
+
+function loadedVersion(from: string | undefined): string {
+  if (from === undefined) {
+    return 'unknown';
+  }
+  for (let directory = dirname(from); directory !== dirname(directory); directory = dirname(directory)) {
+    try {
+      const declared = (JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')) as { version?: unknown })
+        .version;
+      return typeof declared === 'string' ? declared : 'unknown';
+    } catch {
+      continue;
+    }
+  }
+  return 'unknown';
+}
+
+/**
+ * Where the SDK the plugin loaded resides, or `undefined` when nothing answers the specifier.
+ *
+ * Resolution fails on its own terms and separately from reading: an installation that has not installed its
+ * dependencies resolves nothing, and a version label is not worth refusing to load diagnostics over.
+ */
+function loadedSdkEntry(): string | undefined {
+  try {
+    return createRequire(import.meta.url).resolve('@mega-yfue/eufy-sdk');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The plugin build this process loaded, read once at load from the manifest above this module.
+ *
+ * A support archive is read to decide whether a fault is already fixed, and without this an archive cannot
+ * answer that. Failure degrades to `unknown` rather than a guess, because a wrong version sends the reader
+ * further from the fault than an absent one does.
+ *
+ * It states the build in memory rather than the one on disk, which is what lets two processes notice an upgrade
+ * between them: after one lands, the runtime keeps answering with the build it started on until it is replaced.
+ */
+export const PLUGIN_VERSION = loadedVersion(fileURLToPath(import.meta.url));
+
+/**
+ * Which build of {@link PLUGIN_VERSION} this process loaded: the version and the time this module was written.
+ *
+ * Every build rewrites the module, so two builds of one version differ here while a published package, whose
+ * files all carry one fixed time, differs only by its version. An unreadable module degrades to the version alone.
+ */
+export const PLUGIN_BUILD = loadedBuild(fileURLToPath(import.meta.url));
+const SDK_VERSION = loadedVersion(loadedSdkEntry());
+const gzip = promisify(gzipCallback);
+const gunzip = promisify(gunzipCallback);
+const SDK_SUBSYSTEMS = new Set(['device', 'mega', 'mqtt', 'p2p', 'push', 'webrtc', 'sdk']);
+/**
+ * The events an SDK-scoped record may name, being the ones {@link createSdkLogger} classifies a message as.
+ *
+ * Disjoint from {@link HOMEKIT_LIVE_REQUEST_EVENTS}, which this plugin's own adapters report under `homekit`.
+ */
+const SDK_EVENT_KEYS = new Set([
+  'client-warning',
+  'connection-closed',
+  'connection-opened',
+  'connection-retrying',
+  'live-start-trace',
+  'media-error',
+  'media-warning',
+  'operation-failed',
+  'observation-invalid',
+  'protocol-command',
+  'protocol-unhandled',
+  'push-received',
+  'realtime-readiness',
+  'rtc-sign-refused',
+  'session-connecting',
+  'session-idle',
+  'session-resumed',
+  'session-restored',
+  'snapshot-cache-warning',
+  'transport-error',
+]);
+const EN_MESSAGES = JSON.parse(readFileSync(new URL('../i18n/runtime/en.json', import.meta.url), 'utf8')) as Record<
+  string,
+  string
+>;
+
+export type DiagnosticsProfile =
+  | 'startup-authentication'
+  | 'device-representation'
+  | 'control-state'
+  | 'live-media'
+  | 'hksv-recording'
+  | 'dashboard-ui'
+  | 'other';
+
+export type DiagnosticsReproductionMode = 'now' | 'intermittent';
+
+/**
+ * The devices a reporter says a fault involves: every one of them, or the ones they named.
+ *
+ * It selects nothing. Every log a profile calls for is collected either way, because a fault a reporter
+ * attributes to one camera is regularly caused by something they did not name. What it does is carry their
+ * answer, so the question is asked once here rather than again in the issue.
+ */
+export type AffectedDevices = 'all' | readonly string[];
+
+/**
+ * The reporter's answer as a support archive carries it: every device, or how many they named.
+ *
+ * The serials themselves stay on the host. They identify one household's hardware, and no evidence class in an
+ * archive carries a device identity.
+ */
+function countedAffectedDevices(affected: AffectedDevices): 'all' | number {
+  return affected === 'all' ? 'all' : new Set(affected).size;
+}
+
+/** The bounded UI events a support session may record, and the only vocabulary the sink accepts. */
+const DIAGNOSTICS_UI_EVENTS = [
+  'background-started',
+  'dashboard-opened',
+  'authentication-opened',
+  'request-failed',
+  'authentication-submitted',
+  'authentication-captcha',
+  'authentication-two-factor',
+  'authentication-restart-required',
+  'authentication-blocked',
+  'authentication-plugin-running',
+  'authentication-failed',
+  'authentication-commit-failed',
+  'authentication-timed-out',
+  'authentication-closed',
+  'live-picture-seen',
+  'live-picture-not-seen',
+  'live-preview-seen',
+  'live-preview-not-seen',
+] as const;
+
+export type DiagnosticsUiEvent = (typeof DIAGNOSTICS_UI_EVENTS)[number];
+
+type DiagnosticEvidence = 'plugin-log' | 'sdk-log' | 'homekit-log' | 'ffmpeg-log' | 'ui-log';
+
+/** The evidence classes assembled from the rotating JSONL log, each budgeted on its own. */
+type LogEvidence = Extract<DiagnosticEvidence, 'plugin-log' | 'sdk-log' | 'homekit-log' | 'ffmpeg-log'>;
+
+interface SupportArchiveManifest {
+  version: 2;
+  archiveFormat: 'homebridge-eufy-support-archive';
+  keyId: string;
+  supportCaseId: string;
+  profile: DiagnosticsProfile;
+  reproductionMode: DiagnosticsReproductionMode;
+  createdAt: string;
+  archiveExpiresAt: string;
+  reproductionStartedAt: string;
+  reproductionEndedAt: string;
+  evidence: readonly (Pick<SupportArchiveEvidence, 'evidence' | 'privacyClass' | 'truncated'> &
+    Partial<Pick<SupportArchiveEvidence, 'contentType' | 'fields'>> & {
+      status: 'included' | 'missing';
+      bytes?: number;
+      missingReason?: 'no-allowlisted-record-observed';
+    })[];
+  excludedClasses: readonly string[];
+}
+
+interface SupportArchiveReview {
+  reviewId: string;
+  manifest: SupportArchiveManifest;
+}
+
+interface EncryptedSupportArchive {
+  filename: string;
+  mediaType: 'application/gzip';
+  archive: Buffer;
+}
+
+interface SupportArchiveKey {
+  keyId: string;
+  publicKey: string;
+  sha256: string;
+}
+
+interface SupportArchiveEvidence {
+  evidence: DiagnosticEvidence | 'environment' | 'fleet' | 'reporter-statement' | 'reproduction-markers';
+  privacyClass: 'diagnostic' | 'operational';
+  contentType: 'application/json' | 'application/x-ndjson';
+  content: string;
+  truncated?: true;
+  retainedFrom?: string;
+  fields: readonly {
+    field: string;
+    privacyClass: 'diagnostic' | 'operational' | 'pseudonymous';
+  }[];
+}
+
+interface PendingSupportArchive {
+  reviewId: string;
+  manifest: SupportArchiveManifest;
+  evidence: readonly SupportArchiveEvidence[];
+}
+
+const SUPPORT_ARCHIVE_KEY: SupportArchiveKey = {
+  keyId: 'support-2026-08-01',
+  sha256: 'e01d8a1c6c2b800772495b3f656b10899364ece0e82d846f7d33f61cdffbd451',
+  publicKey: `-----BEGIN PUBLIC KEY-----
+MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEArho8/7NwaYsZ3r27Lzek
+mJXOdSOtjuxKLWHxS40Hf6MFskF/dSwY8om0NZ22Qa/cygStAiP4eAmL1fEuNqlS
+JnoFgCtg6myFQVfeep9FWAJruR7EGp4WgiXopq8pvxSkJixZaYin2cch7CwUA5g9
+b2AcErlfAmZM6F0Sd9v5Q7rHF68x3MINi3BTDKsz/3KqkoJoxyosKjMNDNATEn/T
+y/yAF1/kELg7SJgnheWRoFK6130DEPzbym+TTxSZZOHeAtw27ALXoYGmnv09uq0K
+Bks4wOrvW8gWQpbMOfpbc3XeWsP7bOuIXr/fs3kXgHIZoJSiLW7JlsivL9z5NDl6
+UBxRyR0KOnK07Cx2xvl5pXfAOxQnc8F1JtjclzCHG6Q5sfq7isoMcpPuxDlEepgm
+FNkJi71G4+lWgTotQr/fTVeZ46IxXrtnq89pb0fE20WYMaHnXkz0FMCIjMjuQWEP
+R0zjeaRO8wZ3sqMgWSy2TldFsh709GqVUiS0YRUoVT1oExc27P47EFUNh57qI7bI
+tcEIHVhBqyawK+WrIC+vgBgAPg6w5klxVhUaWGltubIFSm86BxNDTGx7C6rllcRU
+pirqSQAW3PgOCg6d3lfkGLHVRsC+j6xsv1xC6clR6MKzklp7qz6uuOmf9GIdu+qE
+9U0RwKqGYSp/N8TF5n3p3s0CAwEAAQ==
+-----END PUBLIC KEY-----`,
+};
+
+const SUPPORT_ARCHIVE_EXCLUDED_CLASSES = [
+  'credentials-and-authentication',
+  'tokens-cookies-and-authorization',
+  'session-and-push-stores',
+  'private-and-symmetric-keys',
+  'unconstrained-internal-objects',
+  'camera-images-talkback-and-raw-media',
+] as const;
+
+/**
+ * The bug form's `area` option each diagnostics profile belongs to.
+ *
+ * A dropdown prefill is honoured only on an exact match with a declared option, so these strings are the
+ * form's own. Two profiles share `HomeKit Integration`, which is one area to triage.
+ */
+const BUG_REPORT_AREAS: Readonly<Record<DiagnosticsProfile, string>> = {
+  'startup-authentication': 'Login / Authentication',
+  'device-representation': 'HomeKit Integration',
+  'control-state': 'Device controls',
+  'live-media': 'Livestream / Streaming',
+  'hksv-recording': 'Recording',
+  'dashboard-ui': 'Plugin UI / Dashboard',
+  other: 'Other',
+};
+
+/** Where a report goes, and the form whose field ids the query string addresses. */
+const BUG_REPORT_FORM = 'https://github.com/homebridge-plugins/homebridge-eufy/issues/new';
+
+/**
+ * A prepared bug report for a finished support session.
+ *
+ * Addresses the committed issue form by filename, and fills the field ids that form declares. A prefill is
+ * honoured only against a named template, and only the operational class travels in a query string.
+ *
+ * Every field this process can answer is answered, because a blank one is charged to the reporter: the form's
+ * own triage asks for what the environment block leaves empty, so a line left for the reporter to complete
+ * turns a report made the intended way into an incomplete one. The host version is the host's own public
+ * version and empty where no run has recorded it yet. The support case id is not among them — it sits above
+ * the operational class, and the archive's own filename carries it to the report that attaches one.
+ *
+ * The archive field is left unaddressed, because a query string cannot carry a file. Any text placed there
+ * satisfies the field's own `required` validation, so a prefill would answer it on the reporter's behalf and
+ * the form would accept a report with no archive on it.
+ */
+function bugReportUrl(
+  session: PersistedDiagnosticsSession,
+  missingEvidence: readonly string[],
+  host: PersistedHostEnvironment | undefined,
+): string {
+  const url = new URL(BUG_REPORT_FORM);
+  url.searchParams.set('template', 'bug_report.yml');
+  url.searchParams.set('title', `[Diagnostics] ${BUG_REPORT_AREAS[session.profile]}: `);
+  url.searchParams.set(
+    'environment',
+    [
+      `- **Plugin Version**: ${PLUGIN_VERSION}`,
+      `- **eufy SDK**: ${SDK_VERSION}`,
+      `- **Node.js Version**: ${process.version}`,
+      `- **Homebridge Version**: ${host?.homebridge ?? ''}`,
+      `- **OS**: ${process.platform} ${process.arch}`,
+      `- **Diagnostics profile**: ${session.profile}`,
+      `- **Missing evidence**: ${missingEvidence.length ? missingEvidence.join(', ') : 'none'}`,
+    ].join('\n'),
+  );
+  url.searchParams.set('area', BUG_REPORT_AREAS[session.profile]);
+  return url.toString();
+}
+
+const DIAGNOSTICS_PROFILES: Readonly<Record<DiagnosticsProfile, readonly DiagnosticEvidence[]>> = {
+  'startup-authentication': ['plugin-log', 'sdk-log', 'ui-log'],
+  'device-representation': ['plugin-log', 'sdk-log', 'homekit-log'],
+  'control-state': ['plugin-log', 'sdk-log', 'homekit-log'],
+  'live-media': ['plugin-log', 'sdk-log', 'homekit-log', 'ffmpeg-log'],
+  'hksv-recording': ['plugin-log', 'sdk-log', 'ffmpeg-log'],
+  'dashboard-ui': ['plugin-log', 'ui-log'],
+  other: ['plugin-log', 'sdk-log', 'homekit-log', 'ffmpeg-log'],
+};
+
+/**
+ * The evidence a session collects: its profile's, and the UI log too for a live-media capture that named cameras,
+ * whose guided encoder attempts record the reporter's picture answers.
+ */
+function selectedEvidence(session: {
+  profile: DiagnosticsProfile;
+  affectedDevices?: AffectedDevices;
+}): readonly DiagnosticEvidence[] {
+  const evidence = DIAGNOSTICS_PROFILES[session.profile];
+  return session.profile === 'live-media' &&
+    Array.isArray(session.affectedDevices) &&
+    session.affectedDevices.length > 0
+    ? [...evidence, 'ui-log']
+    : evidence;
+}
+
+/** Narrows external profile input against the diagnostics-owned profile registry. */
+export function isDiagnosticsProfile(value: unknown): value is DiagnosticsProfile {
+  return typeof value === 'string' && Object.hasOwn(DIAGNOSTICS_PROFILES, value);
+}
+
+/** Narrows external reproduction-mode input to the diagnostics-owned modes. */
+export function isDiagnosticsReproductionMode(value: unknown): value is DiagnosticsReproductionMode {
+  return value === 'now' || value === 'intermittent';
+}
+
+/** Narrows external event input to the diagnostics-owned UI vocabulary. */
+export function isDiagnosticsUiEvent(value: unknown): value is DiagnosticsUiEvent {
+  return DIAGNOSTICS_UI_EVENTS.includes(value as DiagnosticsUiEvent);
+}
+
+interface PersistedDiagnosticsSession {
+  version: 1;
+  supportCaseId: string;
+  profile: DiagnosticsProfile;
+  reproductionMode: DiagnosticsReproductionMode;
+  authorizedAt: string;
+  expiresAt: string;
+  reproductionStartedAt?: string;
+  reproductionEndedAt?: string;
+  affectedDevices?: AffectedDevices;
+}
+
+interface GuidedDiagnosticsStatus {
+  status: 'inactive' | 'authorized' | 'reproducing' | 'complete' | 'expired';
+  supportCaseId?: string;
+  profile?: DiagnosticsProfile;
+  reproductionMode?: DiagnosticsReproductionMode;
+  selectedEvidence: readonly DiagnosticEvidence[];
+  missingEvidence: readonly DiagnosticEvidence[];
+  authorizedAt?: string;
+  expiresAt?: string;
+  reproductionStartedAt?: string;
+  reproductionEndedAt?: string;
+  partialExportAvailable: boolean;
+  affectedDevices?: AffectedDevices;
+  issueUrl?: string;
+  /**
+   * The guided encoder attempts of a reproducing live-media capture that named cameras: how many each camera
+   * makes, every live start recorded so far in order, how many picture answers were given, and, in camera order,
+   * whether the reporter saw each camera's own video in the page before its attempts.
+   */
+  liveEncode?: { attempts: number; starts: readonly LiveEncodeStart[]; answers: number; previews: readonly boolean[] };
+}
+
+function diagnosticsSessionPath(storageRoot: string): string {
+  return join(storageRoot, DIAGNOSTICS_DIRECTORY, GUIDED_SESSION_FILE);
+}
+
+/**
+ * Whether a value has the shape a support case identifier is issued in, which is the only shape one is
+ * accepted in from anywhere.
+ *
+ * A support case identifier names one authorized evidence window. It is randomly generated and carries no
+ * account, device, or host fact, which is why it may cross a process boundary.
+ */
+export function isSupportCaseId(value: unknown): value is string {
+  return typeof value === 'string' && /^support-[0-9a-f-]{36}$/.test(value);
+}
+
+function readDiagnosticsSession(storageRoot: string): PersistedDiagnosticsSession | undefined {
+  try {
+    const candidate = JSON.parse(
+      readFileSync(diagnosticsSessionPath(storageRoot), 'utf8'),
+    ) as Partial<PersistedDiagnosticsSession>;
+    const reproductionMode = candidate.reproductionMode ?? 'now';
+    if (
+      candidate.version !== 1 ||
+      !isSupportCaseId(candidate.supportCaseId) ||
+      typeof candidate.profile !== 'string' ||
+      !isDiagnosticsProfile(candidate.profile) ||
+      !isDiagnosticsReproductionMode(reproductionMode) ||
+      typeof candidate.authorizedAt !== 'string' ||
+      typeof candidate.expiresAt !== 'string'
+    ) {
+      return undefined;
+    }
+    return { ...candidate, reproductionMode } as PersistedDiagnosticsSession;
+  } catch {
+    return undefined;
+  }
+}
+
+function activeDiagnosticsSession(storageRoot: string, now: number): PersistedDiagnosticsSession | undefined {
+  const session = readDiagnosticsSession(storageRoot);
+  return session && Date.parse(session.expiresAt) > now ? session : undefined;
+}
+
+/** How many live starts of each named camera a guided live-media capture codes with an encoder variant. */
+const LIVE_ENCODE_ATTEMPTS = 6;
+
+/**
+ * Counts each live start of a camera that a reproducing live-media capture named, and returns where it falls: the
+ * camera's position among the named ones, and the start's index while it is below {@link LIVE_ENCODE_ATTEMPTS}.
+ * Counting restarts with each reproduction. Outside one, and for a camera it did not name, it counts nothing.
+ */
+export function liveEncodeAttempts(
+  storageRoot: string,
+  now: () => number = Date.now,
+): (serial: string) => { camera: number; variant?: number } | undefined {
+  let reproduction: string | undefined;
+  const starts = new Map<string, number>();
+  return (serial) => {
+    const session = activeDiagnosticsSession(storageRoot, now());
+    const named = session?.affectedDevices;
+    const camera = named === undefined || named === 'all' ? -1 : named.indexOf(serial);
+    if (
+      session?.profile !== 'live-media' ||
+      !session.reproductionStartedAt ||
+      session.reproductionEndedAt ||
+      camera < 0
+    ) {
+      return undefined;
+    }
+    if (reproduction !== `${session.supportCaseId}@${session.reproductionStartedAt}`) {
+      reproduction = `${session.supportCaseId}@${session.reproductionStartedAt}`;
+      starts.clear();
+    }
+    const started = starts.get(serial) ?? 0;
+    starts.set(serial, started + 1);
+    return { camera, ...(started < LIVE_ENCODE_ATTEMPTS ? { variant: started } : {}) };
+  };
+}
+
+/** One live start a reproducing live-media capture recorded, as far as its own records have followed it. */
+interface LiveEncodeStart {
+  camera?: number;
+  variant?: number;
+  state: 'started' | 'streaming' | 'ended';
+}
+
+/**
+ * A session as it stands at `now`: a capture still running when its authorization ends is finished at that end.
+ *
+ * A finished capture can be reviewed and exported until the archive retention has elapsed past the end of its
+ * authorization, so a capture that ran out its 72 hours keeps what it captured.
+ */
+function settledDiagnosticsSession(
+  session: PersistedDiagnosticsSession,
+  now: number,
+): { session: PersistedDiagnosticsSession; exportable: boolean } {
+  const expiresAt = Date.parse(session.expiresAt);
+  const settled =
+    session.reproductionStartedAt && !session.reproductionEndedAt && expiresAt <= now
+      ? { ...session, reproductionEndedAt: session.expiresAt }
+      : session;
+  return {
+    session: settled,
+    exportable: Boolean(settled.reproductionEndedAt) && now < expiresAt + SUPPORT_ARCHIVE_RETENTION_MS,
+  };
+}
+
+/**
+ * Collapses one supplied string to bounded printable text, or nothing where none of it survives.
+ *
+ * Every value this module accepts from outside itself passes through here first, so that a field arriving as
+ * a novel, with control characters in it, or with a terminal escape sequence cannot become a record whatever
+ * the allowlist beyond it decides.
+ */
+function boundedText(value: string, maximumLength: number): string | undefined {
+  const printable = value
+    .replace(/[^\x20-\x7e]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maximumLength)
+    .trim();
+  return printable === '' ? undefined : printable;
+}
+
+/** Whether a value is a plain JSON object, which is the only shape a record crossing a process boundary has. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** One resolved adaptation binary, as this module keeps and republishes it. */
+interface PersistedFfmpegEnvironment {
+  path: string;
+  source: 'bundled' | 'configured';
+  version?: string;
+  /** Each hardware encoder qualification tried, with its outcome per `profile@level` selection. */
+  encoders?: Record<string, Record<string, string | readonly ['bytes', number, number]>>;
+}
+
+/**
+ * What this account's devices are, and what each one becomes in HomeKit.
+ *
+ * A report about a camera that nothing represents reads exactly like a report about one that fails to stream,
+ * and neither the reporter nor a reader can tell without this: two rounds of one investigation were spent on a
+ * device the plugin does not fully support, which the reporter found by chance in the interface. Each entry
+ * carries the support-case alias every other record about that accessory carries, so a failing session is
+ * attributable to what the device actually is.
+ *
+ * `attached` is what decides what a media failure means, because a camera behind a HomeBase reaches its media
+ * over that base and a standalone one does not. `services` is empty for a device nothing represents, and names
+ * what a partially represented one does become — which is the difference between unsupported and incomplete.
+ */
+interface PersistedFleetEntry {
+  readonly accessory: string;
+  readonly model?: string;
+  readonly represented: boolean;
+  readonly attached: boolean;
+  readonly services: readonly string[];
+}
+
+function fleetPath(storageRoot: string): string {
+  return join(storageRoot, DIAGNOSTICS_DIRECTORY, FLEET_FILE);
+}
+
+/**
+ * Records what the account's devices are and what each becomes, replacing the record whole.
+ *
+ * Written by the process that holds both the inventory and the accessory aliases, because an archive is
+ * assembled by another one. Rewritten on every complete inventory, so a device withdrawn or newly recognised
+ * cannot be reported as still present. A write that fails is dropped: an archive then declares no fleet, which
+ * is honest, whereas failing over a diagnostic file would cost the user their cameras.
+ */
+export function recordFleet(storageRoot: string, fleet: readonly PersistedFleetEntry[]): void {
+  try {
+    const path = fleetPath(storageRoot);
+    mkdirSync(dirname(path), { mode: 0o700, recursive: true });
+    writeFileSync(path, `${JSON.stringify({ version: 1, devices: fleet })}\n`, { mode: 0o600 });
+  } catch {}
+}
+
+/** Reads the recorded fleet, keeping each entry whose own fields narrow and dropping each that does not. */
+function readFleet(storageRoot: string): PersistedFleetEntry[] | undefined {
+  try {
+    const candidate = JSON.parse(readFileSync(fleetPath(storageRoot), 'utf8')) as Record<string, unknown>;
+    if (candidate.version !== 1 || !Array.isArray(candidate.devices)) {
+      return undefined;
+    }
+    const devices = candidate.devices.flatMap((row: unknown) => {
+      if (!isRecord(row)) return [];
+      const accessory = opaqueAccessoryAlias(row.accessory);
+      if (accessory === undefined || typeof row.represented !== 'boolean' || typeof row.attached !== 'boolean') {
+        return [];
+      }
+      const model = typeof row.model === 'string' ? boundedText(row.model, MAX_DEVICE_MODEL_LENGTH) : undefined;
+      const services = (Array.isArray(row.services) ? row.services : [])
+        .filter((service): service is string => typeof service === 'string')
+        .slice(0, MAX_FLEET_SERVICES)
+        .flatMap((service) => {
+          const bounded = boundedText(service, MAX_DEVICE_MODEL_LENGTH);
+          return bounded === undefined ? [] : [bounded];
+        });
+      return [
+        {
+          accessory,
+          ...(model === undefined ? {} : { model }),
+          represented: row.represented,
+          attached: row.attached,
+          services,
+        } satisfies PersistedFleetEntry,
+      ];
+    });
+    return devices.length === 0 ? undefined : devices.slice(0, MAX_ACCESSORY_ALIASES);
+  } catch {
+    return undefined;
+  }
+}
+
+function hostEnvironmentPath(storageRoot: string): string {
+  return join(storageRoot, DIAGNOSTICS_DIRECTORY, HOST_ENVIRONMENT_FILE);
+}
+
+/** The longest host version string retained, which bounds a value this plugin does not choose. */
+const MAX_HOST_VERSION_LENGTH = 64;
+
+/**
+ * What the running host is, as only the process that has Homebridge's API can state it.
+ *
+ * The Homebridge version decides whether this plugin can run at all: V5 requires Homebridge 2, and a V1 host
+ * loads it and then fails in ways indistinguishable from a media fault. It is the host's own public version,
+ * so it carries no device or account material.
+ */
+interface PersistedHostEnvironment {
+  readonly homebridge?: string;
+  readonly ffmpeg?: PersistedFfmpegEnvironment;
+}
+
+/**
+ * Records what this run is hosted by, so a support archive states the host a failure came from.
+ *
+ * It is persisted rather than held in memory because the process that knows these facts is not the one that
+ * assembles an archive, and it is rewritten on every start so a host or binary that changed between runs
+ * cannot be reported as the one in use. Each call replaces the record whole, so a caller states everything it
+ * knows rather than accumulating into a file two writers would race for.
+ *
+ * A write that fails is dropped: the archive then declares the environment without these facts, which is
+ * honest, whereas failing startup over a diagnostic file would cost the user their cameras.
+ */
+export function recordHostEnvironment(storageRoot: string, host: PersistedHostEnvironment): void {
+  try {
+    const path = hostEnvironmentPath(storageRoot);
+    mkdirSync(dirname(path), { mode: 0o700, recursive: true });
+    writeFileSync(path, `${JSON.stringify({ version: 2, ...host })}\n`, { mode: 0o600 });
+  } catch {}
+}
+
+/**
+ * Reads what this run is hosted by, keeping each fact that narrows and dropping each that does not.
+ *
+ * The facts are independent, so a malformed binary identity does not withhold a host version, and a record
+ * stating neither is no record at all.
+ */
+function readHostEnvironment(storageRoot: string): PersistedHostEnvironment | undefined {
+  try {
+    const candidate = JSON.parse(readFileSync(hostEnvironmentPath(storageRoot), 'utf8')) as Record<string, unknown>;
+    if (candidate.version !== 2) {
+      return undefined;
+    }
+    const homebridge =
+      typeof candidate.homebridge === 'string' ? boundedText(candidate.homebridge, MAX_HOST_VERSION_LENGTH) : undefined;
+    const ffmpeg = readFfmpegIdentity(candidate.ffmpeg);
+    if (homebridge === undefined && ffmpeg === undefined) {
+      return undefined;
+    }
+    return {
+      ...(homebridge === undefined ? {} : { homebridge }),
+      ...(ffmpeg === undefined ? {} : { ffmpeg }),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The recorded adaptation binary, or nothing where the record's own fields do not narrow.
+ *
+ * The path and the banner are kept as written rather than pattern-replaced, because naming the binary is the
+ * entire purpose of the record and a redacted one answers nothing. Neither is device or account material: the
+ * path is this plugin's own setting or the binary it ships, and the banner is that build's public identity.
+ */
+function readFfmpegIdentity(recorded: unknown): PersistedFfmpegEnvironment | undefined {
+  if (!isRecord(recorded)) {
+    return undefined;
+  }
+  if (recorded.source !== 'bundled' && recorded.source !== 'configured') {
+    return undefined;
+  }
+  const path = typeof recorded.path === 'string' ? boundedText(recorded.path, MAX_FFMPEG_IDENTITY_LENGTH) : undefined;
+  const version =
+    typeof recorded.version === 'string' ? boundedText(recorded.version, MAX_FFMPEG_IDENTITY_LENGTH) : undefined;
+  const encoders = isRecord(recorded.encoders) ? readEncoderQualification(recorded.encoders) : undefined;
+  return path === undefined
+    ? undefined
+    : {
+        path,
+        source: recorded.source,
+        ...(version === undefined ? {} : { version }),
+        ...(encoders === undefined ? {} : { encoders }),
+      };
+}
+
+/**
+ * The recorded encoder qualification, keeping only encoder names, `profile@level` selections and outcomes this
+ * build names, so the record is bounded by those three closed sets, and a `bytes` outcome's two integers.
+ */
+function readEncoderQualification(
+  recorded: Record<string, unknown>,
+): NonNullable<PersistedFfmpegEnvironment['encoders']> {
+  return Object.fromEntries(
+    LIVE_VIDEO_ENCODERS.filter((name) => Object.hasOwn(recorded, name)).map((name) => {
+      const outcomes = isRecord(recorded[name]) ? Object.entries(recorded[name]) : [];
+      return [
+        name,
+        Object.fromEntries(
+          outcomes.flatMap(([selection, value]) => {
+            const [profile, level] = selection.split('@');
+            const outcome =
+              Array.isArray(value) &&
+              value.length === 3 &&
+              value[0] === 'bytes' &&
+              value.slice(1).every(Number.isSafeInteger)
+                ? (value as ['bytes', number, number])
+                : allowlistedLabel(value, QUALIFICATION_OUTCOMES);
+            return allowlistedLabel(profile, HOMEKIT_LIVE_VIDEO_PROFILES) &&
+              allowlistedLabel(level, HOMEKIT_LIVE_VIDEO_LEVELS) &&
+              selection === `${profile}@${level}` &&
+              outcome
+              ? [[selection, outcome]]
+              : [];
+          }),
+        ),
+      ];
+    }),
+  );
+}
+
+/**
+ * The one log evidence class a retained record belongs to.
+ *
+ * The four classes partition the records: each verbose scope owns its own and everything else is the plugin's,
+ * so a record counts against exactly one class's budget.
+ */
+function evidenceClassOf(record: Readonly<Record<string, unknown>>): LogEvidence {
+  const scope = String(record.scope);
+  if (scope === 'sdk') return 'sdk-log';
+  if (scope === 'homekit') return 'homekit-log';
+  if (scope === 'ffmpeg') return 'ffmpeg-log';
+  return 'plugin-log';
+}
+
+/**
+ * The classes a profile selected that a collection of that session's evidence carries no content for.
+ *
+ * The status a session reports and the manifest an archive carries name the same classes because both ask
+ * here, against the same collection.
+ */
+function missingEvidenceClasses(
+  selected: readonly DiagnosticEvidence[],
+  collected: readonly SupportArchiveEvidence[],
+): DiagnosticEvidence[] {
+  return selected.filter((evidence) => !collected.some((candidate) => candidate.evidence === evidence));
+}
+
+/** The scopes whose records are only kept while a support profile that declares them is authorized. */
+const VERBOSE_SCOPES = new Set(['sdk', 'homekit', 'ffmpeg']);
+
+/** Owns persisted, user-authorized diagnostic evidence windows and identity-free reproduction markers. */
+export class GuidedDiagnostics {
+  private pendingSupportArchive?: PendingSupportArchive;
+  private uiEventWrites = Promise.resolve();
+  private pendingUiEvents = 0;
+  private uiEventsClosing = false;
+
+  constructor(
+    private readonly storageRoot: string,
+    private readonly now: () => number = Date.now,
+    private readonly supportArchiveKey: SupportArchiveKey = SUPPORT_ARCHIVE_KEY,
+  ) {}
+
+  async authorize(
+    profile: DiagnosticsProfile,
+    reproductionMode: DiagnosticsReproductionMode,
+    affectedDevices?: AffectedDevices,
+  ): Promise<GuidedDiagnosticsStatus> {
+    if (!isDiagnosticsProfile(profile)) {
+      throw new Error('Unknown diagnostics profile');
+    }
+    if (!isDiagnosticsReproductionMode(reproductionMode)) {
+      throw new Error('Unknown diagnostics reproduction mode');
+    }
+    if (affectedDevices !== undefined && affectedDevices !== 'all' && !Array.isArray(affectedDevices)) {
+      throw new Error('Affected devices must be "all" or a list of serials');
+    }
+    this.uiEventsClosing = true;
+    try {
+      await this.uiEventWrites;
+      const authorizedAt = this.now();
+      const session: PersistedDiagnosticsSession = {
+        version: 1,
+        supportCaseId: `support-${randomUUID()}`,
+        profile,
+        reproductionMode,
+        authorizedAt: new Date(authorizedAt).toISOString(),
+        expiresAt: new Date(authorizedAt + DEBUG_AUTHORIZATION_MS).toISOString(),
+        ...(affectedDevices === undefined ? {} : { affectedDevices }),
+      };
+      await this.writeSession(session);
+      this.pendingSupportArchive = undefined;
+      return await this.project(session);
+    } finally {
+      this.uiEventsClosing = false;
+    }
+  }
+
+  async status(): Promise<GuidedDiagnosticsStatus> {
+    return this.project(readDiagnosticsSession(this.storageRoot));
+  }
+
+  async startReproduction(): Promise<GuidedDiagnosticsStatus> {
+    const session = this.requireAuthorized();
+    if (!session.reproductionStartedAt || session.reproductionEndedAt) {
+      if (session.reproductionEndedAt) {
+        session.supportCaseId = `support-${randomUUID()}`;
+        this.pendingSupportArchive = undefined;
+      }
+      if (session.profile === 'dashboard-ui') {
+        await this.uiEventWrites;
+        this.uiEventsClosing = false;
+      }
+      session.reproductionStartedAt = new Date(this.now()).toISOString();
+      delete session.reproductionEndedAt;
+      await this.writeSession(session);
+    }
+    await this.ensureMarker(session, 'reproduction-started', session.reproductionStartedAt);
+    return this.project(session);
+  }
+
+  /**
+   * Deletes the persisted session without an archive, which also ends the verbose retention it authorized. UI events
+   * already queued are written first and later ones are refused until it is gone, so none lands after the delete.
+   */
+  async cancel(): Promise<GuidedDiagnosticsStatus> {
+    this.uiEventsClosing = true;
+    try {
+      await this.uiEventWrites;
+      this.pendingSupportArchive = undefined;
+      await rm(diagnosticsSessionPath(this.storageRoot), { force: true });
+      return await this.status();
+    } finally {
+      this.uiEventsClosing = false;
+    }
+  }
+
+  async endReproduction(): Promise<GuidedDiagnosticsStatus> {
+    let session = this.requireAuthorized();
+    if (!session.reproductionStartedAt) {
+      throw new Error('Reproduction has not started');
+    }
+    const closesUiEvents = session.profile === 'dashboard-ui';
+    if (closesUiEvents) {
+      this.uiEventsClosing = true;
+    }
+    try {
+      if (closesUiEvents) {
+        await this.uiEventWrites;
+        session = this.requireAuthorized();
+      }
+      if (!session.reproductionEndedAt) {
+        session.reproductionEndedAt = new Date(this.now()).toISOString();
+        await this.writeSession(session);
+      }
+      await this.ensureMarker(session, 'reproduction-ended', session.reproductionEndedAt);
+      return await this.project(session);
+    } catch (error) {
+      if (closesUiEvents) this.uiEventsClosing = false;
+      throw error;
+    }
+  }
+
+  async recordUiEvent(event: DiagnosticsUiEvent): Promise<void> {
+    if (!isDiagnosticsUiEvent(event)) {
+      throw new Error('Unknown diagnostics UI event');
+    }
+    if (this.uiEventsClosing) {
+      throw new Error('Diagnostics UI events are closing');
+    }
+    if (this.pendingUiEvents >= MAX_PENDING_UI_EVENTS) {
+      throw new Error('Diagnostics UI event queue is full');
+    }
+    this.pendingUiEvents += 1;
+    const write = this.uiEventWrites.then(async () => {
+      const session = this.requireAuthorized();
+      if (
+        !selectedEvidence(session).includes('ui-log') ||
+        !session.reproductionStartedAt ||
+        session.reproductionEndedAt
+      ) {
+        throw new Error('An active dashboard or sign-in reproduction is required');
+      }
+      const directory = join(this.storageRoot, DIAGNOSTICS_DIRECTORY);
+      const path = join(directory, UI_EVENTS_FILE);
+      await mkdir(directory, { mode: 0o700, recursive: true });
+      await chmod(directory, 0o700);
+      const record = `${JSON.stringify({
+        version: 1,
+        supportCaseId: session.supportCaseId,
+        timestamp: new Date(this.now()).toISOString(),
+        event,
+      })}\n`;
+      let currentBytes = 0;
+      try {
+        currentBytes = (await stat(path)).size;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      if (currentBytes + Buffer.byteLength(record) > MAX_UI_EVENTS_BYTES) {
+        const retained = await this.readFileTail(path, MAX_UI_EVENTS_BYTES - Buffer.byteLength(record));
+        await writeFile(path, `${retained}${record}`, { encoding: 'utf8', mode: 0o600 });
+      } else {
+        await appendFile(path, record, { encoding: 'utf8', mode: 0o600 });
+      }
+      await chmod(path, 0o600);
+    });
+    this.uiEventWrites = write
+      .catch(() => undefined)
+      .finally(() => {
+        this.pendingUiEvents -= 1;
+      });
+    return write;
+  }
+
+  /** Prepares the exact manifest and evidence snapshot that one subsequent export may encrypt. */
+  async reviewSupportArchive(): Promise<SupportArchiveReview> {
+    await this.uiEventWrites;
+    const persisted = readDiagnosticsSession(this.storageRoot);
+    const { session, exportable } = persisted
+      ? settledDiagnosticsSession(persisted, this.now())
+      : { session: undefined, exportable: false };
+    if (!session?.reproductionStartedAt || !session.reproductionEndedAt) {
+      throw new Error('A completed reproduction is required before archive review');
+    }
+    if (!exportable) {
+      throw new Error('Diagnostics authorization is inactive or expired');
+    }
+    const collected = await this.collectSupportEvidence(session);
+    const reproductionStartedAt = Date.parse(session.reproductionStartedAt);
+    const selected = selectedEvidence(session);
+    const createdAt = this.now();
+    const manifest: SupportArchiveManifest = {
+      version: 2,
+      archiveFormat: 'homebridge-eufy-support-archive',
+      keyId: this.supportArchiveKey.keyId,
+      supportCaseId: session.supportCaseId,
+      profile: session.profile,
+      reproductionMode: session.reproductionMode,
+      createdAt: new Date(createdAt).toISOString(),
+      archiveExpiresAt: new Date(createdAt + SUPPORT_ARCHIVE_RETENTION_MS).toISOString(),
+      reproductionStartedAt: session.reproductionStartedAt,
+      reproductionEndedAt: session.reproductionEndedAt,
+      evidence: [
+        ...collected.map(({ evidence, privacyClass, contentType, content, truncated, retainedFrom, fields }) => ({
+          evidence,
+          privacyClass,
+          status: 'included' as const,
+          contentType,
+          bytes: Buffer.byteLength(content),
+          fields,
+          ...(truncated ? { truncated: true as const } : {}),
+          ...(retainedFrom === undefined ? {} : { retainedFrom }),
+          ...(retainedFrom !== undefined && Date.parse(retainedFrom) > reproductionStartedAt
+            ? { coversReproduction: false as const }
+            : {}),
+        })),
+        ...missingEvidenceClasses(selected, collected).map((evidence) => ({
+          evidence,
+          privacyClass: 'diagnostic' as const,
+          status: 'missing' as const,
+          missingReason: 'no-allowlisted-record-observed' as const,
+        })),
+      ],
+      excludedClasses: SUPPORT_ARCHIVE_EXCLUDED_CLASSES,
+    };
+    const reviewId = randomUUID();
+    this.pendingSupportArchive = { reviewId, manifest, evidence: collected };
+    return { reviewId, manifest };
+  }
+
+  /**
+   * Consumes one reviewed snapshot and returns an encrypted envelope without writing plaintext or an archive to disk.
+   *
+   * The session outlives the export, because nothing here proves the envelope reached the reporter: a fresh review
+   * exports it again until the reporter leaves it with {@link cancel}, another capture replaces it, or the archive
+   * retention ends it.
+   */
+  async exportSupportArchive(reviewId: string): Promise<EncryptedSupportArchive> {
+    const pending = this.pendingSupportArchive;
+    if (!pending || pending.reviewId !== reviewId) {
+      throw new Error('Support archive manifest review is missing or stale');
+    }
+    this.pendingSupportArchive = undefined;
+    if (Date.parse(pending.manifest.archiveExpiresAt) <= this.now()) {
+      throw new Error('Support archive manifest review is missing or stale');
+    }
+    const keyFingerprint = createHash('sha256').update(this.supportArchiveKey.publicKey.trim()).digest('hex');
+    if (keyFingerprint !== this.supportArchiveKey.sha256) {
+      throw new Error('Support archive key integrity check failed');
+    }
+    const compressed = await gzip(
+      Buffer.from(
+        JSON.stringify({
+          manifest: pending.manifest,
+          // Coverage is manifest metadata; the payload row is the content it describes.
+          evidence: pending.evidence.map(({ retainedFrom: _retainedFrom, ...row }) => row),
+        }),
+        'utf8',
+      ),
+    );
+    const contentKey = randomBytes(32);
+    try {
+      const iv = randomBytes(12);
+      const cipher = createCipheriv('aes-256-gcm', contentKey, iv);
+      const metadata = {
+        format: 'homebridge-eufy-support-archive',
+        version: 1,
+        keyId: this.supportArchiveKey.keyId,
+        keyWrapAlgorithm: 'RSA-OAEP-SHA256',
+        contentAlgorithm: 'AES-256-GCM',
+        contentEncoding: 'gzip+json',
+      } as const;
+      const authenticatedMetadata = Buffer.from(JSON.stringify(metadata), 'utf8');
+      cipher.setAAD(authenticatedMetadata);
+      const ciphertext = Buffer.concat([cipher.update(compressed), cipher.final()]);
+      const wrappedKey = publicEncrypt(
+        {
+          key: this.supportArchiveKey.publicKey,
+          oaepHash: 'sha256',
+          padding: constants.RSA_PKCS1_OAEP_PADDING,
+        },
+        contentKey,
+      );
+      const envelope = {
+        ...metadata,
+        wrappedKey: wrappedKey.toString('base64'),
+        iv: iv.toString('base64'),
+        authTag: cipher.getAuthTag().toString('base64'),
+        ciphertext: ciphertext.toString('base64'),
+      };
+      const exported: EncryptedSupportArchive = {
+        filename: `homebridge-eufy-${pending.manifest.supportCaseId}.eufysupport.gz`,
+        mediaType: 'application/gzip',
+        archive: await gzip(Buffer.from(`${JSON.stringify(envelope)}\n`, 'utf8')),
+      };
+      return exported;
+    } finally {
+      contentKey.fill(0);
+    }
+  }
+
+  private async collectSupportEvidence(session: PersistedDiagnosticsSession): Promise<SupportArchiveEvidence[]> {
+    const host = readHostEnvironment(this.storageRoot);
+    const fleet = readFleet(this.storageRoot);
+    const evidence: SupportArchiveEvidence[] = [
+      ...(session.affectedDevices === undefined
+        ? []
+        : [
+            {
+              evidence: 'reporter-statement' as const,
+              privacyClass: 'diagnostic' as const,
+              contentType: 'application/json' as const,
+              content: `${JSON.stringify({ version: 2, affectedDevices: countedAffectedDevices(session.affectedDevices) })}\n`,
+              /**
+               * What the reporter answered, not what the plugin observed. A serial is a device identity and no
+               * evidence class carries one, so the answer travels as its scope: every device, or how many were
+               * named. Which ones is the reporter's to say in their own words.
+               */
+              fields: [
+                { field: 'version', privacyClass: 'operational' as const },
+                { field: 'affectedDevices', privacyClass: 'operational' as const },
+              ],
+            },
+          ]),
+      ...(fleet === undefined
+        ? []
+        : [
+            {
+              evidence: 'fleet' as const,
+              privacyClass: 'operational' as const,
+              contentType: 'application/json' as const,
+              content: `${JSON.stringify({ version: 1, devices: fleet })}\n`,
+              /**
+               * What each device is and becomes, against the alias every other record about it carries. A model
+               * and an admission outcome are product facts rather than device identity; the alias is what makes
+               * an entry resolvable to a device, and only by the owner whose console paired it with a name.
+               */
+              fields: [
+                { field: 'version', privacyClass: 'operational' as const },
+                { field: 'devices', privacyClass: 'pseudonymous' as const },
+              ],
+            },
+          ]),
+      {
+        evidence: 'environment',
+        privacyClass: 'operational',
+        contentType: 'application/json',
+        content: `${JSON.stringify({ version: 3, plugin: PLUGIN_VERSION, sdk: SDK_VERSION, node: process.version, ...(host?.homebridge ? { homebridge: host.homebridge } : {}), platform: process.platform, arch: process.arch, ...(host?.ffmpeg ? { ffmpeg: host.ffmpeg } : {}) })}\n`,
+        /**
+         * The record is operational and one field is classified above it: a resolved FFmpeg path is an
+         * environment fact, but it can carry the home directory of the account Homebridge runs as, so it is
+         * declared as diagnostic rather than presented alongside the host's own architecture.
+         *
+         * The Homebridge version is operational and load-bearing: this plugin requires Homebridge 2, and a
+         * host that predates it loads the plugin and then fails in ways a media fault cannot be told from.
+         */
+        fields: [
+          ...['version', 'plugin', 'sdk', 'node', 'platform', 'arch'].map((field) => ({
+            field,
+            privacyClass: 'operational' as const,
+          })),
+          ...(host?.homebridge ? [{ field: 'homebridge', privacyClass: 'operational' as const }] : []),
+          ...(host?.ffmpeg ? [{ field: 'ffmpeg', privacyClass: 'diagnostic' as const }] : []),
+        ],
+      },
+    ];
+    const markers = await this.readReproductionMarkers(session.supportCaseId);
+    if (markers) {
+      evidence.push({
+        evidence: 'reproduction-markers',
+        privacyClass: 'operational',
+        contentType: 'application/x-ndjson',
+        content: markers,
+        fields: [
+          { field: 'version', privacyClass: 'operational' },
+          { field: 'supportCaseId', privacyClass: 'pseudonymous' },
+          { field: 'event', privacyClass: 'operational' },
+          { field: 'timestamp', privacyClass: 'operational' },
+        ],
+      });
+    }
+    const uiEvents = await this.readUiEvents(session);
+    if (uiEvents) {
+      evidence.push({
+        evidence: 'ui-log',
+        privacyClass: 'diagnostic',
+        contentType: 'application/x-ndjson',
+        content: uiEvents,
+        fields: [
+          { field: 'version', privacyClass: 'operational' },
+          { field: 'supportCaseId', privacyClass: 'pseudonymous' },
+          { field: 'timestamp', privacyClass: 'operational' },
+          { field: 'event', privacyClass: 'diagnostic' },
+        ],
+      });
+    }
+    const log = await this.readReproductionLog(session.reproductionStartedAt!, session.reproductionEndedAt!);
+    for (const selected of selectedEvidence(session)) {
+      const carried = log.get(selected as LogEvidence);
+      if (!carried) continue;
+      const content = carried.records.map((record) => JSON.stringify(record)).join('\n');
+      if (!content) continue;
+      evidence.push({
+        evidence: selected,
+        privacyClass: 'diagnostic',
+        contentType: 'application/x-ndjson',
+        content: `${content}\n`,
+        ...(carried.truncated ? { truncated: true } : {}),
+        ...(carried.retainedFrom === undefined ? {} : { retainedFrom: carried.retainedFrom }),
+        fields: [...new Set(carried.records.flatMap((record) => Object.keys(record)))].sort().map((field) => ({
+          field,
+          privacyClass: PSEUDONYMOUS_FIELDS.has(field)
+            ? 'pseudonymous'
+            : field === 'timestamp'
+              ? 'operational'
+              : 'diagnostic',
+        })),
+      });
+    }
+    return evidence;
+  }
+
+  private async readUiEvents(session: PersistedDiagnosticsSession): Promise<string> {
+    try {
+      const path = join(this.storageRoot, DIAGNOSTICS_DIRECTORY, UI_EVENTS_FILE);
+      const startedAt = Date.parse(session.reproductionStartedAt!);
+      const endedAt = Date.parse(session.reproductionEndedAt!);
+      const records = (await this.readFileTail(path, MAX_UI_EVENTS_BYTES))
+        .trim()
+        .split('\n')
+        .flatMap((line) => {
+          try {
+            const candidate = JSON.parse(line) as Record<string, unknown>;
+            const timestamp = typeof candidate.timestamp === 'string' ? Date.parse(candidate.timestamp) : Number.NaN;
+            if (
+              Object.keys(candidate).sort().join(',') !== 'event,supportCaseId,timestamp,version' ||
+              candidate.version !== 1 ||
+              candidate.supportCaseId !== session.supportCaseId ||
+              !isDiagnosticsUiEvent(candidate.event) ||
+              !Number.isFinite(timestamp) ||
+              timestamp < startedAt ||
+              timestamp > endedAt
+            ) {
+              return [];
+            }
+            return [
+              JSON.stringify({
+                version: 1,
+                supportCaseId: candidate.supportCaseId,
+                timestamp: new Date(timestamp).toISOString(),
+                event: candidate.event,
+              }),
+            ];
+          } catch {
+            return [];
+          }
+        });
+      return records.length ? `${records.join('\n')}\n` : '';
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+      throw error;
+    }
+  }
+
+  private async readReproductionMarkers(supportCaseId: string): Promise<string> {
+    try {
+      const path = join(this.storageRoot, DIAGNOSTICS_DIRECTORY, REPRODUCTION_MARKERS_FILE);
+      const lines = (await this.readFileTail(path, MAX_SUPPORT_ARCHIVE_MARKER_BYTES))
+        .trim()
+        .split('\n')
+        .filter((line) => {
+          try {
+            return (JSON.parse(line) as { supportCaseId?: unknown }).supportCaseId === supportCaseId;
+          } catch {
+            return false;
+          }
+        });
+      return lines.length ? `${lines.join('\n')}\n` : '';
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+      throw error;
+    }
+  }
+
+  /**
+   * The records of each log evidence class inside the reproduction interval, budgeted per class.
+   *
+   * Fills newest-first, so a class that exhausts its budget loses its oldest end and `retainedFrom` states
+   * where it then begins. Each class is budgeted alone, so the noisiest one cannot decide how far back another
+   * reaches.
+   */
+  private async readReproductionLog(
+    startedAt: string,
+    endedAt: string,
+  ): Promise<Map<LogEvidence, { records: Record<string, unknown>[]; truncated: boolean; retainedFrom?: string }>> {
+    const directory = join(this.storageRoot, LOG_DIRECTORY);
+    const paths = [
+      join(directory, LOG_FILE),
+      ...Array.from({ length: LOG_ROTATIONS }, (_, index) => join(directory, `${LOG_FILE}.${index + 1}.gz`)),
+    ];
+    const started = Date.parse(startedAt);
+    const ended = Date.parse(endedAt);
+    const carried = new Map<LogEvidence, { records: Record<string, unknown>[]; bytes: number; truncated: boolean }>(
+      (['plugin-log', 'sdk-log', 'homekit-log', 'ffmpeg-log'] as const).map((evidence) => [
+        evidence,
+        { records: [], bytes: 0, truncated: false },
+      ]),
+    );
+    for (const path of paths) {
+      if ([...carried.values()].every(({ truncated }) => truncated)) break;
+      try {
+        const file = await stat(path);
+        if (file.size > MAX_CURRENT_LOG_BYTES) {
+          for (const state of carried.values()) state.truncated = true;
+          continue;
+        }
+        const content = path.endsWith('.gz')
+          ? (
+              await gunzip(await readFile(path), {
+                maxOutputLength: MAX_CURRENT_LOG_BYTES + MAX_LOG_RECORD_BYTES,
+              })
+            ).toString('utf8')
+          : await readFile(path, 'utf8');
+        const lines = content.trim().split('\n');
+        for (let index = lines.length - 1; index >= 0; index -= 1) {
+          const line = lines[index]!;
+          let record: Record<string, unknown>;
+          try {
+            record = JSON.parse(line) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          const timestamp = typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : Number.NaN;
+          if (timestamp < started || timestamp > ended) continue;
+          const state = carried.get(evidenceClassOf(record))!;
+          if (state.truncated) continue;
+          const bytes = Buffer.byteLength(line) + 1;
+          if (state.bytes + bytes > MAX_SUPPORT_ARCHIVE_LOG_BYTES) {
+            state.truncated = true;
+            continue;
+          }
+          state.bytes += bytes;
+          state.records.push(record);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+    }
+    return new Map(
+      [...carried].map(([evidence, { records, truncated }]) => {
+        const ordered = records.reverse();
+        const oldest = ordered.find(({ timestamp }) => typeof timestamp === 'string')?.timestamp;
+        return [
+          evidence,
+          { records: ordered, truncated, ...(truncated && typeof oldest === 'string' ? { retainedFrom: oldest } : {}) },
+        ];
+      }),
+    );
+  }
+
+  private async readFileTail(path: string, maximumBytes: number): Promise<string> {
+    const file = await open(path, 'r');
+    try {
+      const size = (await file.stat()).size;
+      const bytes = Math.min(size, maximumBytes);
+      const buffer = Buffer.alloc(bytes);
+      await file.read(buffer, 0, bytes, size - bytes);
+      const content = buffer.toString('utf8');
+      return size > maximumBytes ? content.slice(content.indexOf('\n') + 1) : content;
+    } finally {
+      await file.close();
+    }
+  }
+
+  private requireAuthorized(): PersistedDiagnosticsSession {
+    const session = activeDiagnosticsSession(this.storageRoot, this.now());
+    if (!session) throw new Error('Diagnostics authorization is inactive or expired');
+    return session;
+  }
+
+  private async project(persisted: PersistedDiagnosticsSession | undefined): Promise<GuidedDiagnosticsStatus> {
+    if (!persisted) {
+      return { status: 'inactive', selectedEvidence: [], missingEvidence: [], partialExportAvailable: false };
+    }
+    const { session, exportable } = settledDiagnosticsSession(persisted, this.now());
+    const selected = selectedEvidence(session);
+    const collected =
+      session.reproductionStartedAt && session.reproductionEndedAt
+        ? await this.collectSupportEvidence(session)
+        : undefined;
+    const missingEvidence = collected ? missingEvidenceClasses(selected, collected) : [];
+    const expired = Date.parse(session.expiresAt) <= this.now() && !exportable;
+    const status = expired
+      ? 'expired'
+      : session.reproductionEndedAt
+        ? 'complete'
+        : session.reproductionStartedAt
+          ? 'reproducing'
+          : 'authorized';
+    return {
+      status,
+      supportCaseId: session.supportCaseId,
+      profile: session.profile,
+      reproductionMode: session.reproductionMode,
+      selectedEvidence: selected,
+      missingEvidence,
+      authorizedAt: session.authorizedAt,
+      expiresAt: session.expiresAt,
+      ...(session.reproductionStartedAt ? { reproductionStartedAt: session.reproductionStartedAt } : {}),
+      ...(session.reproductionEndedAt ? { reproductionEndedAt: session.reproductionEndedAt } : {}),
+      partialExportAvailable: exportable,
+      ...(session.affectedDevices === undefined ? {} : { affectedDevices: session.affectedDevices }),
+      issueUrl: bugReportUrl(session, missingEvidence, readHostEnvironment(this.storageRoot)),
+      ...(status === 'reproducing' && session.profile === 'live-media' && Array.isArray(session.affectedDevices)
+        ? { liveEncode: await this.liveEncode(session) }
+        : {}),
+    };
+  }
+
+  /** What {@link liveEncodeAttempts} was followed through so far, for one reproduction of one capture. */
+  private liveEncodeScan?: {
+    reproduction: string;
+    offset: number;
+    starts: LiveEncodeStart[];
+    byAccessory: Map<unknown, LiveEncodeStart>;
+  };
+
+  /**
+   * Follows the live starts a reproducing live-media capture recorded, reading only what the current plugin log
+   * gained since the last read. The starts are kept across a rotation; a process that restarts after one follows
+   * only what the new file holds.
+   */
+  private async liveEncode(session: PersistedDiagnosticsSession): Promise<GuidedDiagnosticsStatus['liveEncode']> {
+    const reproduction = `${session.supportCaseId}@${session.reproductionStartedAt}`;
+    if (this.liveEncodeScan?.reproduction !== reproduction) {
+      this.liveEncodeScan = { reproduction, offset: 0, starts: [], byAccessory: new Map() };
+    }
+    const scan = this.liveEncodeScan;
+    const startedAt = Date.parse(session.reproductionStartedAt!);
+    try {
+      const file = await open(join(this.storageRoot, LOG_DIRECTORY, LOG_FILE), 'r');
+      try {
+        const size = (await file.stat()).size;
+        if (size < scan.offset) scan.offset = 0;
+        const buffer = Buffer.alloc(size - scan.offset);
+        await file.read(buffer, 0, buffer.length, scan.offset);
+        const end = buffer.lastIndexOf(0x0a) + 1;
+        scan.offset += end;
+        for (const line of buffer.subarray(0, end).toString('utf8').split('\n')) {
+          let record: Record<string, unknown>;
+          try {
+            record = JSON.parse(line) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          if (record.adapter !== 'camera.streaming' || !(Date.parse(String(record.timestamp)) >= startedAt)) continue;
+          const known = scan.byAccessory.get(record.accessory);
+          if (record.event === 'live-video-selected' && record.operation === 'start') {
+            const start: LiveEncodeStart = {
+              ...(typeof record.camera === 'number' ? { camera: record.camera } : {}),
+              ...(typeof record.variant === 'number' ? { variant: record.variant } : {}),
+              state: 'started',
+            };
+            scan.starts.push(start);
+            scan.byAccessory.set(record.accessory, start);
+          } else if (record.event === 'live-session-streaming' && known?.state === 'started') {
+            known.state = 'streaming';
+          } else if (record.event === 'live-session-released' && known) {
+            known.state = 'ended';
+          }
+        }
+      } finally {
+        await file.close();
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const events = (await this.readUiEvents(session)).match(/"event":"live-(?:picture|preview)-[a-z-]+"/g) ?? [];
+    const answers = events.filter((event) => event.includes('picture')).length;
+    const previews = events.filter((event) => event.includes('preview')).map((event) => !event.includes('not-seen'));
+    return { attempts: LIVE_ENCODE_ATTEMPTS, starts: scan.starts, answers, previews };
+  }
+
+  /**
+   * Replaces the persisted session, and drops the `diagnostics/evidence` tree with it.
+   *
+   * Nothing reads that tree: a session's completeness is one read of the evidence an archive would carry, so
+   * the only diagnostics state that outlives a session is the rotating log and the persisted session itself.
+   */
+  private async writeSession(session: PersistedDiagnosticsSession): Promise<void> {
+    const directory = join(this.storageRoot, DIAGNOSTICS_DIRECTORY);
+    await mkdir(directory, { mode: 0o700, recursive: true });
+    await chmod(directory, 0o700);
+    await rm(join(directory, 'evidence'), { force: true, recursive: true });
+    await this.replaceOwnedFile(diagnosticsSessionPath(this.storageRoot), `${JSON.stringify(session)}\n`);
+  }
+
+  /** Replaces one file this module owns in a single step, readable only by the account Homebridge runs as. */
+  private async replaceOwnedFile(path: string, content: string): Promise<void> {
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    await writeFile(temporary, content, { mode: 0o600 });
+    await chmod(temporary, 0o600);
+    await rename(temporary, path);
+  }
+
+  /**
+   * Records one bounded reproduction edge, keeping the markers file to the current support case.
+   *
+   * The interval a maintainer receives is the one being reproduced now, so an earlier case's markers are
+   * dropped here rather than accumulating one durable record per support session for the life of the install.
+   * Recording the same edge twice is a no-op, which is what lets a restart re-record an interval it already had.
+   */
+  private async ensureMarker(
+    session: PersistedDiagnosticsSession,
+    event: 'reproduction-started' | 'reproduction-ended',
+    timestamp: string,
+  ): Promise<void> {
+    const directory = join(this.storageRoot, DIAGNOSTICS_DIRECTORY);
+    await mkdir(directory, { mode: 0o700, recursive: true });
+    const retained = await this.readReproductionMarkers(session.supportCaseId);
+    const marker = `${JSON.stringify({ version: 1, supportCaseId: session.supportCaseId, event, timestamp })}\n`;
+    if (retained.includes(marker)) {
+      return;
+    }
+    await this.replaceOwnedFile(join(directory, REPRODUCTION_MARKERS_FILE), `${retained}${marker}`);
+  }
+}
+
+function formatMessage(key: string, parameters: Readonly<Record<string, string | number>> = {}): string {
+  const template = EN_MESSAGES[key] ?? key;
+  return template
+    .replace(/\{([a-zA-Z0-9]+)\}/g, (placeholder, name: string) =>
+      parameters[name] === undefined ? placeholder : String(parameters[name]),
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function localize(target: unknown, key: string, parameters: Readonly<Record<string, string | number>> = {}): string {
+  const translator = (target as Partial<Pick<PlatformLogger, 'localize'>>).localize;
+  return translator?.(key, parameters) ?? formatMessage(key, parameters);
+}
+
+class JsonLineLog {
+  private readonly directory: string;
+  private readonly path: string;
+  private pending = Promise.resolve();
+  private queuedBytes = 0;
+  private droppedRecords = 0;
+  private droppedAt?: string;
+
+  constructor(
+    storageRoot: string,
+    private readonly onError: () => void,
+    private readonly now: () => number,
+  ) {
+    this.directory = join(storageRoot, LOG_DIRECTORY);
+    this.path = join(this.directory, LOG_FILE);
+  }
+
+  /** Queues one record the sanitizer already rebuilt. */
+  write(payload: Readonly<Record<string, unknown>>): void {
+    const record = this.serialize(payload);
+    const bytes = Buffer.byteLength(record);
+    if (bytes > MAX_LOG_RECORD_BYTES || this.queuedBytes + bytes > MAX_QUEUED_LOG_BYTES) {
+      this.droppedAt ??= new Date().toISOString();
+      this.droppedRecords += 1;
+      return;
+    }
+    const dropped = this.drainDropped();
+    this.queuedBytes += bytes;
+    this.pending = this.pending
+      .then(async () => {
+        if (dropped) await this.append(dropped);
+        await this.append(record);
+      })
+      .catch(() => this.onError())
+      .finally(() => {
+        this.queuedBytes -= bytes;
+      });
+  }
+
+  flush(): Promise<void> {
+    const dropped = this.drainDropped();
+    if (dropped) {
+      this.pending = this.pending.then(() => this.append(dropped)).catch(() => this.onError());
+    }
+    return this.pending;
+  }
+
+  /** The `records-dropped` record for what was refused since the last one, resetting the tally, or nothing. */
+  private drainDropped(): string | undefined {
+    const { droppedRecords, droppedAt } = this;
+    this.droppedRecords = 0;
+    this.droppedAt = undefined;
+    return droppedRecords === 0
+      ? undefined
+      : this.serialize({ scope: 'diagnostics', level: 'warn', event: 'records-dropped', droppedRecords }, droppedAt);
+  }
+
+  private serialize(
+    payload: Readonly<Record<string, unknown>>,
+    timestamp = new Date(this.now()).toISOString(),
+  ): string {
+    return `${JSON.stringify({ ...payload, timestamp })}\n`;
+  }
+
+  private async append(record: string): Promise<void> {
+    await mkdir(this.directory, { mode: 0o700, recursive: true });
+    await chmod(this.directory, 0o700);
+    const bytes = Buffer.byteLength(record);
+    await this.prepare(bytes);
+    try {
+      await chmod(this.path, 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+    await appendFile(this.path, record, { encoding: 'utf8', flag: 'a', mode: 0o600 });
+    await chmod(this.path, 0o600);
+  }
+
+  private async prepare(recordBytes: number): Promise<void> {
+    try {
+      const current = await stat(this.path);
+      const today = new Date().toISOString().slice(0, 10);
+      const currentDay = current.mtime.toISOString().slice(0, 10);
+      if (currentDay !== today || current.size + recordBytes > MAX_CURRENT_LOG_BYTES) {
+        await this.rotate();
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+
+  private async rotate(): Promise<void> {
+    await rm(`${this.path}.${LOG_ROTATIONS}.gz`, { force: true });
+    for (let index = LOG_ROTATIONS - 1; index >= 1; index -= 1) {
+      try {
+        const target = `${this.path}.${index + 1}.gz`;
+        await rename(`${this.path}.${index}.gz`, target);
+        await chmod(target, 0o600);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw error;
+        }
+      }
+    }
+    const compressed = await gzip(await readFile(this.path));
+    await writeFile(`${this.path}.1.gz`, compressed, { flag: 'w', mode: 0o600 });
+    await chmod(`${this.path}.1.gz`, 0o600);
+    await rm(this.path, { force: true });
+  }
+}
+
+/**
+ * Routes human messages to Homebridge and structured events to the plugin JSONL log.
+ * File writes preserve accepted order; records beyond the bounded pending queue are counted and reported.
+ */
+export function createDiagnosticLogger(
+  target: PlatformLogger,
+  storageRoot?: string,
+  now: () => number = Date.now,
+): PlatformLogger {
+  let fileFailureReported = false;
+  const reportFileFailure = (): void => {
+    if (!fileFailureReported) {
+      fileFailureReported = true;
+      target.warn(`[diagnostic-log-write-failed] ${formatMessage('log.diagnosticFileFailed')}`);
+    }
+  };
+  const file = storageRoot ? new JsonLineLog(storageRoot, reportFileFailure, now) : undefined;
+  const debug = file
+    ? (message: string): void => {
+        const event = sanitizeStructuredEvent(message);
+        if (!event) return;
+        const session = activeDiagnosticsSession(storageRoot!, now());
+        const verbose = VERBOSE_SCOPES.has(String(event.scope));
+        if (verbose && (!session || !selectedEvidence(session).includes(evidenceClassOf(event)))) {
+          return;
+        }
+        file.write(event);
+      }
+    : undefined;
+  return {
+    ...(debug ? { debug } : {}),
+    error: (message) => target.error(message),
+    flush: () => file?.flush() ?? Promise.resolve(),
+    info: (message) => target.info(message),
+    localize: (key, parameters) => formatMessage(key, parameters),
+    warn: (message) => target.warn(message),
+  };
+}
+
+/** The class an SDK message belongs to, or nothing when its text matches none of them. */
+function classifySdkEvent(message: string): string | undefined {
+  const normalized = message.toLowerCase();
+  if (normalized.includes('rtc sign for') && normalized.includes('refused')) return 'rtc-sign-refused';
+  if (normalized.includes('restored persisted session')) return 'session-restored';
+  if (normalized.includes('retrying') || normalized.includes('reconnecting')) return 'connection-retrying';
+  if (normalized.includes('close') || normalized.includes('disconnect')) return 'connection-closed';
+  if (normalized.includes('in use again') || normalized.includes('idle-detach cancelled')) return 'session-resumed';
+  if (normalized.includes('connecting')) return 'session-connecting';
+  if (normalized.includes('connected') || normalized.includes('logged in')) return 'connection-opened';
+  if (normalized.includes('idle')) return 'session-idle';
+  if (normalized.includes('candidate failed')) return 'snapshot-cache-warning';
+  if (
+    normalized.includes('wire value is not numeric') ||
+    normalized.includes('unknown codec') ||
+    normalized.includes('malformed')
+  ) {
+    return 'observation-invalid';
+  }
+  if (normalized.includes('unhandled payload')) return 'protocol-unhandled';
+  if (
+    normalized.includes('sendsetpayload') ||
+    normalized.includes('requestimage') ||
+    normalized.includes('querydatabase')
+  ) {
+    return 'protocol-command';
+  }
+  if (
+    (normalized.includes('talkback') || normalized.includes('live media') || normalized.includes('live stream')) &&
+    (normalized.includes('failed') || normalized.includes('error'))
+  ) {
+    return 'media-error';
+  }
+  if (
+    normalized.includes('upstream error') ||
+    normalized.includes('send err') ||
+    normalized.includes('connection error')
+  ) {
+    return 'transport-error';
+  }
+  if (normalized.includes('failed') || normalized.includes('error')) return 'operation-failed';
+  if (
+    normalized.includes('talkback') ||
+    normalized.includes('live media') ||
+    normalized.includes('startlivemedia') ||
+    normalized.includes('stoplivemedia')
+  ) {
+    return 'media-warning';
+  }
+  if (normalized.includes('[eufy]')) return 'client-warning';
+  return undefined;
+}
+
+/** A non-negative integer, or nothing — a byte count, a duration, a tally of accessories. */
+function nonNegativeInteger(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : undefined;
+}
+
+/**
+ * A whole number within an inclusive range, or nothing — a data-type id, a sign code, an exit status, or a
+ * negotiated geometry or frame rate a controller chose.
+ */
+function boundedInteger(value: unknown, max: number, min = 0): number | undefined {
+  const integer = nonNegativeInteger(value);
+  return integer !== undefined && integer <= max && integer >= min ? integer : undefined;
+}
+
+/**
+ * One of a fixed set of labels, or nothing.
+ *
+ * The only string form any value crossing this boundary is retained in: a label that is not on the list is
+ * dropped rather than truncated or escaped, so no supplied text is ever carried through.
+ */
+function allowlistedLabel(value: unknown, allowed: readonly string[]): string | undefined {
+  return allowed.includes(String(value)) ? String(value) : undefined;
+}
+
+/**
+ * The widest startup window a retained duration may state.
+ *
+ * A minute bounds every window the SDK actually uses — a level-2 grace, a warm-up deadline, a retry interval —
+ * and a duration beyond it is a value this plugin did not expect rather than a measurement, so it is dropped
+ * like any other field that fails its shape.
+ */
+const MAX_STARTUP_WINDOW_MS = 60_000;
+
+/** Why a level-2 wait ended without a key, which is the whole of what such an ending states. */
+const LEVEL2_UNAVAILABLE_REASONS = [
+  'no-cipher-key',
+  'derivation-failed',
+  'not-negotiating',
+  'session-closed',
+  'grace-elapsed',
+] as const;
+
+/** The three phases whose only field is the action they report, which the union fixes at `start`. */
+const retainedStart = (candidate: Record<string, unknown>): Record<string, unknown> | undefined =>
+  candidate.action === 'start' ? { action: 'start' } : undefined;
+
+/** A phase whose only field is one bounded integer, retained under the name the SDK declares for it. */
+const retainedInteger =
+  (field: string, max: number) =>
+  (candidate: Record<string, unknown>): Record<string, unknown> | undefined => {
+    const value = boundedInteger(candidate[field], max);
+    return value === undefined ? undefined : { [field]: value };
+  };
+
+/**
+ * What each phase of the SDK's live trace vocabulary retains, keyed by the phase itself.
+ *
+ * Typed against the published `LiveTrace` union, so a phase this table does not name fails to compile rather
+ * than being dropped to a content-free record at runtime.
+ *
+ * Each entry validates the fields its own phase declares, by name, and returns nothing when they are not the
+ * shape claimed, because this reads a value that crossed a process boundary. A field is retained only as a
+ * fixed label, a boolean, or a bounded integer; the SDK states that its traces carry no serial, address or
+ * key material, and validating rather than copying is what keeps that true here whatever it sends.
+ *
+ * The field NAMES are not checked against the union, only the phases are — so a field the SDK renames within
+ * an existing phase is dropped silently, and that phase keeps only what it still recognises.
+ */
+const LIVE_TRACE_PHASES = {
+  'media-command': (c) => {
+    const topology = allowlistedLabel(c.topology, ['attached', 'own']);
+    const action = allowlistedLabel(c.action, ['keepalive', 'start']);
+    return topology && action && typeof c.level2 === 'boolean' ? { topology, action, level2: c.level2 } : undefined;
+  },
+  'media-command-ack': retainedStart,
+  'media-command-retry': retainedStart,
+  'media-command-unacknowledged': retainedStart,
+  'first-video-command': (c) => {
+    const signCode = boundedInteger(c.signCode, 255);
+    return signCode !== undefined && typeof c.accepted === 'boolean' ? { signCode, accepted: c.accepted } : undefined;
+  },
+  'first-video-unit': (c) => (typeof c.keyframe === 'boolean' ? { keyframe: c.keyframe } : undefined),
+  'first-keyframe': () => ({}),
+  'first-foreign-media-command': (c) => {
+    const media = allowlistedLabel(c.media, ['audio', 'video']);
+    return media ? { media } : undefined;
+  },
+  'video-decode-empty': retainedInteger('signCode', 255),
+  'datagram-gap': retainedInteger('dataType', 3),
+  'sequence-restart': retainedInteger('dataType', 3),
+  'level2-wait': retainedInteger('waitMs', MAX_STARTUP_WINDOW_MS),
+  'level2-ready': retainedInteger('cipherId', 65535),
+  'level2-set-payload-only': retainedInteger('cipherId', 65535),
+  'session-connect-wait': retainedInteger('waitMs', MAX_STARTUP_WINDOW_MS),
+  'session-connected': retainedInteger('waitedMs', MAX_STARTUP_WINDOW_MS),
+  'session-unreachable': retainedInteger('waitedMs', MAX_STARTUP_WINDOW_MS),
+  /**
+   * Why a level-2 wait ended without a key, and what it had to name.
+   *
+   * The reason is the record: a wait that ran out states how long it waited, and one answered without waiting
+   * states nothing more, because the negotiation is one-shot per connection. Only a reason reached under a
+   * negotiation has a cipher to name, so both durations are optional and each is retained where it is stated.
+   */
+  'level2-unavailable': (c) => {
+    const reason = allowlistedLabel(c.reason, LEVEL2_UNAVAILABLE_REASONS);
+    if (!reason) {
+      return undefined;
+    }
+    const cipherId = boundedInteger(c.cipherId, 65535);
+    const waitedMs = boundedInteger(c.waitedMs, MAX_STARTUP_WINDOW_MS);
+    return {
+      reason,
+      ...(cipherId === undefined ? {} : { cipherId }),
+      ...(waitedMs === undefined ? {} : { waitedMs }),
+    };
+  },
+  /** The cipher a station asked for, beside the one whose material answered it. */
+  'cipher-fallback': (c) => {
+    const cipherId = boundedInteger(c.cipherId, 65535);
+    const answeredCipherId = boundedInteger(c.answeredCipherId, 65535);
+    return cipherId === undefined || answeredCipherId === undefined ? undefined : { cipherId, answeredCipherId };
+  },
+  'level2-negotiating': retainedInteger('cipherId', 65535),
+  /**
+   * What a call resolved a station as, which decides what its failure means.
+   *
+   * An attached camera's media start has no unencrypted form, so the topology is what separates a key that
+   * never arrived from a start that had no form to be sent in. The channel is an index on a base and the
+   * administrator is a relation to the signed-in account: neither is an identity of its own.
+   */
+  /**
+   * Which lookup channels a connection could ask for a station on, before it asked.
+   *
+   * A connect that had one channel failed for that channel's reason alone, and a connect that had neither
+   * could not have succeeded. Both are otherwise indistinguishable from a station that is switched off.
+   * `cloudMissing` names what the cloud channel lacked when it was unavailable.
+   */
+  'lookup-channels': (c) => {
+    if (typeof c.local !== 'boolean' || typeof c.cloud !== 'boolean') return undefined;
+    const cloudMissing = allowlistedLabel(c.cloudMissing, ['dsk-key', 'cloud-addresses']);
+    return { local: c.local, cloud: c.cloud, ...(cloudMissing === undefined ? {} : { cloudMissing }) };
+  },
+  'station-resolved': (c) => {
+    const topology = allowlistedLabel(c.topology, ['attached', 'own']);
+    const stationAdmin = allowlistedLabel(c.stationAdmin, ['self', 'other', 'unstated']);
+    const channel = boundedInteger(c.channel, MAX_STATION_CHANNEL);
+    const stationModel =
+      typeof c.stationModel === 'string' ? boundedText(c.stationModel, MAX_DEVICE_MODEL_LENGTH) : undefined;
+    return topology && stationAdmin && channel !== undefined
+      ? { topology, channel, stationAdmin, ...(stationModel === undefined ? {} : { stationModel }) }
+      : undefined;
+  },
+  /**
+   * Why a device could not be addressed on its station: its record states no channel, or another attached
+   * device states the same one. The call was refused before anything was sent.
+   */
+  'station-channel-unresolved': (c) => {
+    const issue = allowlistedLabel(c.issue, ['missing', 'shared']);
+    return issue ? { issue } : undefined;
+  },
+  /**
+   * How long a connection's path has answered nothing, which is the station stating the path is gone.
+   *
+   * A duration, so it is retained as a bounded tally. Its bound is the warm-up window a start is given: a
+   * silence longer than that belongs to a session nothing is waiting on.
+   */
+  'path-stale': retainedInteger('silentMs', MAX_STARTUP_WINDOW_MS),
+  /**
+   * How long a camera's own channel delivered nothing, and whether the station was asked to serve it again.
+   *
+   * Both halves are the record: a station re-tasked to a sibling is repaired by the re-assert, and a pull
+   * nothing is attached to declines it so the station is left with the camera someone is watching. A picture
+   * that stopped advancing while no such record exists stopped for a reason the station's attention does not
+   * reach.
+   */
+  'channel-silent': (c) => {
+    const silentMs = boundedInteger(c.silentMs, MAX_STARTUP_WINDOW_MS);
+    const outcome = allowlistedLabel(c.outcome, ['declined', 'reasserted']);
+    return silentMs !== undefined && outcome ? { silentMs, outcome } : undefined;
+  },
+  'media-command-unsent': (c) => {
+    const reason = allowlistedLabel(c.reason, ['level2-key', 'address']);
+    return reason ? { reason } : undefined;
+  },
+  /** `errorName` is an upstream class name, so it stays out of the archive; reason and stage say enough. */
+  'start-failed': (c) => {
+    const reason = allowlistedLabel(c.reason, ['warm-timeout', 'source-error', 'source-ended']);
+    const stage = allowlistedLabel(c.stage, ['awaiting-first-frame', 'audio-only', 'awaiting-keyframe']);
+    const attempts = boundedInteger(c.attempts, 1000);
+    return reason && stage && attempts !== undefined ? { reason, stage, attempts } : undefined;
+  },
+  warming: (c) => {
+    const retryMs = boundedInteger(c.retryMs, MAX_STARTUP_WINDOW_MS);
+    const deadlineMs = boundedInteger(c.deadlineMs, MAX_STARTUP_WINDOW_MS);
+    return retryMs === undefined || deadlineMs === undefined ? undefined : { retryMs, deadlineMs };
+  },
+} satisfies Record<LiveTrace['phase'], (candidate: Record<string, unknown>) => Record<string, unknown> | undefined>;
+
+/**
+ * Narrows one push the SDK received to its wire event type, whether it knew the device, and how many events it
+ * decoded: a push that decoded into none is the code a device sends that the library does not map yet.
+ */
+function sanitizeSdkPush(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  const eventType = boundedInteger(value.eventType, 0xffff);
+  const device = allowlistedLabel(value.device, ['known', 'unknown', 'none']);
+  const events = boundedInteger(value.events, 64);
+  return eventType === undefined || !device || events === undefined
+    ? undefined
+    : { scope: 'sdk', level: 'debug', subsystem: 'push', event: 'push-received', eventType, device, events };
+}
+
+/** A refused RTC sign's HTTP status and cloud code: a shard 401 apart from any other refusal. */
+function sanitizeSignRefusal(value: Record<string, unknown>): Record<string, number> {
+  const httpStatus = boundedInteger(value.httpStatus, 599, 100);
+  const code = nonNegativeInteger(value.code);
+  return { ...(httpStatus === undefined ? {} : { httpStatus }), ...(code === undefined ? {} : { code }) };
+}
+
+function sanitizeSdkLiveStartTrace(candidate: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(candidate)) return undefined;
+  const phase = String(candidate.phase);
+  if (!Object.hasOwn(LIVE_TRACE_PHASES, phase)) return undefined;
+  const fields = LIVE_TRACE_PHASES[phase as LiveTrace['phase']](candidate);
+  if (!fields) return undefined;
+  const source = opaquePullHandle(candidate.source);
+  return { phase, ...(source === undefined ? {} : { source }), ...fields };
+}
+
+/**
+ * The SDK's per-process handle for a pull, or nothing where the value is not one.
+ *
+ * Matched against the shape a handle has rather than searched for what a serial looks like: this record is
+ * what a support archive keeps, and a redaction that depends on recognising a secret fails on the first
+ * message shape nobody predicted. `pull-3` and `station-1:2` pass; anything else, a serial included, does not.
+ */
+function opaquePullHandle(value: unknown): string | undefined {
+  return typeof value === 'string' && /^(?:pull|station)-\d{1,6}(?::\d{1,3})?$/.test(value) ? value : undefined;
+}
+
+/**
+ * One support-case accessory alias, or nothing where the value is not one.
+ *
+ * Matched against the shape an alias has rather than against what a serial looks like, on the same rule as
+ * {@link opaquePullHandle}: a record carries an alias or it carries no accessory at all.
+ */
+function opaqueAccessoryAlias(value: unknown): string | undefined {
+  return typeof value === 'string' &&
+    /^accessory-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)
+    ? value
+    : undefined;
+}
+
+/**
+ * Narrows one realtime startup outcome to its state, the push plane's start counts, and the mqtt and wired P2P
+ * planes' counts nested under their names, or nothing where the state is unknown.
+ *
+ * Read by both halves of the path — {@link reportRealtimeReadiness} builds the record and the file sink rebuilds it.
+ */
+function sanitizeRealtimeReadiness(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  const state = allowlistedLabel(value.state, ['ready', 'partial', 'disabled', 'superseded', 'timed-out']);
+  if (!state) return undefined;
+  const counts = (plane: unknown): Record<string, number> =>
+    Object.fromEntries(
+      (['required', 'ready', 'failed', 'pending'] as const).flatMap((key) => {
+        const count = isRecord(plane) ? nonNegativeInteger(plane[key]) : undefined;
+        return count === undefined ? [] : [[key, count]];
+      }),
+    );
+  const planes = Object.fromEntries(
+    (['mqtt', 'wiredP2p'] as const).flatMap((plane) => {
+      const planeCounts = counts(value[plane]);
+      return Object.keys(planeCounts).length ? [[plane, planeCounts]] : [];
+    }),
+  );
+  return { event: 'realtime-readiness', state, ...counts(value), ...planes };
+}
+
+/**
+ * Records how the SDK's realtime startup settled, with each plane's start counts, as `sdk-log` evidence.
+ *
+ * Carries the state and the counts alone, which name the plane — push, mqtt or wired P2P — that failed or never
+ * settled behind a `partial` start.
+ */
+export function reportRealtimeReadiness(
+  target: Partial<Pick<PlatformLogger, 'debug'>> | undefined,
+  readiness: { state: string; push?: object; mqtt?: object; wiredP2p?: object },
+): void {
+  const { state, push, mqtt, wiredP2p } = readiness;
+  const record = sanitizeRealtimeReadiness({ ...push, state, mqtt, wiredP2p });
+  if (target?.debug && record) {
+    target.debug(JSON.stringify({ scope: 'sdk', level: 'debug', subsystem: 'push', ...record }));
+  }
+}
+
+/**
+ * Adapts SDK protocol detail to bounded debug output without preserving supplied values.
+ *
+ * The SDK runs FFmpeg of its own for snapshot decoding and WebRTC containers and forwards that process's
+ * stderr under an `[ffmpeg]` prefix. That is the same class of evidence as this plugin's own adaptation
+ * output, so it is recorded as such, redacted line by line, rather than dropped as SDK chatter: a snapshot
+ * that never decodes has no other account anywhere of why.
+ *
+ * Any other message is recorded only when {@link classifySdkEvent} names a class for it, because the class is
+ * all a record carries.
+ */
+export function createSdkLogger(target: Partial<PlatformLogger> | undefined): Logger | undefined {
+  if (!target?.debug) {
+    return undefined;
+  }
+  const format = (message: string, args: unknown[]): Record<string, unknown> | undefined => {
+    if (message === LIVE_TRACE_MESSAGE) {
+      const trace = sanitizeSdkLiveStartTrace(args[0]);
+      if (trace) return { scope: 'sdk', subsystem: 'p2p', event: 'live-start-trace', ...trace };
+    }
+    const push = /^\[push\] in: eventType=(\d+) device=(\w+) events=(\d+)$/.exec(message);
+    if (push) return sanitizeSdkPush({ eventType: Number(push[1]), device: push[2], events: Number(push[3]) });
+    const requestedSubsystem = /^\[([a-z0-9-]+)(?:\s+[^\]]+)?\]/i.exec(message)?.[1]?.toLowerCase();
+    if (requestedSubsystem === 'ffmpeg') {
+      const stderr = message.slice(message.indexOf(']') + 1).split(/\r?\n/);
+      return sanitizeAdaptationNotice({ role: 'sdk', event: 'output', stderr }, 'debug');
+    }
+    const event = classifySdkEvent(message);
+    if (!event) return undefined;
+    const subsystemAliases: Readonly<Record<string, string>> = {
+      eufy: 'mega',
+      fcm: 'push',
+      live: 'p2p',
+      session: 'p2p',
+      smqtt: 'mqtt',
+      'stored-snapshot-cache': 'device',
+    };
+    const aliasedSubsystem = requestedSubsystem ? subsystemAliases[requestedSubsystem] : undefined;
+    const subsystem = SDK_SUBSYSTEMS.has(requestedSubsystem ?? '') ? requestedSubsystem : (aliasedSubsystem ?? 'sdk');
+    const details = args.slice(0, MAX_SDK_DETAILS).map((value) => {
+      if (value instanceof Error) {
+        const errorType = (SDK_ERROR_TYPES as readonly string[]).includes(value.name) ? value.name : 'Error';
+        return { errorType };
+      }
+      if (typeof value === 'string') {
+        return { type: 'string', length: value.length };
+      }
+      if (value && typeof value === 'object') {
+        return { type: 'object' };
+      }
+      return { type: typeof value };
+    });
+    const sign = event === 'rtc-sign-refused' ? / HTTP (\d+) code (\d+)?/.exec(message) : null;
+    return {
+      scope: 'sdk',
+      subsystem,
+      event,
+      ...(sign ? sanitizeSignRefusal({ httpStatus: Number(sign[1]), code: Number(sign[2]) }) : {}),
+      ...(details.length ? { details } : {}),
+      ...(args.length > MAX_SDK_DETAILS ? { detailsTruncated: true } : {}),
+    };
+  };
+  const write = (level: 'debug' | 'info' | 'warn' | 'error', message: string, args: unknown[]): void => {
+    const event = format(message, args);
+    if (event) {
+      target.debug!(JSON.stringify({ ...event, level }));
+    }
+  };
+  return {
+    debug: (message, ...args) => write('debug', message, args),
+    info: (message, ...args) => write('info', message, args),
+    warn: (message, ...args) => write('warn', message, args),
+    error: (message, ...args) => write('error', message, args),
+  };
+}
+
+const RUNTIME_STATES = [
+  'stopped',
+  'acquiring-ownership',
+  'starting',
+  'ready',
+  'degraded',
+  'authentication-required',
+  'owner-conflict',
+  'failed',
+  'stopping',
+] as const;
+
+export type RuntimeState = (typeof RUNTIME_STATES)[number];
+
+const CAPABILITIES = new Set([
+  'arming',
+  'audio',
+  'battery',
+  'camera',
+  'contact',
+  'light',
+  'lock',
+  'siren',
+  'smart_light',
+]);
+const MEMBERS = new Set([
+  'active',
+  'alarm',
+  'batteryAlert',
+  'brightness',
+  'charging',
+  'color',
+  'enabled',
+  'level',
+  'isOn',
+  'live',
+  'microphone',
+  'mode',
+  'nightVision',
+  'open',
+  'power',
+  'recordFragments',
+  'snapshot',
+  'snapshotLive',
+  'snapshotStored',
+  'speaker',
+  'state',
+  'statusLed',
+  'stop',
+  'talkback',
+  'target',
+  'test',
+  'volume',
+]);
+const REASONS = new Set([
+  'adaptation-exited-before-output',
+  'adaptation-exited-while-streaming',
+  'adaptation-failed',
+  'adaptation-spawn-failed',
+  'adapter-missing',
+  'at-capacity',
+  'capability-not-supported',
+  'disabled',
+  'disabled-mid-session',
+  'disabled-no-video',
+  'expired',
+  'hot',
+  'live-at-capacity',
+  'live-decoder-unavailable',
+  'live-failed',
+  'live-no-keyframe',
+  'live-source-failed',
+  'live-station-unreachable',
+  'live-unavailable',
+  'live-undecodable-burst',
+  'malformed',
+  'missing',
+  'missing-evidence',
+  'missing-trigger',
+  'no-acquisition',
+  'no-output-within-backstop',
+  'no-primary-purpose-member',
+  'no-retained-image',
+  'not-confirmed',
+  'no-video-within-backstop',
+  'operation-failure',
+  'primary-adapter-unavailable',
+  'recovered',
+  'rtcp-timeout',
+  'no-controller-rtcp',
+  'sdk-fault',
+  'source-acquisition-timeout',
+  'source-audio-only',
+  'source-error',
+  'source-input-unstable',
+  'source-stopped',
+  'source-unavailable',
+  'source-warm-timeout',
+  'station-key-unavailable',
+  'station-unreachable',
+  'stored-download-failed',
+  'stored-failed',
+  'stored-invalid-image',
+  'stored-not-observed',
+  'stored-pending',
+  'stored-unavailable',
+  'timeout',
+  'unsupported',
+  'unsupported-selection',
+  'device-audio-failed',
+  'no-controller-audio',
+]);
+/** Every runtime state, plus the withdrawal a recovered condition reports. */
+const RUNTIME_CONDITION_REASONS: ReadonlySet<string> = new Set<string>([...RUNTIME_STATES, 'recovered']);
+const MAX_ACCESSORY_ALIASES = 32;
+const HOMEKIT_EVENT_ROUTES: Readonly<Record<string, ReadonlySet<string>>> = {
+  'battery.status': new Set(['battery-alert', 'battery-level']),
+  'contact.sensor': new Set(['contact-state']),
+  'doorbell.press': new Set(['doorbell-press']),
+  'doorbell.package': new Set(['package-presence']),
+  'lock.mechanism': new Set(['lock-state']),
+  'motion.sensor': new Set(['motion-detection']),
+  'arming.security-system': new Set(['arming-mode-changed', 'security-system-alarm']),
+  'smart-light.lightbulb': new Set(['smart-light-state']),
+  'camera.streaming': new Set(['camera-enabled-changed']),
+  'camera.controls': new Set(['camera-enabled-changed']),
+};
+const HOMEKIT_OBSERVATIONS = new Set(['malformed', 'missing', 'valid', 'ignored']);
+/**
+ * What announced a change, for an adapter that follows more than one announcement for the same state.
+ *
+ * Read by both halves of the write path: the reporter builds the record and the file sink rebuilds it. The
+ * field is omitted where an adapter states no announcement and refused where it states one absent from here.
+ */
+const HOMEKIT_ANNOUNCEMENTS = new Set(['write', 'poll']);
+const HOMEKIT_LIVE_VIDEO_OPERATIONS = ['start', 'reconfigure'] as const;
+const HOMEKIT_LIVE_VIDEO_PROFILES = ['baseline', 'main', 'high'] as const;
+const HOMEKIT_LIVE_VIDEO_LEVELS = ['3.1', '3.2', '4.0'] as const;
+/**
+ * The inclusive bounds a controller-selected live geometry and frame rate are retained within.
+ *
+ * Bounds rather than an enumeration, because a controller may select a geometry the advertised matrix does not
+ * offer and the plugin honours it. The ceiling exceeds what the recorded H.264 level codes, so a selection its
+ * own level cannot carry is retained.
+ */
+const MIN_LIVE_VIDEO_DIMENSION = 120;
+const MAX_LIVE_VIDEO_DIMENSION = 4096;
+const MIN_LIVE_VIDEO_FRAME_RATE = 1;
+const MAX_LIVE_VIDEO_FRAME_RATE = 120;
+/**
+ * The datagram size a controller negotiated, bounded to what the field on the wire can carry.
+ *
+ * HomeKit transports the maximum MTU as an unsigned 16-bit integer, so every value a controller can ask for
+ * is inside these bounds and none is refused for being larger than this host would choose. A packet size the
+ * path cannot carry is the observation, not a reason to drop the record carrying it.
+ */
+const MIN_LIVE_VIDEO_MTU = 0;
+const MAX_LIVE_VIDEO_MTU = 65_535;
+/** The bit rate ceiling a controller negotiated, in kbps, bounded to the unsigned 16-bit field that carries it. */
+const MAX_LIVE_VIDEO_BIT_RATE = 65_535;
+/** The two address families HomeKit negotiates a destination in. */
+const HOMEKIT_LIVE_ADDRESS_VERSIONS = ['ipv4', 'ipv6'] as const;
+const HOMEKIT_LIVE_SESSION_STAGES = [
+  'sdk-source-acquisition',
+  'first-source-keyframe',
+  'first-adapted-output',
+  'controller-rtcp',
+] as const;
+/** The SDK's own stage and reason for a live warm-up that ended without a keyframe. */
+const SDK_LIVE_START_STAGES = ['awaiting-first-frame', 'audio-only', 'awaiting-keyframe'];
+const SDK_LIVE_START_REASONS = ['warm-timeout', 'source-error', 'source-ended'];
+/**
+ * Which adaptation process an FFmpeg record came from.
+ *
+ * A superset of what the media domain can report, because the SDK runs FFmpeg of its own for snapshot
+ * decoding and WebRTC containers and forwards its output here under the same evidence class.
+ */
+const ADAPTATION_ROLES = new Set([
+  'live-video',
+  'live-audio',
+  'return-audio',
+  'recording',
+  'preview-encode',
+  'preview-decode',
+  'preview-raw',
+  'sdk',
+]);
+/** What that process did. `output` is a process reported for what it wrote rather than for how it ended. */
+const ADAPTATION_EVENTS = new Set([
+  'started',
+  'encoder-disqualified',
+  'spawn-failed',
+  'input-failed',
+  'exited-before-output',
+  'exited-while-streaming',
+  'output',
+]);
+/** How a settings-page live preview ended. */
+const PREVIEW_OUTCOMES = ['picture', 'unplayable', 'no-video', 'stopped'] as const;
+/** The iPhone asks a live preview codes for, and the live video settings it may try. */
+const PREVIEW_ASKS = ['wifi', 'cellular'] as const;
+const PREVIEW_SETTINGS = [
+  'smallVideoPackets',
+  'liveVideoPassthrough',
+  'hardwareVideoEncoder',
+  'ignoreHomeBitRate',
+] as const;
+/**
+ * Why a process was started, on the record that reports it starting.
+ *
+ * A replacement carries the identity of the stream the previous process was already sending on, so what it
+ * started mid-flight is judged against what that one left. A first adaptation has nothing behind it.
+ */
+const ADAPTATION_CAUSES = ['first', 'controller-selection', 'source-configuration'] as const;
+/** The encoders a live video process may code with, `copy` being none. */
+const LIVE_VIDEO_ENCODERS = [
+  'copy',
+  'libx264',
+  'h264_videotoolbox',
+  'h264_qsv',
+  'h264_nvenc',
+  'h264_amf',
+  'h264_vaapi',
+  'h264_v4l2m2m',
+] as const;
+/** What qualifying a hardware encoder for one selection found, but `bytes`, which is read with its two integers. */
+const QUALIFICATION_OUTCOMES = [
+  'qualified',
+  'budget',
+  'encode',
+  'trace',
+  'profile',
+  'level',
+  'geometry',
+  'frames',
+] as const;
+/** The codec a live video source delivers. */
+const LIVE_VIDEO_SOURCES = ['h264', 'h265', 'av1'] as const;
+/**
+ * Which of those events is a failure, and so the ones a record is levelled `warn` for.
+ *
+ * The others are a stream working: `started` is a process beginning, and `output` is a process reported for
+ * what it wrote on the way to a stop it was asked to make — the exit code of a killed FFmpeg among it. Neither
+ * is something a reader must act on, and levelling the class rather than the record put four warnings in the
+ * log for every session that succeeded.
+ */
+const ADAPTATION_FAILURE_EVENTS = new Set<string>([
+  'encoder-disqualified',
+  'spawn-failed',
+  'input-failed',
+  'exited-before-output',
+  'exited-while-streaming',
+]);
+/**
+ * The signals a terminated adaptation is reported under.
+ *
+ * A signal this build cannot name is dropped rather than passed through, because the field is written from
+ * an operating-system string and an allowlist is the only thing that keeps it one.
+ */
+const ADAPTATION_SIGNALS = new Set([
+  'SIGABRT',
+  'SIGBUS',
+  'SIGFPE',
+  'SIGILL',
+  'SIGINT',
+  'SIGKILL',
+  'SIGPIPE',
+  'SIGSEGV',
+  'SIGTERM',
+]);
+/**
+ * How many stderr lines one record keeps.
+ *
+ * A producer bounds its own retention too, and this bound is applied again rather than trusted, because a
+ * record's size is this module's to answer for however many lines it was offered.
+ */
+const MAX_ADAPTATION_STDERR_LINES = 8;
+const MAX_ADAPTATION_STDERR_LINE_LENGTH = 200;
+/**
+ * The fixed-shape operational notices, each `[level, messageKey, durationMessageKey?]`.
+ *
+ * Operational rather than verbose, so each is `plugin-log` evidence that every profile declares.
+ */
+const RUNTIME_NOTICES = {
+  'status-publication-failed': ['warn', 'log.notice.statusPublicationFailed'],
+  'ownership-release-not-finalized': ['error', 'log.notice.ownershipReleaseNotFinalized'],
+  'ownership-release-failed': ['error', 'log.notice.ownershipReleaseFailed'],
+  'shutdown-failed': ['error', 'log.notice.shutdownFailed'],
+  'shutdown-timeout': ['warn', 'log.notice.shutdownTimeout', 'log.notice.shutdownTimeoutWithDuration'],
+  'ownership-acquisition-failed': ['error', 'log.notice.ownershipAcquisitionFailed'],
+  'ownership-release-incomplete': ['warn', 'log.notice.ownershipReleaseIncomplete'],
+  'registry-subscriber-failed': ['warn', 'log.notice.registrySubscriberFailed'],
+  'event-subscriber-failed': ['warn', 'log.notice.eventSubscriberFailed'],
+  'state-subscriber-failed': ['warn', 'log.notice.stateSubscriberFailed'],
+  'channel-serve-failed': ['warn', 'log.notice.channelServeFailed'],
+  'diagnostics-authorization-armed': ['info', 'log.notice.diagnosticsAuthorizationArmed'],
+  'stand-down-not-rearmed': ['warn', 'log.notice.standDownNotRearmed'],
+  'stand-down-account-replaced': ['warn', 'log.notice.standDownAccountReplaced'],
+  'camera-snapshot-cache-invalid': ['warn', 'log.snapshotCacheInvalid'],
+  'discarded-v4-settings-unacknowledged': ['warn', 'log.discardedSettings'],
+} as const satisfies Record<string, NoticeRow>;
+
+type NoticeRow = readonly ['info' | 'warn' | 'error', string, string?];
+
+/** The scope a notice is recorded under where it is not `runtime-notice`. */
+const NOTICE_SCOPES: Readonly<Partial<Record<RuntimeNoticeCode, string>>> = {
+  'camera-snapshot-cache-invalid': 'media-notice',
+  'discarded-v4-settings-unacknowledged': 'configuration-notice',
+};
+
+type RuntimeNoticeCode = keyof typeof RUNTIME_NOTICES;
+const RUNTIME_CONDITIONS = {
+  degraded: {
+    code: 'runtime-transport-degraded',
+    summaryKey: 'log.runtime.transportDegraded',
+    actionKey: 'log.action.checkNetwork',
+    level: 'warn',
+  },
+  'authentication-required': {
+    code: 'runtime-authentication-required',
+    summaryKey: 'log.runtime.authenticationRequired',
+    actionKey: 'log.action.reauthenticate',
+    level: 'warn',
+  },
+  'owner-conflict': {
+    code: 'runtime-owner-conflict',
+    summaryKey: 'log.runtime.ownerConflict',
+    actionKey: 'log.action.stopOtherOwner',
+    level: 'error',
+  },
+  failed: {
+    code: 'runtime-failed',
+    summaryKey: 'log.runtime.failed',
+    actionKey: 'log.action.reviewRuntime',
+    level: 'error',
+  },
+} as const;
+const HOMEKIT_CONDITIONS = {
+  'recognized-device-not-represented': ['log.homekit.recognizedNotRepresented', 'log.action.notSupportedYet'],
+  'battery-capability-unavailable': ['log.homekit.batteryCapabilityUnavailable', 'log.action.waitBattery'],
+  'invalid-battery-observation': ['log.homekit.invalidBatteryObservation', 'log.action.waitBatteryObservation'],
+  'battery-temperature-alert': ['log.homekit.batteryTemperatureAlert', 'log.action.allowBatteryCooling'],
+  'contact-capability-unavailable': ['log.homekit.contactCapabilityUnavailable', 'log.action.waitContact'],
+  'invalid-contact-observation': ['log.homekit.invalidContactObservation', 'log.action.waitContactObservation'],
+  'siren-capability-unavailable': ['log.homekit.sirenCapabilityUnavailable', 'log.action.waitSiren'],
+  'invalid-siren-active-observation': ['log.homekit.invalidSirenObservation', 'log.action.waitSirenObservation'],
+  'smart-light-capability-unavailable': ['log.homekit.lightCapabilityUnavailable', 'log.action.waitLight'],
+  'invalid-smart-light-observation': ['log.homekit.invalidLightObservation', 'log.action.waitLightObservation'],
+  'smart-light-operation-failed': ['log.homekit.lightOperationFailed', 'log.action.retryLight'],
+  'smart-light-reconciliation-expired': ['log.homekit.lightReconciliationExpired', 'log.action.checkPhysicalLight'],
+  'arming-capability-unavailable': ['log.homekit.armingCapabilityUnavailable', 'log.action.waitArming'],
+  'unsupported-arming-mode': ['log.homekit.unsupportedArmingMode', 'log.action.mapArmingMode'],
+  'arming-operation-failed': ['log.homekit.armingOperationFailed', 'log.action.retryArming'],
+  'arming-reconciliation-expired': ['log.homekit.armingReconciliationExpired', 'log.action.checkPhysicalArmingMode'],
+  'lock-capability-unavailable': ['log.homekit.lockCapabilityUnavailable', 'log.action.waitLock'],
+  'lock-operation-failed': ['log.homekit.lockOperationFailed', 'log.action.retryLock'],
+  'lock-reconciliation-expired': ['log.homekit.lockReconciliationExpired', 'log.action.checkPhysicalLock'],
+  'unusable-lock-announcement': ['log.homekit.unusableLockAnnouncement', 'log.action.checkPhysicalLock'],
+  'camera-live-session-failed': ['log.homekit.cameraLiveSessionFailed', 'log.action.retryLiveView'],
+  'camera-live-session-refused': ['log.homekit.cameraLiveSessionRefused', 'log.action.enableCamera'],
+  'camera-media-at-capacity': ['log.homekit.cameraMediaAtCapacity', 'log.action.reduceConcurrentMedia'],
+  'camera-recording-unavailable': ['log.homekit.cameraRecordingUnavailable', 'log.action.checkCameraRecording'],
+  'camera-recording-failed': ['log.homekit.cameraRecordingFailed', 'log.action.retryRecording'],
+  'camera-recording-refused': ['log.homekit.cameraRecordingRefused', 'log.action.enableCamera'],
+  'camera-controls-capability-unavailable': [
+    'log.homekit.cameraControlsCapabilityUnavailable',
+    'log.action.waitCameraControl',
+  ],
+  'camera-control-operation-failed': ['log.homekit.cameraControlOperationFailed', 'log.action.retryCameraControl'],
+  'invalid-camera-control-observation': [
+    'log.homekit.invalidCameraControlObservation',
+    'log.action.checkCameraControl',
+  ],
+  'camera-snapshot-unavailable': ['log.homekit.cameraSnapshotUnavailable', 'log.action.checkCameraSnapshot'],
+  'camera-snapshot-capability-unavailable': [
+    'log.homekit.cameraSnapshotCapabilityUnavailable',
+    'log.action.waitCameraSnapshot',
+  ],
+  'camera-streaming-capability-unavailable': [
+    'log.homekit.cameraStreamingCapabilityUnavailable',
+    'log.action.waitCameraLive',
+  ],
+  'camera-talkback-failed': ['log.homekit.cameraTalkbackFailed', 'log.action.retryTalkback'],
+  'camera-talkback-capability-unavailable': ['log.homekit.cameraTalkbackUnavailable', 'log.action.waitTalkback'],
+} as const;
+
+type HomeKitConditionCode = keyof typeof HOMEKIT_CONDITIONS;
+
+/**
+ * The action a HomeKit condition names for a reason whose remedy is not the condition's own, keyed `code:reason`.
+ *
+ * A camera adapter is missing only where no FFmpeg path resolved, an adaptation fails to spawn only where the path
+ * cannot be run, and a live adaptation that exits before any output is the FFmpeg build refusing this host, so all
+ * three are fixed in the plugin's settings rather than waited out. A control that timed out
+ * will likely time out again, so it points at the Eufy app instead of a retry. A station whose session did not
+ * connect is fixed at that station, not at the camera a viewer opened.
+ */
+const HOMEKIT_REASON_ACTIONS: Readonly<Record<string, string>> = {
+  'camera-streaming-capability-unavailable:adapter-missing': 'log.action.setFfmpegPath',
+  'camera-recording-unavailable:adapter-missing': 'log.action.setFfmpegPath',
+  'camera-live-session-failed:adaptation-spawn-failed': 'log.action.checkFfmpegPath',
+  'camera-live-session-failed:adaptation-exited-before-output': 'log.action.setFfmpegPath',
+  'lock-operation-failed:timeout': 'log.action.controlTimedOut',
+  'arming-operation-failed:timeout': 'log.action.controlTimedOut',
+  'smart-light-operation-failed:timeout': 'log.action.controlTimedOut',
+  'camera-control-operation-failed:timeout': 'log.action.controlTimedOut',
+  'camera-live-session-failed:station-unreachable': 'log.action.checkStation',
+  'camera-live-session-failed:source-warm-timeout': 'log.action.retryLiveViewNoPicture',
+  'camera-live-session-failed:station-key-unavailable': 'log.action.reportStationKey',
+  'camera-live-session-failed:no-controller-rtcp': 'log.action.checkControllerNetwork',
+  'camera-snapshot-unavailable:live-station-unreachable': 'log.action.checkStation',
+  'camera-talkback-failed:no-controller-audio': 'log.action.checkTalkbackMicrophone',
+};
+
+/**
+ * One condition that is active now, as the custom UI is told it.
+ *
+ * The code and both keys come from the condition catalog, so nothing in it is free text. `serials` names the
+ * devices a HomeKit condition affects and is absent from a runtime condition. It is live state answered to the
+ * owner's own interface and is never retained in a record.
+ */
+export interface ActiveCondition {
+  code: string;
+  summaryKey: string;
+  actionKey: string;
+  serials?: string[];
+}
+
+/** Projects a value onto an active condition, or nothing where the catalog does not write that code with those keys. */
+export function knownCondition(value: unknown): ActiveCondition | undefined {
+  if (!isRecord(value)) return undefined;
+  const { code, summaryKey, actionKey, serials } = value;
+  if (typeof code !== 'string') return undefined;
+  const runtime = Object.values(RUNTIME_CONDITIONS).find((condition) => condition.code === code);
+  const homeKit = Object.hasOwn(HOMEKIT_CONDITIONS, code)
+    ? HOMEKIT_CONDITIONS[code as HomeKitConditionCode]
+    : undefined;
+  const [summary, ...actions]: string[] = runtime
+    ? [runtime.summaryKey, runtime.actionKey]
+    : homeKit
+      ? [
+          ...homeKit,
+          ...Object.entries(HOMEKIT_REASON_ACTIONS)
+            .filter(([key]) => key.startsWith(`${code}:`))
+            .map(([, action]) => action),
+        ]
+      : [];
+  const action = allowlistedLabel(actionKey, actions);
+  if (summary === undefined || summaryKey !== summary || action === undefined) return undefined;
+  const named = Array.isArray(serials) ? serials.filter((serial): serial is string => typeof serial === 'string') : [];
+  return { code, summaryKey: summary, actionKey: action, ...(named.length === 0 ? {} : { serials: named }) };
+}
+
+/** HomeKit conditions that state a gap nothing in the user's setup closes, so an active one is not a warning. */
+const INFORMATIONAL_HOMEKIT_CONDITIONS = new Set<HomeKitConditionCode>(['recognized-device-not-represented']);
+
+/** The level and action one HomeKit condition is written with, decided once for the console and the record. */
+function homeKitConditionPresentation(
+  code: HomeKitConditionCode,
+  active: boolean,
+  reason: string,
+): { level: 'info' | 'warn'; actionKey: string } {
+  return {
+    level: active && !INFORMATIONAL_HOMEKIT_CONDITIONS.has(code) ? 'warn' : 'info',
+    actionKey: HOMEKIT_REASON_ACTIONS[`${code}:${reason}`] ?? HOMEKIT_CONDITIONS[code][1],
+  };
+}
+
+function sanitizeStructuredEvent(message: string): Record<string, unknown> | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(message);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(value)) return undefined;
+  const level = allowlistedLabel(value.level, ['debug', 'info', 'warn', 'error']);
+  if (!level || typeof value.scope !== 'string') return undefined;
+
+  if (value.scope === 'sdk') {
+    if (
+      typeof value.subsystem !== 'string' ||
+      !SDK_SUBSYSTEMS.has(value.subsystem) ||
+      typeof value.event !== 'string' ||
+      !SDK_EVENT_KEYS.has(value.event)
+    ) {
+      return undefined;
+    }
+    if (value.event === 'realtime-readiness') {
+      const readiness = sanitizeRealtimeReadiness(value);
+      return readiness ? { scope: 'sdk', level: 'debug', subsystem: 'push', ...readiness } : undefined;
+    }
+    if (value.event === 'push-received') {
+      return level === 'debug' ? sanitizeSdkPush(value) : undefined;
+    }
+    if (value.event === 'live-start-trace') {
+      if (level !== 'debug') return undefined;
+      const trace = sanitizeSdkLiveStartTrace(value);
+      return trace ? { scope: 'sdk', level, subsystem: 'p2p', event: 'live-start-trace', ...trace } : undefined;
+    }
+    const details: Array<Record<string, unknown>> = [];
+    for (const detail of Array.isArray(value.details) ? value.details.slice(0, MAX_SDK_DETAILS) : []) {
+      if (!isRecord(detail)) continue;
+      const errorType = allowlistedLabel(detail.errorType, SDK_ERROR_TYPES);
+      if (errorType) {
+        details.push({ errorType });
+        continue;
+      }
+      const type = allowlistedLabel(detail.type, ['boolean', 'number', 'object', 'string', 'undefined']);
+      if (!type) continue;
+      const length = nonNegativeInteger(detail.length);
+      details.push({ type, ...(length === undefined ? {} : { length }) });
+    }
+    return {
+      scope: 'sdk',
+      level,
+      subsystem: value.subsystem,
+      event: value.event,
+      ...(value.event === 'rtc-sign-refused' ? sanitizeSignRefusal(value) : {}),
+      ...(details.length ? { details } : {}),
+      ...(value.detailsTruncated === true ? { detailsTruncated: true } : {}),
+    };
+  }
+
+  if (value.scope === 'runtime-notice' || value.scope === 'media-notice' || value.scope === 'configuration-notice') {
+    if (typeof value.code !== 'string' || !Object.hasOwn(RUNTIME_NOTICES, value.code)) return undefined;
+    const notice = runtimeNoticeRecord(value.code as RuntimeNoticeCode, nonNegativeInteger(value.durationMs));
+    return notice.scope === value.scope ? notice : undefined;
+  }
+
+  if (value.scope === 'homekit') {
+    return sanitizeHomeKitEvent(value);
+  }
+
+  if (value.scope === 'runtime') {
+    const event = allowlistedLabel(value.event, ['ready', 'stopped']);
+    if (!event) return undefined;
+    return { scope: 'runtime', level: 'info', event, messageKey: 'log.runtime.state' };
+  }
+
+  if (value.scope === 'ffmpeg') {
+    return sanitizeAdaptationNotice(value, level);
+  }
+
+  if (value.scope === 'live-preview') {
+    const preview = sanitizeLivePreview(value);
+    return preview ? { scope: 'live-preview', level: 'info', ...preview } : undefined;
+  }
+
+  if (value.scope === 'diagnostic-condition') {
+    const homeKitDefinition =
+      typeof value.code === 'string' && Object.hasOwn(HOMEKIT_CONDITIONS, value.code)
+        ? HOMEKIT_CONDITIONS[value.code as HomeKitConditionCode]
+        : undefined;
+    const runtimeDefinition = Object.values(RUNTIME_CONDITIONS).find(({ code }) => code === value.code);
+    if (typeof value.code !== 'string' || (!homeKitDefinition && !runtimeDefinition)) return undefined;
+    if (typeof value.active !== 'boolean' || typeof value.reason !== 'string') return undefined;
+    if (runtimeDefinition) {
+      if (!RUNTIME_CONDITION_REASONS.has(value.reason)) return undefined;
+      if (
+        value.capability !== undefined ||
+        value.member !== undefined ||
+        value.affectedAccessoryCount !== undefined ||
+        value.accessoryAliases !== undefined ||
+        value.aliasesTruncated !== undefined
+      ) {
+        return undefined;
+      }
+      return {
+        scope: 'diagnostic-condition',
+        level: value.active ? runtimeDefinition.level : 'info',
+        code: value.code,
+        active: value.active,
+        reason: value.reason,
+        summaryKey: runtimeDefinition.summaryKey,
+        actionKey: runtimeDefinition.actionKey,
+      };
+    }
+    if (!REASONS.has(value.reason)) return undefined;
+    const affectedAccessoryCount = nonNegativeInteger(value.affectedAccessoryCount);
+    const accessoryAliases = Array.isArray(value.accessoryAliases)
+      ? value.accessoryAliases
+          .filter((alias): alias is string => opaqueAccessoryAlias(alias) !== undefined)
+          .slice(0, MAX_ACCESSORY_ALIASES)
+      : [];
+    const { level: conditionLevel, actionKey } = homeKitConditionPresentation(
+      value.code as HomeKitConditionCode,
+      value.active,
+      value.reason,
+    );
+    return {
+      scope: 'diagnostic-condition',
+      level: conditionLevel,
+      code: value.code,
+      active: value.active,
+      reason: value.reason,
+      summaryKey: homeKitDefinition![0],
+      actionKey,
+      ...(typeof value.capability === 'string' && CAPABILITIES.has(value.capability)
+        ? { capability: value.capability }
+        : {}),
+      ...(typeof value.member === 'string' && MEMBERS.has(value.member) ? { member: value.member } : {}),
+      ...(affectedAccessoryCount === undefined ? {} : { affectedAccessoryCount }),
+      ...(accessoryAliases.length ? { accessoryAliases } : {}),
+      ...(value.aliasesTruncated === true ? { aliasesTruncated: true } : {}),
+    };
+  }
+
+  return undefined;
+}
+
+/** The record one notice is written as, read by both halves of the path. */
+function runtimeNoticeRecord(code: RuntimeNoticeCode, durationMs: number | undefined) {
+  const [level, messageKey, durationMessageKey]: NoticeRow = RUNTIME_NOTICES[code];
+  return {
+    scope: NOTICE_SCOPES[code] ?? 'runtime-notice',
+    level,
+    code,
+    messageKey: durationMs !== undefined && durationMessageKey ? durationMessageKey : messageKey,
+    ...(durationMs === undefined ? {} : { durationMs }),
+  };
+}
+
+/** Emits one fixed-shape operational notice selected by its allowlisted code. */
+export function reportRuntimeNotice(
+  target: Pick<PlatformLogger, 'error' | 'warn'> & Partial<Pick<PlatformLogger, 'debug' | 'info'>>,
+  code: RuntimeNoticeCode,
+  fields: { durationMs?: number; finishBy?: string } = {},
+): void {
+  const record = runtimeNoticeRecord(
+    code,
+    fields.durationMs === undefined ? undefined : Math.max(0, Math.trunc(fields.durationMs)),
+  );
+  target[record.level]?.(
+    `[${code}] ${localize(target, record.messageKey, { durationMs: record.durationMs ?? 0, finishBy: fields.finishBy ?? '' })}`,
+  );
+  target.debug?.(JSON.stringify(record));
+}
+
+/**
+ * Picks up an authorization the persisted session file confirms, reporting whether it did.
+ *
+ * The file is the authority: the supplied identifier only names which window the caller believes was opened,
+ * and a session the file does not hold as active changes nothing and reports nothing. A confirmed pickup emits
+ * one operational record, which is the evidence that this process began retaining the window's scopes, taken
+ * at the moment it did rather than whenever a later record arrives, and its console line names the time the
+ * capture stops on its own.
+ */
+export function armDiagnosticsAuthorization(
+  target: Pick<PlatformLogger, 'error' | 'warn'> & Partial<Pick<PlatformLogger, 'debug' | 'info'>>,
+  storageRoot: string,
+  supportCaseId: string,
+  now: () => number = Date.now,
+): boolean {
+  const session = activeDiagnosticsSession(storageRoot, now());
+  if (!isSupportCaseId(supportCaseId) || session?.supportCaseId !== supportCaseId) {
+    return false;
+  }
+  reportRuntimeNotice(target, 'diagnostics-authorization-armed', {
+    finishBy: new Date(session.expiresAt).toLocaleString(),
+  });
+  return true;
+}
+
+/** States once which encoders code live video on this host: every qualified hardware encoder, then `libx264`. */
+export function reportLiveVideoEncoders(
+  target: Pick<PlatformLogger, 'info'>,
+  encoders: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+): void {
+  const names = [
+    ...LIVE_VIDEO_ENCODERS.filter(
+      (name) => Object.values(encoders[name] ?? {}).includes('qualified') && name !== 'libx264',
+    ),
+    'libx264',
+  ];
+  target.info(`[live-video-encoders] ${localize(target, 'log.liveVideoEncoders', { encoders: names.join(', ') })}`);
+}
+
+/**
+ * Narrows one offered station arbitration decision, or nothing where its own labels do not narrow.
+ *
+ * Read by both halves of the path — {@link reportStationClaim} builds the record and the file sink rebuilds
+ * it — because a record only one of them recognises is written to a console nobody is reading and dropped
+ * before it reaches a support archive.
+ */
+function sanitizeStationClaim(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  const action = allowlistedLabel(value.action, STATION_CLAIM_ACTIONS);
+  const claim = allowlistedLabel(value.claim, STATION_CLAIMS);
+  if (!action || !claim) {
+    return undefined;
+  }
+  const against = allowlistedLabel(value.to ?? value.by ?? value.against, STATION_CLAIMS);
+  return { event: 'station-claim', action, claim, ...(against === undefined ? {} : { against }) };
+}
+
+/**
+ * Narrows one offered unrouted SDK event to its kind and target, or nothing where either is not allowlisted.
+ *
+ * Read by both halves of the path — {@link reportHomeKitEvent} builds the record and the file sink rebuilds it.
+ */
+function sanitizeUnroutedEvent(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  const kind = allowlistedLabel(value.kind, UNROUTED_EVENT_KINDS);
+  const target = allowlistedLabel(value.target, UNROUTED_EVENT_TARGETS);
+  return kind && target ? { event: 'event-unrouted', kind, target } : undefined;
+}
+
+/**
+ * Records one arbitration decision over a station's own session as `homekit-log` evidence.
+ *
+ * A still that stood aside produced no picture of its own and no failure, so without this the deferral is
+ * indistinguishable afterwards from a capture that was never asked for. The record carries the claims and the
+ * decision alone: a station identity is a serial, and the camera holding it is already named by the records
+ * about that camera.
+ */
+export function reportStationClaim(
+  target: Pick<PlatformLogger, 'debug'>,
+  decision: { action: string; claim: string; to?: string; by?: string },
+): void {
+  const claim = sanitizeStationClaim(decision as unknown as Record<string, unknown>);
+  if (target.debug && claim) {
+    target.debug(JSON.stringify({ scope: 'homekit', level: 'debug', ...claim }));
+  }
+}
+
+/**
+ * Narrows one offered HomeKit adapter fact to its `homekit` record, or nothing where its route does not narrow.
+ *
+ * Read by both halves of the path: {@link reportHomeKitEvent} builds the record and the file sink rebuilds it.
+ */
+function sanitizeHomeKitEvent(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (value.event === 'event-unrouted') {
+    const unrouted = sanitizeUnroutedEvent(value);
+    return unrouted ? { scope: 'homekit', level: 'debug', ...unrouted } : undefined;
+  }
+  if (value.event === 'station-claim') {
+    const claim = sanitizeStationClaim(value);
+    return claim ? { scope: 'homekit', level: 'debug', ...claim } : undefined;
+  }
+  if (value.adapter === 'camera.streaming' && value.event === 'live-video-selected') {
+    const selection = sanitizeLiveVideoSelection(value);
+    return selection ? { scope: 'homekit', level: 'debug', ...selection } : undefined;
+  }
+  if (value.adapter === 'camera.streaming' && HOMEKIT_LIVE_REQUEST_EVENTS.has(String(value.event))) {
+    const lifecycle = sanitizeLiveSessionTrace(value);
+    return lifecycle ? { scope: 'homekit', level: 'debug', ...lifecycle } : undefined;
+  }
+  if (
+    typeof value.adapter !== 'string' ||
+    typeof value.event !== 'string' ||
+    !HOMEKIT_EVENT_ROUTES[value.adapter]?.has(value.event) ||
+    typeof value.observation !== 'string' ||
+    !HOMEKIT_OBSERVATIONS.has(value.observation)
+  ) {
+    return undefined;
+  }
+  const alias = opaqueAccessoryAlias(value.accessory);
+  return {
+    scope: 'homekit',
+    level: 'debug',
+    adapter: value.adapter,
+    event: value.event,
+    observation: value.observation,
+    ...(typeof value.announcedBy === 'string' && HOMEKIT_ANNOUNCEMENTS.has(value.announcedBy)
+      ? { announcedBy: value.announcedBy }
+      : {}),
+    ...(typeof value.code === 'number' && Number.isInteger(value.code) && value.code >= 0 && value.code <= 0xffff
+      ? { code: value.code }
+      : {}),
+    ...(alias === undefined ? {} : { accessory: alias }),
+  };
+}
+
+/**
+ * Emits one allowlisted HomeKit event trace only when host debug output is available.
+ *
+ * `aliasFor` resolves the trace's device identity to the support-case alias the conditions about that accessory
+ * already carry. The identity itself never reaches the record: an unresolved one is recorded as no accessory.
+ */
+export function reportHomeKitEvent(
+  target: Pick<PlatformLogger, 'debug'>,
+  trace: HomeKitEventTrace | UnroutedEventTrace,
+  aliasFor?: (serial: string) => string | undefined,
+): void {
+  const alias = 'serial' in trace && typeof trace.serial === 'string' ? aliasFor?.(trace.serial) : undefined;
+  const record = sanitizeHomeKitEvent({ ...trace, accessory: alias });
+  if (target.debug && record) {
+    target.debug(JSON.stringify(record));
+  }
+}
+
+/**
+ * One FFmpeg fact a caller offers for the record, in the loose terms it arrives in.
+ *
+ * Nothing here is trusted: `role`, `event` and `signal` are checked against this module's own allowlists and
+ * `stderr` is redacted line by line, because a value that reached a support archive unexamined would be one
+ * this module claimed to have gated and did not.
+ */
+interface AdaptationTrace {
+  role: string;
+  event: string;
+  /** Why this process was started, which separates a mid-session replacement from a session's first output. */
+  cause?: string;
+  /** The encoder a live video process codes with. */
+  encoder?: string;
+  /** The guided capture attempt whose encoder arguments it codes with. */
+  variant?: number;
+  code?: number;
+  signal?: string;
+  /**
+   * How many source fragments a recording wrote to this process.
+   *
+   * Separates a source that delivered nothing from an adaptation that could not read what it was given, which
+   * FFmpeg words identically as `moov atom not found`.
+   */
+  sourceFragments?: number;
+  sourceWidth?: number;
+  sourceHeight?: number;
+  stderr?: readonly string[];
+}
+
+/**
+ * Records one FFmpeg adaptation fact as the `ffmpeg-log` evidence the media support profiles declare.
+ *
+ * Nothing is written to the human console: an adaptation failure already reaches the user as the bounded
+ * HomeKit condition its camera reports, and repeating each process's own exit there would say the same thing
+ * a second time in a vocabulary only a maintainer can read.
+ */
+export function reportAdaptationNotice(target: Pick<PlatformLogger, 'debug'>, trace: AdaptationTrace): void {
+  if (!target.debug) {
+    return;
+  }
+  const level = ADAPTATION_FAILURE_EVENTS.has(trace.event) ? 'warn' : 'debug';
+  const notice = sanitizeAdaptationNotice({ ...trace, level }, level);
+  if (notice) {
+    target.debug(JSON.stringify(notice));
+  }
+}
+
+/**
+ * Reduces one FFmpeg stderr line to what a support case may keep, or nothing where nothing is left of it: a
+ * bounded printable line, never a `progress=` one, through {@link redactSensitiveText}.
+ */
+function redactAdaptationStderr(line: string): string | undefined {
+  const printable = boundedText(line, MAX_ADAPTATION_STDERR_LINE_LENGTH);
+  if (printable === undefined || printable.startsWith('progress=')) {
+    return undefined;
+  }
+  return redactSensitiveText(printable);
+}
+
+/**
+ * Replaces one run of colon-separated hexadecimal groups with `<address>`, and returns an FFmpeg clock or
+ * timecode unchanged.
+ *
+ * A run carrying a `::`, or three or more groups, is an address, unless it is exactly three or four all-decimal
+ * groups: that is the shape FFmpeg states an elapsed time and an SMPTE timecode in, and no uncompressed address
+ * form is that short, including the six groups that precede an embedded IPv4 quad. Two groups are neither, and
+ * are kept, which leaves a stream index intact.
+ */
+function redactColonSeparatedRun(run: string): string {
+  const groups = run.split(':');
+  if ((groups.length === 3 || groups.length === 4) && groups.every((group) => /^\d{1,4}$/.test(group))) {
+    return run;
+  }
+  return run.includes('::') || groups.length > 2 ? '<address>' : run;
+}
+
+/**
+ * Removes from one line everything a support case may not keep, leaving the sentence and its numbers.
+ *
+ * One rule set for every line this plugin retains, whether it came from an adaptation's stderr or from the
+ * SDK's own diagnostics, because what counts as a secret does not depend on which process said it — and two
+ * lists would drift until one of them missed a shape.
+ *
+ * Each kind is replaced by what it is rather than searched for afterwards, since a redaction that depends on
+ * recognising a secret fails on the first message shape nobody predicted.
+ *
+ * Key material is replaced BEFORE the path rules, not after. Base64 includes `/`, so a path rule applied
+ * first splits a key into sub-runs too short for any length threshold to catch — measured on random 30-byte
+ * keys, roughly one line in twenty then kept an eight-character fragment verbatim. The cost of this order is
+ * that a long path made only of letters and separators is labelled as redacted rather than as a path, which
+ * loses a label and never a secret.
+ *
+ * The P2P device id is grouped with key material rather than with identifiers: it is an input to the station's
+ * encryption, so it is a credential.
+ */
+function redactSensitiveText(line: string): string | undefined {
+  const redacted = line
+    .replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<url>')
+    .replace(/\[[0-9a-f:]{2,}\]/gi, '<address>')
+    .replace(/\b[A-Z0-9]{7}-[0-9]{6}-[A-Z0-9]{5}\b/g, '<redacted>')
+    .replace(/[A-Za-z0-9+/]{20,}={0,2}/g, '<redacted>')
+    .replace(/[A-Za-z]:\\[^\s]*/g, '<path>')
+    .replace(/(?:\/[\w.@-]+){2,}\/?/g, '<path>')
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '<address>')
+    .replace(
+      /\b[0-9a-f]{1,4}(?:(?::{1,2}[0-9a-f]{1,4})+(?:::)?|::)|(?<![\w:])::[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*/gi,
+      redactColonSeparatedRun,
+    )
+    .replace(/\bT\d[0-9A-Z]{9,}\b/g, '<serial>')
+    .trim();
+  return redacted === '' ? undefined : redacted;
+}
+
+/** Narrows one offered FFmpeg record against the adaptation allowlists, dropping it whole where it fails. */
+function sanitizeAdaptationNotice(value: Record<string, unknown>, level: string): Record<string, unknown> | undefined {
+  if (typeof value.role !== 'string' || !ADAPTATION_ROLES.has(value.role)) {
+    return undefined;
+  }
+  if (typeof value.event !== 'string' || !ADAPTATION_EVENTS.has(value.event)) {
+    return undefined;
+  }
+  const code = boundedInteger(value.code, 255);
+  const signal = typeof value.signal === 'string' && ADAPTATION_SIGNALS.has(value.signal) ? value.signal : undefined;
+  const stderr = (Array.isArray(value.stderr) ? value.stderr : [])
+    .filter((line): line is string => typeof line === 'string')
+    .map(redactAdaptationStderr)
+    .filter((line): line is string => line !== undefined)
+    .slice(-MAX_ADAPTATION_STDERR_LINES);
+  const sourceFragments = nonNegativeInteger(value.sourceFragments);
+  const sourceWidth = nonNegativeInteger(value.sourceWidth);
+  const sourceHeight = nonNegativeInteger(value.sourceHeight);
+  const cause = allowlistedLabel(value.cause, ADAPTATION_CAUSES);
+  const encoder = allowlistedLabel(value.encoder, LIVE_VIDEO_ENCODERS);
+  const variant = boundedInteger(value.variant, LIVE_ENCODE_ATTEMPTS - 1);
+  const source = allowlistedLabel(value.source, LIVE_VIDEO_SOURCES);
+  return {
+    scope: 'ffmpeg',
+    level,
+    role: value.role,
+    event: value.event,
+    ...(cause === undefined ? {} : { cause }),
+    ...(encoder === undefined ? {} : { encoder }),
+    ...(variant === undefined ? {} : { variant }),
+    ...(source === undefined ? {} : { source }),
+    ...(sourceWidth === undefined || sourceHeight === undefined ? {} : { sourceWidth, sourceHeight }),
+    ...(code === undefined ? {} : { code }),
+    ...(signal === undefined ? {} : { signal }),
+    ...(sourceFragments === undefined ? {} : { sourceFragments }),
+    ...(stderr.length ? { stderr } : {}),
+  };
+}
+
+/**
+ * One settings-page live preview run as it is offered for the record: the selection it was coded at, the encoder
+ * that coded it, the source codec, the kilobits a second the encoder wrote, and how it ended.
+ */
+interface LivePreviewTrace {
+  selection: { profile: string; level: string; width: number; height: number; fps: number; maxBitRate: number };
+  encoder?: string;
+  source?: string;
+  kbps?: number;
+  outcome: string;
+  /** The iPhone ask and the live video settings the run was coded with, tried without being saved. */
+  ask: string;
+  smallVideoPackets: boolean;
+  liveVideoPassthrough: boolean;
+  hardwareVideoEncoder: boolean;
+  ignoreHomeBitRate: boolean;
+  /** The support-case alias of the camera, which the conditions about that accessory already carry. */
+  accessory?: string;
+}
+
+/**
+ * Records how one settings-page live preview ended, as a `live-preview` record kept whether or not a support
+ * window is open: it is not one of the {@link VERBOSE_SCOPES}, because it holds only allowlisted labels and
+ * bounded numbers, one per run a user started.
+ */
+export function reportLivePreview(target: Pick<PlatformLogger, 'debug'>, trace: LivePreviewTrace): void {
+  const { level, ...selection } = trace.selection;
+  const preview = sanitizeLivePreview({ ...trace, ...selection, levelName: level });
+  if (preview) target.debug?.(JSON.stringify({ scope: 'live-preview', level: 'info', ...preview }));
+}
+
+/**
+ * Narrows one offered live preview run, or nothing where its selection or outcome does not narrow.
+ *
+ * Read by both halves of the path, {@link reportLivePreview} and the file sink, so a record only one of them
+ * recognised could not reach a support archive.
+ */
+function sanitizeLivePreview(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  const selection = sanitizePreviewSelection(value);
+  const outcome = allowlistedLabel(value.outcome, PREVIEW_OUTCOMES);
+  if (!selection || !outcome) return undefined;
+  const encoder = allowlistedLabel(value.encoder, LIVE_VIDEO_ENCODERS);
+  const source = allowlistedLabel(value.source, LIVE_VIDEO_SOURCES);
+  const kbps = boundedInteger(value.kbps, MAX_LIVE_VIDEO_BIT_RATE);
+  const accessory = opaqueAccessoryAlias(value.accessory);
+  const ask = allowlistedLabel(value.ask, PREVIEW_ASKS);
+  const settings = PREVIEW_SETTINGS.filter((setting) => typeof value[setting] === 'boolean');
+  return {
+    ...selection,
+    ...(encoder === undefined ? {} : { encoder }),
+    ...(source === undefined ? {} : { source }),
+    ...(kbps === undefined ? {} : { kbps }),
+    ...(ask === undefined ? {} : { ask }),
+    ...Object.fromEntries(settings.map((setting) => [setting, value[setting]])),
+    outcome,
+    ...(accessory === undefined ? {} : { accessory }),
+  };
+}
+
+/** A live preview's selection as flat bounded fields, or nothing where any of them falls outside its allowlist. */
+function sanitizePreviewSelection(candidate: Record<string, unknown>): Record<string, unknown> | undefined {
+  const fields = {
+    profile: allowlistedLabel(candidate.profile, HOMEKIT_LIVE_VIDEO_PROFILES),
+    levelName: allowlistedLabel(candidate.levelName, HOMEKIT_LIVE_VIDEO_LEVELS),
+    width: boundedInteger(candidate.width, MAX_LIVE_VIDEO_DIMENSION, MIN_LIVE_VIDEO_DIMENSION),
+    height: boundedInteger(candidate.height, MAX_LIVE_VIDEO_DIMENSION, MIN_LIVE_VIDEO_DIMENSION),
+    fps: boundedInteger(candidate.fps, MAX_LIVE_VIDEO_FRAME_RATE, MIN_LIVE_VIDEO_FRAME_RATE),
+    maxBitRate: boundedInteger(candidate.maxBitRate, MAX_LIVE_VIDEO_BIT_RATE),
+  };
+  return Object.values(fields).includes(undefined) ? undefined : fields;
+}
+
+function sanitizeLiveSessionTrace(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (value.adapter !== 'camera.streaming') {
+    return undefined;
+  }
+  const alias = opaqueAccessoryAlias(value.accessory);
+  const accessory = alias === undefined ? {} : { accessory: alias };
+  if (value.event === 'live-session-released') {
+    const release = allowlistedLabel(value.release, LIVE_SESSION_RELEASES);
+    if (!release) {
+      return undefined;
+    }
+    const reports = nonNegativeInteger(value.reports);
+    const sinceLastReportMs = boundedInteger(value.sinceLastReportMs, MAX_STARTUP_WINDOW_MS);
+    return {
+      adapter: value.adapter,
+      event: value.event,
+      release,
+      ...(reports === undefined ? {} : { reports }),
+      ...(sinceLastReportMs === undefined ? {} : { sinceLastReportMs }),
+      ...(value.stage === 'sdk-source-acquisition' ? { stage: value.stage } : {}),
+      ...accessory,
+    };
+  }
+  if (value.event === 'live-session-streaming' || value.event === 'live-talkback-started') {
+    return { adapter: value.adapter, event: value.event, ...accessory };
+  }
+  if (value.event === 'live-request-refused') {
+    return typeof value.reason === 'string' && REFUSAL_REASONS.has(value.reason)
+      ? { adapter: value.adapter, event: value.event, reason: value.reason, ...accessory }
+      : undefined;
+  }
+  if (value.event === 'live-request-unaccounted') {
+    return typeof value.afterMs === 'number' && Number.isFinite(value.afterMs)
+      ? { adapter: value.adapter, event: value.event, afterMs: Math.round(value.afterMs), ...accessory }
+      : undefined;
+  }
+  if (
+    value.event !== 'live-session-failed' ||
+    value.outcome !== 'failed' ||
+    typeof value.reason !== 'string' ||
+    !REASONS.has(value.reason) ||
+    !allowlistedLabel(value.stage, HOMEKIT_LIVE_SESSION_STAGES)
+  ) {
+    return undefined;
+  }
+  const sourceStage = allowlistedLabel(value.sourceStage, SDK_LIVE_START_STAGES);
+  const sourceReason = allowlistedLabel(value.sourceReason, SDK_LIVE_START_REASONS);
+  return {
+    adapter: value.adapter,
+    event: value.event,
+    outcome: value.outcome,
+    reason: value.reason,
+    stage: value.stage,
+    ...(sourceStage === undefined ? {} : { sourceStage }),
+    ...(sourceReason === undefined ? {} : { sourceReason }),
+    ...accessory,
+  };
+}
+
+function sanitizeLiveVideoSelection(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  const operation = allowlistedLabel(value.operation, HOMEKIT_LIVE_VIDEO_OPERATIONS);
+  const profile = allowlistedLabel(value.profile, HOMEKIT_LIVE_VIDEO_PROFILES);
+  const codecLevel = allowlistedLabel(
+    typeof value.levelName === 'string' ? value.levelName : value.level,
+    HOMEKIT_LIVE_VIDEO_LEVELS,
+  );
+  const width = boundedInteger(value.width, MAX_LIVE_VIDEO_DIMENSION, MIN_LIVE_VIDEO_DIMENSION);
+  const height = boundedInteger(value.height, MAX_LIVE_VIDEO_DIMENSION, MIN_LIVE_VIDEO_DIMENSION);
+  const fps = boundedInteger(value.fps, MAX_LIVE_VIDEO_FRAME_RATE, MIN_LIVE_VIDEO_FRAME_RATE);
+  const mtu = boundedInteger(value.mtu, MAX_LIVE_VIDEO_MTU, MIN_LIVE_VIDEO_MTU);
+  const maxBitRate = boundedInteger(value.maxBitRate, MAX_LIVE_VIDEO_BIT_RATE, 0);
+  const addressVersion = allowlistedLabel(value.addressVersion, HOMEKIT_LIVE_ADDRESS_VERSIONS);
+  const camera = boundedInteger(value.camera, MAX_ACCESSORY_ALIASES);
+  const variant = boundedInteger(value.variant, LIVE_ENCODE_ATTEMPTS - 1);
+  if (
+    !operation ||
+    !profile ||
+    !codecLevel ||
+    width === undefined ||
+    height === undefined ||
+    fps === undefined ||
+    mtu === undefined ||
+    !addressVersion
+  ) {
+    return undefined;
+  }
+  const alias = opaqueAccessoryAlias(value.accessory);
+  return {
+    adapter: 'camera.streaming',
+    event: 'live-video-selected',
+    operation,
+    profile,
+    levelName: codecLevel,
+    width,
+    height,
+    fps,
+    mtu,
+    ...(maxBitRate === undefined ? {} : { maxBitRate }),
+    addressVersion,
+    ...(camera === undefined ? {} : { camera }),
+    ...(variant === undefined ? {} : { variant }),
+    ...(alias === undefined ? {} : { accessory: alias }),
+  };
+}
+
+/** Emits bounded normal-output condition transitions without stable device or account identity. */
+export class DiagnosticConditions {
+  private readonly active = new Map<string, { fingerprint: string; condition: ActiveCondition }>();
+  private readonly aliases = new Map<string, string>();
+  private runtimeState?: RuntimeState;
+
+  /**
+   * @param nameFor Resolves a device serial to the label the owner sees, for the CONSOLE line only.
+   *   The console line goes to the owner's own log, where Homebridge prints accessory names on every other
+   *   line, and a count is not something an owner can act on. The retained record keeps carrying no identity.
+   *   A device with no accessory has no display name, so a caller resolving one for a condition about an
+   *   unrepresented device supplies its snapshot label instead.
+   */
+  constructor(
+    private readonly log: PlatformLogger,
+    private readonly nameFor?: (serial: string) => string | undefined,
+  ) {}
+
+  reportRuntimeState(state: RuntimeState): void {
+    if (state === this.runtimeState) {
+      return;
+    }
+    this.runtimeState = state;
+    const current = RUNTIME_CONDITIONS[state as keyof typeof RUNTIME_CONDITIONS];
+    for (const condition of Object.values(RUNTIME_CONDITIONS)) {
+      if (condition !== current) {
+        this.write(
+          condition.code,
+          false,
+          state === 'ready' ? 'recovered' : state,
+          condition.summaryKey,
+          condition.actionKey,
+          'info',
+        );
+      }
+    }
+    if (current) {
+      this.write(current.code, true, state, current.summaryKey, current.actionKey, current.level);
+    } else if (state === 'ready' || state === 'stopped') {
+      const messageKey = 'log.runtime.state';
+      this.log.info(`[runtime-${state}] ${localize(this.log, messageKey, { state })}`);
+      this.log.debug?.(JSON.stringify({ scope: 'runtime', level: 'info', event: state, messageKey }));
+    }
+  }
+
+  /**
+   * Records one HomeKit condition against the accessories it affects.
+   *
+   * The retained record carries aliases and no identity. The owner's own console line carries each name paired
+   * with its alias, which is what makes an alias in a support case resolvable by the owner and by nobody else.
+   */
+  reportHomeKit(condition: HomeKitCondition, affectedDeviceIds: readonly string[]): void {
+    const definition = Object.hasOwn(HOMEKIT_CONDITIONS, condition.code)
+      ? HOMEKIT_CONDITIONS[condition.code as HomeKitConditionCode]
+      : undefined;
+    if (
+      definition === undefined ||
+      !REASONS.has(condition.reason) ||
+      (condition.capability !== undefined && !CAPABILITIES.has(condition.capability)) ||
+      (condition.member !== undefined && !MEMBERS.has(condition.member))
+    ) {
+      return;
+    }
+    const uniqueDeviceIds = condition.active ? [...new Set(affectedDeviceIds)].sort() : [];
+    const accessoryAliases = uniqueDeviceIds
+      .map((identity) => this.aliasFor(identity))
+      .filter((alias): alias is string => alias !== undefined)
+      .sort();
+    const { level, actionKey } = homeKitConditionPresentation(
+      condition.code as HomeKitConditionCode,
+      condition.active,
+      condition.reason,
+    );
+    this.write(
+      condition.code,
+      condition.active,
+      condition.reason,
+      definition[0],
+      actionKey,
+      level,
+      {
+        ...(condition.capability === undefined ? {} : { capability: condition.capability }),
+        ...(condition.member === undefined ? {} : { member: condition.member }),
+        affectedAccessoryCount: uniqueDeviceIds.length,
+        ...(accessoryAliases.length === 0 ? {} : { accessoryAliases }),
+        ...(accessoryAliases.length === uniqueDeviceIds.length ? {} : { aliasesTruncated: true }),
+      },
+      `${condition.code}:${condition.capability ?? ''}:${condition.member ?? ''}`,
+      uniqueDeviceIds
+        .map((serial) => {
+          const name = this.nameFor?.(serial);
+          const alias = this.aliases.get(serial);
+          return name === undefined ? undefined : alias === undefined ? name : `${name} (${alias})`;
+        })
+        .filter((named): named is string => named !== undefined),
+      uniqueDeviceIds,
+    );
+  }
+
+  /** Every condition active now, each held from the transition that raised it to the one that clears it. */
+  current(): ActiveCondition[] {
+    return [...this.active.values()].map(({ condition }) => condition);
+  }
+
+  /**
+   * The support-case alias for one device identity, minted on first use.
+   *
+   * The one place an alias is decided, so every record about a device — a condition, a media trace — carries
+   * the same one, and the owner's console line is what resolves it to a name.
+   */
+  aliasFor(identity: string): string | undefined {
+    let alias = this.aliases.get(identity);
+    if (!alias && this.aliases.size < MAX_ACCESSORY_ALIASES) {
+      alias = `accessory-${randomUUID()}`;
+      this.aliases.set(identity, alias);
+    }
+    return alias;
+  }
+
+  private write(
+    code: string,
+    active: boolean,
+    reason: string,
+    summaryKey: string,
+    actionKey: string,
+    level: 'info' | 'warn' | 'error',
+    fields: Readonly<Record<string, unknown>> = {},
+    conditionKey = code,
+    /** Accessory names for the console line only — never retained, see {@link DiagnosticConditions}. */
+    names?: readonly string[],
+    serials: readonly string[] = [],
+  ): void {
+    const fingerprint = JSON.stringify({ active, reason, ...fields, serials });
+    if (active) {
+      if (this.active.get(conditionKey)?.fingerprint === fingerprint) {
+        return;
+      }
+      this.active.set(conditionKey, {
+        fingerprint,
+        condition: { code, summaryKey, actionKey, ...(serials.length === 0 ? {} : { serials: [...serials] }) },
+      });
+    } else if (!this.active.delete(conditionKey)) {
+      return;
+    }
+    const affectedAccessoryCount =
+      typeof fields.affectedAccessoryCount === 'number' ? fields.affectedAccessoryCount : undefined;
+    const summary = localize(this.log, summaryKey);
+    const action = localize(this.log, actionKey);
+    const affected = names?.length
+      ? localize(this.log, 'log.condition.affectedNamed', { names: names.join(', ') })
+      : affectedAccessoryCount
+        ? localize(
+            this.log,
+            affectedAccessoryCount === 1 ? 'log.condition.affectedOne' : 'log.condition.affectedMany',
+            { count: affectedAccessoryCount },
+          )
+        : '';
+    const message = localize(this.log, active ? 'log.condition.active' : 'log.condition.recovered', {
+      action,
+      affected,
+      summary,
+    });
+    this.log[level](`[${code}] ${message}`);
+    this.log.debug?.(
+      JSON.stringify({
+        scope: 'diagnostic-condition',
+        level,
+        code,
+        active,
+        reason,
+        summaryKey,
+        actionKey,
+        ...fields,
+      }),
+    );
+  }
+}

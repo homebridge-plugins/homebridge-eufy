@@ -1,0 +1,502 @@
+(function dashboardModule(global) {
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  const EUFY_MODES = [
+    { value: 'away', label: 'Away' },
+    { value: 'home', label: 'Home' },
+    { value: 'schedule', label: 'Schedule' },
+    { value: 'custom1', label: 'Custom 1' },
+    { value: 'custom2', label: 'Custom 2' },
+    { value: 'custom3', label: 'Custom 3' },
+    { value: 'off', label: 'Off' },
+    { value: 'geo', label: 'Geofencing' },
+    { value: 'disarmed', label: 'Disarmed' },
+  ];
+  /** What each HomeKit state means where the household assigned nothing, as the adapter resolves it. */
+  const DEFAULT_ARMING_MODES = { home: 'home', away: 'away', off: 'disarmed' };
+  const ARMING_SLOTS = [
+    { slot: 'home', label: 'armingSlotHome' },
+    { slot: 'away', label: 'armingSlotAway' },
+    { slot: 'night', label: 'armingSlotNight' },
+    { slot: 'off', label: 'armingSlotOff' },
+  ];
+
+  /**
+   * The guard-mode map: four states HomeKit names against the nine a station reports, one pairing per row.
+   *
+   * Folded shut, because the four defaults are what nearly every household keeps and the panel has a camera's
+   * worth of settings above it. The summary carries the whole map as text, so the answer is readable without
+   * opening anything, and a household that assigned a state of its own finds it already open.
+   *
+   * A row is the whole control — the state names itself and the select beside it says what it means. An
+   * unassigned state shows a dash, which is what keeps Night out of HomeKit until it is given a mode.
+   *
+   * It is withheld while the security system it maps is turned off, and the stored map is kept for when it is back.
+   */
+  function armingModeControl(device, assigned, messages, securitySystem) {
+    const summary = ARMING_SLOTS.map(
+      ({ slot, label }) => `${messages[label]} → ${EUFY_MODES.find((mode) => mode.value === assigned[slot])?.label ?? '—'}`,
+    ).join(' · ');
+    const rows = ARMING_SLOTS.map(({ slot, label }) => {
+      const value = assigned[slot] ?? '';
+      const id = `arming-${escapeHtml(device.serial)}-${slot}`;
+      const options = EUFY_MODES.map(
+        (mode) =>
+          `<option value="${mode.value}"${value === mode.value ? ' selected' : ''}>${escapeHtml(mode.label)}</option>`,
+      ).join('');
+      return `<tr><th scope="row"><label for="${id}">${escapeHtml(messages[label])}</label></th><td><select id="${id}" data-preference="armingModes" data-slot="${slot}" data-serial="${escapeHtml(device.serial)}" data-original="${escapeHtml(value)}"><option value=""${value === '' ? ' selected' : ''}>—</option>${options}</select></td></tr>`;
+    }).join('');
+    const assignedItself = ARMING_SLOTS.some(({ slot }) => assigned[slot] !== DEFAULT_ARMING_MODES[slot]);
+    return `<details class="arming-setting" data-setting${assignedItself ? ' open' : ''}${device.represented && securitySystem ? '' : ' hidden'} data-requires-representation data-requires-security-system><summary><span class="setting-label">${escapeHtml(messages.preferenceArmingModes)}</span><span class="arming-summary">${escapeHtml(summary)}</span></summary><table class="arming-table"><thead><tr><th scope="col">HomeKit</th><th scope="col">eufy</th></tr></thead><tbody>${rows}</tbody></table><p class="snapshot-help">${escapeHtml(messages.armingModesHelp)}</p></details>`;
+  }
+
+  function preferenceControl(device, key, preference, messages) {
+    const labels = {
+      represented: messages.preferenceRepresented,
+      audio: messages.preferenceAudio,
+      securitySystem: messages.preferenceSecuritySystem,
+      snapshotMode: messages.preferenceSnapshotMode,
+    };
+    if (key === 'armingModes') {
+      return armingModeControl(device, preference.armingModes, messages, preference.securitySystem);
+    }
+    const represented = preference.represented;
+    const dependent = key === 'represented' ? '' : ` data-requires-representation${represented ? '' : ' hidden'}`;
+    if (key === 'snapshotMode') {
+      const descriptions = {
+        Cloud: messages.snapshotModeCloudDescription,
+        Live: messages.snapshotModeLiveDescription,
+        Refresh: messages.snapshotModeRefreshDescription,
+      };
+      return `<div class="snapshot-setting" data-setting${dependent}><span class="setting-label">${escapeHtml(labels[key])}</span><div class="snapshot-segments" role="radiogroup" aria-label="${escapeHtml(labels[key])}">${['Cloud', 'Live', 'Refresh'].map((mode) => `<label class="snapshot-segment"><input type="radio" name="snapshot-${escapeHtml(device.serial)}" value="${mode}" data-preference="${key}" data-serial="${escapeHtml(device.serial)}" data-original="${escapeHtml(preference.snapshotMode)}" data-description="${escapeHtml(descriptions[mode])}"${preference.snapshotMode === mode ? ' checked' : ''}><span>${mode}</span></label>`).join('')}</div><p class="snapshot-description" data-snapshot-description>${escapeHtml(descriptions[preference.snapshotMode])}</p><p class="snapshot-help">${escapeHtml(messages.snapshotModeHelp)}</p></div>`;
+    }
+    return `<label class="toggle" data-setting${dependent}><input type="checkbox" data-preference="${key}" data-serial="${escapeHtml(device.serial)}" data-original="${String(preference[key])}"${preference[key] ? ' checked' : ''}><span>${escapeHtml(labels[key])}</span></label>`;
+  }
+
+  function markPendingPreference(control, key, value) {
+    if (!control?.classList || control.dataset.original === undefined) return;
+    const current = key === 'snapshotMode' || key === 'armingModes' ? String(value) : String(Boolean(value));
+    const setting = control.closest('[data-setting]');
+    const changed = current !== control.dataset.original;
+    if (key === 'snapshotMode') {
+      setting.querySelectorAll('[data-preference="snapshotMode"]').forEach((entry) => {
+        entry.classList.remove('preference-control-changed');
+      });
+    }
+    control.classList.toggle('preference-control-changed', changed);
+    setting?.classList.toggle('preference-changed', changed);
+    const tile = control.closest('.device-tile');
+    tile?.classList.toggle('device-tile-changed', Boolean(tile.querySelector('.preference-control-changed')));
+  }
+
+  /**
+   * The battery badge a device gets, where it reports a level, and nothing where it does not.
+   *
+   * The icon carries the level and the exact percentage goes to the label: a tile is read at a glance, and a
+   * number on every tile would be read deliberately or not at all. A device on mains power reports no level, and
+   * neither does one nothing is observing, so both are left without a badge rather than shown an empty one. The
+   * shipped set draws eight icons, `battery_0` to `battery_6` then `battery_full`, one per twelve and a half percent.
+   */
+  function batteryBadge(device, messages) {
+    if (typeof device.battery !== 'number') {
+      return undefined;
+    }
+    const step = Math.min(7, Math.max(0, Math.floor(device.battery / 12.5)));
+    const icon = step === 7 ? 'battery_full' : `battery_${step}`;
+    const label = (messages.deviceBattery ?? '').replace('{level}', String(Math.round(device.battery)));
+    return label ? { icon, label, variant: 'battery' } : undefined;
+  }
+
+  /**
+   * The one thing worth saying about a device in place of its model, or nothing.
+   *
+   * Ordered by what displaces what: a device nothing can reach says nothing else useful about itself, a camera
+   * reports itself switched off only while it is reachable, a device withheld from HomeKit is the user's own
+   * decision rather than a fault, and a camera that reports itself on says so last, because that is the state a
+   * user assumes until one of the others contradicts it. A device that reports none of them keeps its model,
+   * which is what identifies it when there is nothing to report, and so does one whose catalog carries no
+   * wording for the status it has.
+   */
+  function deviceStatus(device, rank, messages) {
+    const [key, tone] =
+      device.availability === 'unavailable'
+        ? ['deviceStatusUnreachable', 'fault']
+        : device.enabled === false
+          ? ['deviceStatusSwitchedOff', 'alert']
+          : rank === 1
+            ? ['deviceStatusHidden', 'quiet']
+            : device.enabled === true
+              ? ['deviceStatusOnline', 'live']
+              : [];
+    const label = key ? messages[key] : undefined;
+    return label ? { label, tone } : undefined;
+  }
+
+  function renderDevices(devices, config, messages, deviceGroups) {
+    const preferences = config.entityPreferences ?? {};
+    deviceGroups.innerHTML = ['security', 'life', 'clean']
+      .map((category) => {
+        const categoryDevices = devices
+          .filter((device) => device.category === category)
+          .map((device) => ({
+            device,
+            rank: device.diagnosticOnly
+              ? 2
+              : preferences[device.serial]?.represented === false
+                ? 1
+                : 0,
+          }))
+          .sort(
+            (left, right) =>
+              left.rank - right.rank ||
+              left.device.deviceClass.localeCompare(right.device.deviceClass) ||
+              left.device.modelName.localeCompare(right.device.modelName) ||
+              left.device.name.localeCompare(right.device.name),
+          );
+        if (categoryDevices.length === 0) return '';
+        const tiles = categoryDevices
+          .map(({ device, rank }) => {
+            const badges = [
+              device.diagnosticOnly ? { icon: 'troubleshoot', label: messages.diagnosticOnly } : undefined,
+              batteryBadge(device, messages),
+            ].filter(Boolean);
+            const artwork = device.artwork
+              ? `<img src="${escapeHtml(device.artwork)}" alt="" loading="lazy" data-device-artwork>`
+              : '';
+            const status = deviceStatus(device, rank, messages);
+            const secondLine = status
+              ? `<p class="device-status device-status-${status.tone}"><span class="device-status-dot" aria-hidden="true"></span><span class="device-status-label">${escapeHtml(status.label)}</span></p>`
+              : `<p>${escapeHtml(device.modelName)}</p>`;
+            const tile = `
+              <div class="device-art" aria-hidden="true"><img class="device-class-icon" src="assets/icons/inventory.svg" alt=""><span>${escapeHtml(device.deviceClass)}</span>${artwork}</div>
+              <div class="device-copy"><h3>${escapeHtml(device.name)}</h3>${secondLine}</div>
+              <div class="device-badges">${badges.map(({ icon, label, variant }) => `<span class="device-badge device-badge-${variant ?? icon}" role="img" tabindex="0" aria-label="${escapeHtml(label)}" data-tooltip="${escapeHtml(label)}"><img src="assets/icons/${icon}.svg" alt=""></span>`).join('')}</div>`;
+            const disabledClass = rank === 1 ? ' device-tile-disabled' : '';
+            return `<article class="device-tile${disabledClass}" data-category="${category}" data-rank="${rank}" data-serial="${escapeHtml(device.serial)}" data-device-class="${escapeHtml(device.deviceClass)}"><button class="device-summary device-open-control" type="button" aria-haspopup="dialog">${tile}</button></article>`;
+          })
+          .join('');
+        const categoryKey = `category${category[0].toUpperCase()}${category.slice(1)}`;
+        return `<section class="device-group"><h2>${escapeHtml(messages[categoryKey])}</h2><div class="device-grid">${tiles}</div></section>`;
+      })
+      .join('');
+  }
+
+  /**
+   * Shows the notice that this page is answering from a superseded build, and only where one is proven.
+   *
+   * The version is named because it is the one fact a reader cannot get anywhere else on the page. The action is
+   * offered only where ending the older build would replace it; elsewhere the copy asks for the restart instead,
+   * so nobody is given a button that cannot work.
+   */
+  /*
+   * What each adapter becomes in HomeKit, in words. Keyed by the adapter the projection names, because the name a
+   * user reads belongs here rather than in the code that decides which adapters apply.
+   */
+  const HOMEKIT_SERVICE_LABELS = {
+    'arming.security-system': 'serviceSecuritySystem',
+    'camera.streaming': 'serviceCamera',
+    'camera.controls': 'serviceCameraSwitches',
+    'contact.sensor': 'serviceContact',
+    'doorbell.press': 'serviceDoorbell',
+    'lock.mechanism': 'serviceLock',
+    'motion.sensor': 'serviceMotion',
+    'siren.test': 'serviceSiren',
+    'smart-light.lightbulb': 'serviceLight',
+  };
+
+  /**
+   * Names what the device becomes in HomeKit, above the switch that decides whether it becomes it at all.
+   *
+   * "Represent in HomeKit" says that something appears and never what, which is least obvious exactly where it
+   * matters most: a station appears as an alarm, and a camera as several things at once. An adapter this build has
+   * no words for is left out rather than shown as its key, and a device that names none — an answer from a build
+   * that predates this line — costs its tile the line rather than the whole dashboard.
+   */
+  function representationLine(device, messages) {
+    const named = (device.representation ?? []).map((key) => messages[HOMEKIT_SERVICE_LABELS[key]]).filter(Boolean);
+    if (named.length === 0) return '';
+    return `<p class="preference-representation">${escapeHtml(`${messages.representationLabel} ${named.join(', ')}`)}</p>`;
+  }
+
+  function renderUpdatePending(result, messages, elements) {
+    if (!elements.updatePending) {
+      return;
+    }
+    const pending = result.runningVersion !== undefined;
+    elements.updatePending.hidden = !pending;
+    if (!pending) {
+      return;
+    }
+    elements.updatePendingSummary.textContent = result.restartable
+      ? messages.updatePendingSummary
+      : messages.updatePendingManual;
+    elements.updatePendingVersion.textContent = `${messages.updatePendingVersionLabel} ${result.runningVersion}`;
+    elements.updateRestart.hidden = !result.restartable;
+  }
+
+  /*
+   * The states a diagnostic run can shed light on. Sign-in, another process holding the session, a pending
+   * restart, a plugin that stopped on an error, a page that could not load, and a connection that recovers on its
+   * own each have their own remedy stated on the page, so sending those to the wizard would be a detour.
+   */
+  const DIAGNOSABLE = new Set(['incomplete', 'missing', 'stale']);
+
+  /** The diagnostics area a condition's capture belongs to, by its code. A code no entry matches is `other`. */
+  const CONDITION_AREAS = [
+    [/^camera-recording/, 'hksv-recording'],
+    [/^camera-(?:live|media|streaming|snapshot|talkback)/, 'live-media'],
+    [/lock|light|arming|siren|contact|camera-control/, 'control-state'],
+    [/transport-degraded/, 'startup-authentication'],
+  ];
+
+  /**
+   * The problem the diagnostics action points at, or nothing: a state a run explains, then the first active condition
+   * this page has words for, then the first device nothing can reach. Each names the diagnostics area a run on it is
+   * about. A condition is worded under its log keys; the ones left unworded are those the page answers on its own,
+   * such as a sign-in or another owner, and the devices no action makes supported.
+   */
+  function attention(result, state, messages) {
+    if (DIAGNOSABLE.has(result.state)) return { ...state, profile: 'startup-authentication' };
+    const condition = (result.conditions ?? []).find(
+      ({ summaryKey, actionKey }) => messages[summaryKey] && messages[actionKey],
+    );
+    if (condition) {
+      return {
+        title: messages[condition.summaryKey],
+        summary: messages[condition.actionKey],
+        profile: CONDITION_AREAS.find(([code]) => code.test(condition.code))?.[1] ?? 'other',
+      };
+    }
+    const device = result.devices.find((candidate) => candidate.availability === 'unavailable');
+    return (
+      device && {
+        title: (messages.attentionUnreachableTitle ?? '').replace('{device}', device.name),
+        summary: messages.attentionUnreachableSummary ?? '',
+        profile: 'device-representation',
+      }
+    );
+  }
+
+  /** Draws the dashboard, and answers the problem it shows the diagnostics action, if any. */
+  function render(result, config, messages, elements) {
+    const suffix = result.state
+      .split('-')
+      .map((part) => part[0].toUpperCase() + part.slice(1))
+      .join('');
+    const title = messages[`dashboard${suffix}Title`] ?? messages.dashboardIncompleteTitle;
+    const summary = messages[`dashboard${suffix}Summary`] ?? messages.dashboardIncompleteSummary;
+    elements.title.textContent = title;
+    elements.summary.textContent = summary;
+    elements.dashboard.dataset.state = result.state;
+    elements.dashboard.hidden = false;
+    elements.masthead.hidden = true;
+    renderUpdatePending(result, messages, elements);
+    renderDevices(result.devices, config, messages, elements.groups);
+    elements.setup.hidden = true;
+    elements.authenticate.hidden = false;
+    if (result.devices.length > 0) {
+      elements.pageTitle.textContent = messages.dashboardPageTitle;
+    } else if (result.state === 'authentication-required') {
+      elements.setup.hidden = false;
+    }
+    return attention(result, { title, summary }, messages);
+  }
+
+  function bindPreferences(elements, getConfig, saveConfig, getMessages, openDevice) {
+    elements.groups.addEventListener('click', (event) => {
+      const opener = event.target.closest?.('.device-open-control');
+      if (!opener) return;
+      openDevice?.(opener.closest('.device-tile').dataset.serial, opener);
+    });
+    elements.groups.addEventListener(
+      'load',
+      (event) => {
+        if (event.target?.dataset?.deviceArtwork !== undefined) {
+          event.target.parentElement.dataset.artworkLoaded = '';
+        }
+      },
+      true,
+    );
+    elements.groups.addEventListener(
+      'error',
+      (event) => {
+        if (event.target?.dataset?.deviceArtwork !== undefined) event.target.hidden = true;
+      },
+      true,
+    );
+    const onPreferenceChange = async (event) => {
+      const control = event.target;
+      const serial = control?.dataset?.serial;
+      const key = control?.dataset?.preference;
+      const existing = getConfig();
+      if (!existing || !serial || !key) return;
+      const defaults = { represented: true, audio: true, securitySystem: true, snapshotMode: 'Refresh' };
+      if (key === 'armingModes') {
+        await saveArmingMode(control, serial, existing, saveConfig, getMessages, elements);
+        return;
+      }
+      const value = key === 'snapshotMode' ? control.value : control.checked;
+      markPendingPreference(control, key, value);
+      if (key === 'snapshotMode') {
+        control.closest('.snapshot-setting')?.querySelector('[data-snapshot-description]').replaceChildren(
+          control.dataset.description,
+        );
+      }
+      const entityPreferences = { ...(existing.entityPreferences ?? {}) };
+      const preference = { ...(entityPreferences[serial] ?? {}) };
+      if (value === defaults[key]) delete preference[key];
+      else preference[key] = value;
+      if (Object.keys(preference).length === 0) delete entityPreferences[serial];
+      else entityPreferences[serial] = preference;
+      try {
+        await saveConfig({ ...existing, entityPreferences });
+        if (key === 'represented') {
+          // The control and the tile it speaks for are in two different places now, so the tile is found by serial.
+          const tile = [...elements.groups.querySelectorAll('.device-tile')].find(
+            (candidate) => candidate.dataset.serial === serial,
+          );
+          tile?.classList.toggle('device-tile-disabled', !value);
+          const grid = control.closest('.preference-grid');
+          const securityOff = grid?.querySelector('[data-preference="securitySystem"]')?.checked === false;
+          grid?.querySelectorAll('[data-requires-representation]').forEach((setting) => {
+            setting.hidden = !value || (securityOff && setting.hasAttribute('data-requires-security-system'));
+          });
+        }
+        if (key === 'securitySystem') {
+          control
+            .closest('.preference-grid')
+            ?.querySelectorAll('[data-requires-security-system]')
+            .forEach((setting) => {
+              setting.hidden = !value;
+            });
+        }
+      } catch {
+        elements.summary.textContent = getMessages().preferenceSaveFailed;
+      }
+    };
+    for (const container of elements.preferenceContainers ?? [elements.deviceSettingsControls ?? elements.groups]) {
+      container.addEventListener('change', onPreferenceChange);
+    }
+  }
+
+  /**
+   * Records one HomeKit state's guard mode, keeping the map sparse: a state set back to the plugin's own choice
+   * is removed rather than pinned, so a later default reaches a household that never overrode it.
+   */
+  async function saveArmingMode(control, serial, existing, saveConfig, getMessages, elements) {
+    const slot = control.dataset.slot;
+    const value = control.value;
+    markPendingPreference(control, 'armingModes', value);
+    const entityPreferences = { ...(existing.entityPreferences ?? {}) };
+    const preference = { ...(entityPreferences[serial] ?? {}) };
+    const armingModes = { ...(preference.armingModes ?? {}) };
+    if (value === '') delete armingModes[slot];
+    else armingModes[slot] = value;
+    if (Object.keys(armingModes).length === 0) delete preference.armingModes;
+    else preference.armingModes = armingModes;
+    if (Object.keys(preference).length === 0) delete entityPreferences[serial];
+    else entityPreferences[serial] = preference;
+    try {
+      await saveConfig({ ...existing, entityPreferences });
+    } catch {
+      elements.summary.textContent = getMessages().preferenceSaveFailed;
+    }
+  }
+
+  /**
+   * Fills the settings page for one device, which is where its controls live rather than on the tile itself.
+   *
+   * The tile is a summary and a fixed square; a device's settings are neither, and grew past it. A device that
+   * nothing represents gets the explanation instead of controls, because there is nothing for it to obey.
+   */
+  function renderDeviceSettings(device, config, messages, elements) {
+    const preferences = config.entityPreferences ?? {};
+    elements.deviceSettingsTitle.textContent = device.name;
+    elements.deviceSettingsEyebrow.textContent = device.modelName;
+    if (device.diagnosticOnly) {
+      elements.deviceSettingsControls.innerHTML = `<div class="diagnostic-panel"><img src="assets/icons/troubleshoot.svg" alt=""><strong>${escapeHtml(messages.diagnosticOnly)}</strong><p>${escapeHtml(messages.diagnosticDescription)}</p><p>${escapeHtml(messages.diagnosticNoAction)}</p></div>`;
+      return;
+    }
+    const preference = {
+      represented: preferences[device.serial]?.represented ?? true,
+      audio: preferences[device.serial]?.audio ?? true,
+      securitySystem: preferences[device.serial]?.securitySystem ?? true,
+      snapshotMode: preferences[device.serial]?.snapshotMode ?? 'Refresh',
+      armingModes: { ...DEFAULT_ARMING_MODES, ...preferences[device.serial]?.armingModes },
+    };
+    const controls = device.preferences
+      .map((key) => preferenceControl(device, key, preference, messages))
+      .join('');
+    /*
+     * A camera that stands alone is its own station, so it carries an arming state and appears as a security system
+     * of its own. Stated here because a household of standalone cameras shows several, which reads as a fault.
+     */
+    const ownArming =
+      device.deviceClass === 'camera' && (device.representation ?? []).includes('arming.security-system')
+        ? `<p class="preference-note">${escapeHtml(messages.cameraOwnArming)}</p>`
+        : '';
+    elements.deviceSettingsControls.innerHTML = `${representationLine(device, messages)}${ownArming}${controls}`;
+  }
+
+  /**
+   * Puts each camera's own last image on its tile, keeping the packaged product photograph where there is none.
+   *
+   * One request per tile and one at a time: an image is up to ten megabytes and the answers are base64, so
+   * asking for every camera at once would hold the whole grid's worth in the page before any of it is shown.
+   * The product photograph is only replaced once the browser has decoded the answer, so a truncated or
+   * undecodable image leaves the tile exactly as it was rather than empty.
+   */
+  async function applyDeviceImages(elements, requestImage) {
+    for (const tile of elements.groups.querySelectorAll('.device-tile[data-device-class="camera"][data-serial]')) {
+      const art = tile.querySelector('.device-art');
+      if (!art) continue;
+      let answer;
+      try {
+        answer = await requestImage(tile.dataset.serial);
+      } catch {
+        continue;
+      }
+      if (!answer?.image) continue;
+      let image = art.querySelector('img[data-device-artwork]');
+      if (!image) {
+        image = document.createElement('img');
+        image.alt = '';
+        image.setAttribute('data-device-artwork', '');
+        art.appendChild(image);
+      }
+      const packaged = image.getAttribute('src');
+      image.addEventListener(
+        'load',
+        () => {
+          tile.setAttribute('data-artwork-scene', '');
+        },
+        { once: true },
+      );
+      image.addEventListener(
+        'error',
+        () => {
+          tile.removeAttribute('data-artwork-scene');
+          image.hidden = !packaged;
+          if (packaged) image.src = packaged;
+        },
+        { once: true },
+      );
+      image.src = `data:image/jpeg;base64,${answer.image}`;
+    }
+  }
+
+  global.HomebridgeEufyDashboard = {
+    applyDeviceImages,
+    bindPreferences,
+    render,
+    renderDeviceSettings,
+    renderUpdatePending,
+  };
+})(window);

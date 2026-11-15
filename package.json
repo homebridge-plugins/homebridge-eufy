@@ -1,13 +1,13 @@
 {
-  "displayName": "Homebridge Eufy Security",
+  "displayName": "Homebridge Eufy",
   "name": "@homebridge-plugins/homebridge-eufy-security",
-  "version": "4.7.2",
+  "version": "5.0.0-beta.0",
   "description": "Control Eufy Security from homebridge.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git://github.com/homebridge-plugins/homebridge-eufy-security.git"
+    "url": "git+https://github.com/homebridge-plugins/homebridge-eufy.git"
   },
   "funding": [
     {
@@ -16,21 +16,22 @@
     }
   ],
   "bugs": {
-    "url": "https://github.com/homebridge-plugins/homebridge-eufy-security/issues"
+    "url": "https://github.com/homebridge-plugins/homebridge-eufy/issues"
   },
   "engines": {
     "node": ">=24.5.0",
-    "homebridge": "^2.0.0"
+    "homebridge": "^2.5.0"
   },
   "main": "dist/index.js",
   "scripts": {
-    "lint": "prettier --check 'src/**/*.ts'",
-    "lint-fix": "prettier --write 'src/**/*.ts'",
-    "build": "npm run build-plugin && npm run postbuild",
-    "build-plugin": "rimraf ./dist && tsc",
-    "postbuild": "cp -r ./media ./dist/media",
-    "prebuild": "node --input-type=module -e \"import{readFileSync}from'fs';const p=JSON.parse(readFileSync('./package.json','utf8'));process.stdout.write('export const LIB_VERSION = '+JSON.stringify(p.version)+';\\n');\" > src/version.ts",
-    "prepublishOnly": "npm run lint && npm run build"
+    "lint": "prettier --check 'src/**/*.ts' 'test/**/*.ts'",
+    "lint-fix": "prettier --write 'src/**/*.ts' 'test/**/*.ts'",
+    "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc",
+    "guard:no-ecs": "bash scripts/guard-no-ecs.sh",
+    "qualify:release": "node scripts/qualify-release.mjs",
+    "test": "vitest run",
+    "verify": "npm run lint && npm run guard:no-ecs && npm run build && npm test",
+    "prepublishOnly": "npm run build && npm run qualify:release && npm run verify"
   },
   "keywords": [
     "homebridge-plugin",
@@ -42,21 +43,24 @@
     "camera"
   ],
   "dependencies": {
-    "@homebridge/plugin-ui-utils": "^2.2.5",
-    "eufy-security-client": "^4.1.1-1",
-    "ffmpeg-for-homebridge": "2.2.2",
-    "pick-port": "^2.2.1",
-    "rotating-file-stream": "^3.2.9",
-    "tar": "^7.5.20",
-    "tslog": "^4.10.2"
+    "@homebridge/plugin-ui-utils": "^2.3.0",
+    "@mega-yfue/eufy-sdk": "0.6.0-beta.49",
+    "ffmpeg-for-homebridge": "2.2.2"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
-    "homebridge": "^2.1.1",
-    "prettier": "^3.9.5",
-    "rimraf": "^6.1.3",
-    "typescript": "^7.0.2"
+    "@homebridge/hap-nodejs": "2.3.0",
+    "@types/node": "^26.6.6",
+    "homebridge": "^2.5.0",
+    "prettier": "^3.10.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
   },
-  "homepage": "https://github.com/homebridge-plugins/homebridge-eufy-security/wiki",
-  "author": "homebridge-eufy-security"
+  "homepage": "https://homebridge-plugins.github.io/homebridge-eufy/",
+  "author": "homebridge-eufy",
+  "allowScripts": {
+    "ffmpeg-for-homebridge@2.2.2": true
+  },
+  "optionalDependencies": {
+    "node-datachannel": "0.33.6"
+  }
 }

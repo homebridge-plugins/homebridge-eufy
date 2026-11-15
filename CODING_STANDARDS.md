@@ -1,0 +1,254 @@
+# Code practice
+
+The rules for writing code in this repository. They apply to everyone. This is the only file to edit:
+`AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md` are symlinks to it, so every name an AI
+coding tool searches for loads these same rules.
+
+Setup, the development workflow, and the pull request process are in
+[CONTRIBUTING.md](./CONTRIBUTING.md).
+
+## Stack
+
+- TypeScript is strict and emits ESM with `module` and `moduleResolution` set to `nodenext`. Relative
+  imports use explicit `.js` specifiers. The target is ES2024 and output goes to `dist/`.
+- Node.js 24.5.0 or newer and Homebridge 2 are required.
+- Runtime dependencies are `@mega-yfue/eufy-sdk`, `@homebridge/plugin-ui-utils`, and
+  `ffmpeg-for-homebridge`, plus the optional `node-datachannel` the SDK needs to drive a HomeBase S1 Pro (T9000).
+  Additions require an explicit maintenance and security justification.
+- Prettier is the formatting gate. There is no ESLint configuration. Vitest exercises hermetic
+  contracts without account or network access.
+- `npm run verify` is the repository gate: formatting, the ECS dependency guard, the TypeScript
+  build, and the complete specification suite must all pass.
+
+## Architecture boundary
+
+The SDK owns verified Eufy device truth and transport behavior. The plugin owns Homebridge lifecycle,
+HomeKit representation, configuration, UI, diagnostics, media adaptation, and product policy.
+
+- Consume the SDK's typed capabilities, members, observations, events, and operations. Do not restore
+  `eufy-security-client`, `PropertyName`, `CommandName`, `getProperty()`, or equivalent untyped escape
+  hatches.
+- A missing observation, operation, protocol fact, transport behavior, or device classification is an
+  SDK gap. Do not guess it in the plugin.
+- HomeKit services, characteristics, enum translations, polarity, thresholds, names, subtypes,
+  accessory identity, projection, and reconciliation are plugin concerns. Do not push them into the
+  SDK to simplify an adapter.
+- The SDK reports evidence. Primitive value shape alone never determines HomeKit meaning.
+
+## Module graph
+
+Internal dependencies follow a closed graph enforced by the contract suite. Adding a top-level module
+or dependency edge requires updating this section and the architecture contract deliberately.
+
+- `settings.ts` and `diagnostics.ts` have no internal dependencies. `diagnostics.ts` owns bounded,
+  allowlisted human console output, rotating JSONL plugin/SDK logs, the resolved FFmpeg identity record,
+  and support-case accessory aliases.
+  `storage.ts` owns the `homebridge-eufy` persistence root, imports only account-owner liveness, and
+  atomically migrates the pre-rename V5 path.
+  `configuration.ts` may import `settings.ts`.
+- `device/` owns complete discovery and snapshot vocabulary and has no dependency on another domain.
+- `account/` may import `configuration.ts` and `device/`. It never imports runtime, UI, HomeKit, or
+  media.
+- `runtime/` may import account, configuration, diagnostics, and device. It never imports UI, HomeKit,
+  or media.
+- `media/` may import configuration and device. It owns the canonical type-only media seam in
+  `media/contracts.ts`, plus FFmpeg processes, media sessions, snapshots, and HKSV adaptation, without
+  importing runtime or HomeKit implementations.
+- `homekit/` may import device and types from `media/contracts.ts`. It never imports account, runtime,
+  UI, or concrete media implementations. Within it, `homekit/device-control.ts` owns the one contract two
+  camera bundles share: issuing a bounded HomeKit-initiated SDK operation and reading an authoritative
+  observation fail-closed, plus the coalescing write queue the persistent-write adapters share. Adapters
+  keep their own policy.
+- `platform.ts` and `ui/server.ts` are composition roots. The UI server may consume diagnostics to
+  manage explicitly initiated support sessions and media retention to clear account-bound images after
+  successful account replacement, and the `ui/` dashboard projection may consume
+  HomeKit admission policy so the browser does not recreate a second capability model. They construct and connect modules but do not
+  absorb their behavior. `index.ts` only registers the platform.
+
+Only `runtime/sdk-client.ts` and `ui/server.ts` may create a concrete SDK client. HomeKit adapters may
+import typed public SDK capabilities, but never an SDK transport, deep package path, or client facade.
+
+- Define an interface beside its consumer and inject a structurally compatible implementation. A seam shared
+  by HomeKit and media is defined once in the domain-owned `media/contracts.ts`; do not duplicate it on either
+  side or create generic `common/`, `contracts/`, `shared/`, or `utils/` buckets.
+- Keep composition roots thin and behavior in the module that owns the policy.
+- Do not add internal barrels. The package entry point and closed registries such as the capability
+  adapter registry are the exceptions.
+- Keep one source of truth for registry, observation, projection, diagnostics, and media lifetime.
+- Test behavior through a module's public seam in centralized `test/contracts/` specifications. Tests
+  do not import past that seam merely to exercise private structure.
+- Internal import cycles are forbidden.
+
+## Reuse before abstraction
+
+1. **Search before creating.** Before adding a helper, type, adapter primitive, operation coordinator,
+   or serializer, search the repository by operation and data shape, including the SDK public surface
+   and Homebridge APIs it uses. Finish when every new primitive either reuses an existing owner or has
+   a distinct contract or authority.
+2. **Preserve ownership and contract.** Reuse or extend an existing primitive when it owns the same
+   operation and satisfies the required semantics. Introduce an abstraction only when it simplifies
+   current callers under that same ownership. Keep trust-boundary validation, independently
+   authoritative declarations, and self-hosted capability-adapter behavior local.
+3. **Reduce after green.** After focused tests and typechecking pass, inspect the diff for
+   same-contract helpers, value shapes, operation lifetimes, and test setup already owned elsewhere.
+   Resolve every match before running the full verification gate.
+
+## Capability adapters
+
+The canonical vocabulary is defined in [CONTEXT.md](./CONTEXT.md).
+
+- Map SDK capabilities through explicit capability adapters. Do not build a generic shape-driven
+  mapper.
+- Keep each capability adapter self-hosted in one file: admission, coverage rows, stable keys, HAP
+  attachment, observations, events, and diagnostics change together.
+- Index typed SDK manifest evidence once in `device/`; adapters declare exact semantic requirements.
+  The evidence index never infers HomeKit meaning from member shape.
+- Use bundle adapters where several capabilities or HomeKit services have coupled behavior.
+- Keep observations distinct from projections. A successful SDK command acknowledges delivery, not
+  physical convergence; a later device observation is authoritative.
+- Keep persistent writes distinct from momentary actions. A momentary action must not be represented
+  as durable state without an explicit reset and reconciliation policy.
+- Omit unsupported capabilities and emit a structured diagnostic. Never invent a generic HomeKit
+  fallback.
+- Use the V5-only `HomebridgeEufy` platform alias. Do not register or accept the V4 `EufySecurity`
+  alias. Preserve historical accessory UUID inputs unless a migration specification changes them.
+
+## Runtime and UI ownership
+
+- The plugin runtime owns the canonical connected SDK client and device registry.
+- `RuntimeOwner` presents the latest complete, versioned registry view and runtime availability as
+  separate observable interfaces. HomeKit defines the minimal consumer interface and receives the
+  owner through composition rather than importing the concrete class.
+- A degraded, authentication-required, stopping, or stopped runtime retains its latest complete
+  registry view for HomeKit topology. Runtime state separately determines whether operations are
+  available. Only a later complete inventory may replace that view or withdraw capability evidence.
+- The custom UI may own interactive login, captcha, and two-factor continuation, but credentials and
+  challenge answers do not cross runtime IPC.
+- UI and runtime access to a shared SDK session must use an explicit, bounded handoff. Never run two
+  realtime owners against the same session by accident.
+- The runtime serves a bounded request/response channel that the UI consumes when it is there. Its endpoint
+  is derived from the platform and the storage root, opened only once the ownership lease is held, and closed
+  inside the release guard. It is never evidence of ownership, it carries a protocol version a client refuses
+  to speak across, and what crosses it is a closed set of fields projected onto that set. The UI must behave
+  exactly as it does without the channel, because the channel is absent during a first setup, a runtime that
+  will not start, a deliberate stop, and an upgrade without a restart.
+- The dashboard consumes runtime summaries or deliberate one-shot reads; it must not recreate a
+  second capability model from SDK internals.
+- A problem the plugin detects is stated where the user already is, together with the one action that
+  resolves it. A state the user must act on, such as a session that needs a new sign-in, is put in
+  front of the page as a blocking dialog leading to that action, and in the Homebridge log that names
+  the same action. It is never left for the user to find in documentation, release notes, or a
+  diagnostic run. A published state the runtime stops refreshing because it is waiting on the user
+  does not age into `stale`.
+- IPC has bounded connection and response timeouts. A bound socket is not readiness; expose an
+  explicit ready state.
+- Diagnostics are allowlisted and redacted. Device serials, P2P identifiers, account and user IDs,
+  device names, addresses, credentials, tokens, keys, and unredacted captures are sensitive.
+
+## Media ownership
+
+- Use SDK media primitives for Eufy source truth: codecs, frames, source sharing, prebuffer, budgets,
+  and fragments.
+- HomeKit negotiation, transcoding, AAC-ELD, RTP/SRTP, RTCP lifecycle, snapshots, HKSV policy, and
+  placeholder presentation belong in the plugin.
+- Live video and audio are separate inputs. Do not concatenate raw audio and Annex-B video into one
+  stream.
+- Backpressure has one source of truth. When an adaptation input refuses a write, hold the SDK source so
+  its keyframe-aware bounded queue arms; never buffer the refused media, and never invent a second queue,
+  threshold, or drop rule beside the SDK's. A pulled source is held by holding the pull.
+- `media/` performs no synchronous filesystem call. A bounded image is megabytes and a flush is an fsync, so
+  that work on the one thread the plugin shares stalls live media, recording, and motion delivery together.
+  Accepting an image is separate from persisting it, and the contract suite enforces the ban.
+- Keep recording and live-stream lifetime policies explicit. Battery budgets, cold-source prebuffer,
+  long GOPs, silent cameras, and codec changes are acceptance cases, not incidental details.
+
+## Hard rules
+
+- Ground device-behavior claims in current SDK evidence or redacted real-device evidence. Older
+  third-party clients are not protocol authority.
+- Never commit real device or account data in source, tests, docs, issues, fixtures, logs, captures,
+  or commit messages. Use synthetic, correctly shaped placeholders.
+- Real-device writes require explicit user approval. Observation-only verification is the default.
+- Respect the SDK's evidence-gated API. If a typed operation is absent, the plugin must not manufacture
+  a command or reach into raw transport data.
+- Keep runtime dependencies few. Prefer `node:*` APIs and existing dependencies before adding another
+  package; document the transitive and audit footprint of any addition.
+- Every comment in `src/` is JSDoc sitting immediately above the declaration it documents, and states that
+  declaration's ground truth: what it is, and what it guarantees. Nothing else is a comment. No comment
+  inside a body, no comment beside a statement, and no trailing comment. In `test/contracts/`, the same
+  applies to the JSDoc above a `describe` or an `it`, which states the contract under test.
+- A JSDoc does not narrate. It does not say what an earlier version did, why that was wrong, what was
+  tried, what a caller might do with the declaration, or what could be built on it later. Prose that would
+  need editing when the next change lands is not ground truth; durable architectural reasoning goes in
+  `docs/architecture.md`, and everything else goes nowhere.
+- A constraint worth stating is stated as the constraint, not as the failure that motivated it. Where the
+  consequence of breaking an invariant is itself ground truth about the declaration, one sentence carries
+  it.
+- Do not cite planning Markdown from shipped source. Put durable behavior in code and JSDoc, and keep
+  durable architectural reasoning in `docs/architecture.md`.
+- Once V5 state exists, preserve its `HomebridgeEufy` platform identity, accessory UUIDs,
+  configuration semantics, and cached accessory ownership unless an explicit migration decision
+  changes them. This does not preserve the V4 `EufySecurity` alias.
+- Persist V5 state under `homebridge-eufy`. A storage-root rename must preserve the complete directory
+  atomically and must not move a directory held by a live SDK owner.
+- No `Co-authored-by` trailers are added automatically. Credit authorship accurately.
+
+## Verifying on a real host
+
+A claim about behaviour on a device is worth nothing if the device is not running the code that makes it.
+Every one of these has already produced a false conclusion, so each is checked rather than assumed.
+
+- **Build both packages, then restart, then prove the order.** The service's start time must be LATER than
+  the newest `dist` of the plugin AND of the SDK. `systemctl show homebridge -p ActiveEnterTimestamp`
+  against `stat -c %y` on each `dist` answers it in one line. A restart issued before a build leaves the
+  host running the previous code while every log and measurement looks legitimate.
+- **Prove the SDK in `node_modules` is the one being edited.** While the SDK is unpublished the plugin
+  depends on it through `file:../eufy-sdk`, and any npm command that resolves dependencies will replace
+  that link with the last published version — silently, after which the plugin compiles against a surface
+  that lacks the work under test. Check that `node_modules/@mega-yfue/eufy-sdk` is still a symlink and that
+  its `package.json` version is the local one.
+- **`package.json` must not be committed with the `file:` dependency.** The contract suite passes on a linked
+  checkout: the packed-entry-point contract skips while the specifier is `file:`, because a packed tarball
+  cannot resolve a working copy, and continuous integration sets `CI`, which refuses that exemption.
+  Publication refuses the specifier too, because `prepublishOnly` builds and qualifies the release before it
+  verifies, and release qualification rejects a `file:` specifier and a symlinked install outright. So a local
+  run is green and a `file:` specifier that reaches a commit fails the
+  gate instead of hiding in it. A failing local suite is a defect. What a linked checkout still
+  cannot do is build against the published pin, so while the committed pin names an SDK older than the
+  surface `src/` is written against, CI fails at the `build` step and never reaches the tests: `tsc` resolves
+  the pinned package and reports every symbol the local SDK has and the published one does not. Confirm those
+  by comparing the failing run's error set against the previous commit's — an unchanged set implicates neither
+  commit.
+- **The SDK specifier is one exact published version, and `npm run qualify:release` is what says so.** It
+  reads the manifest and the lockfile and checks the shape — an exact version rather than a range, a lockfile
+  that agrees with the manifest, a `sha512-` integrity, a resolution from npmjs, and an installed directory
+  that is not a symlink. A dist-tag such as `@beta` fails it, and a range that happens to resolve to an exact
+  version is still not an exact declared identity: a floating specifier names an artifact the next
+  `npm install` can replace.
+  Bumping the SDK is therefore `npm pkg set` followed by `npm install`, with no literal to maintain by hand
+  anywhere.
+- **Read the code that actually ran.** Grep the built `dist` for the symbol the change introduces or
+  removes. A source tree that typechecks says nothing about what the host loaded.
+- **Turn the host's debug output on before measuring**, so a negotiated selection or a protocol trace is
+  observable rather than inferred. Without it a session leaves only its outcome, and an outcome is
+  compatible with several causes.
+- **Prefer an observation the host cannot fake.** A negotiated geometry read off the running adaptation's
+  own argument list, a characteristic read out of the persisted accessory cache, or a service start time
+  are facts; a log line that merely failed to appear is not evidence that nothing happened.
+- **Say which runs did not reproduce.** An intermittent fault that a session failed to trigger is an
+  inconclusive run, and reporting it as a passing one is how a defect gets closed while it is still there.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues for this repository; use the `gh` CLI.
+
+### Triage labels
+
+Use the canonical labels `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and
+`wontfix`.
+
+### Domain docs
+
+This is a single-context repository using root `CONTEXT.md`.

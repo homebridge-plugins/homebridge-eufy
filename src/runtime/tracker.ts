@@ -1,0 +1,231 @@
+import { dirname } from 'node:path';
+
+import { reapAbandonedTemporaryFiles } from '../account/ownership.js';
+import { readJsonBounded, writeJsonAtomically } from '../account/persistence.js';
+import { parseCompleteDeviceSnapshot, type CompleteDeviceSnapshot } from '../device/snapshot.js';
+import type { RuntimeState } from '../diagnostics.js';
+
+const MAX_TRACKER_BYTES = 1024 * 1024;
+/** How long a published active record stands as evidence of a live runtime. */
+const FRESH_RUNTIME_MS = 90_000;
+const ACTIVE_RUNTIME_STATES = new Set<RuntimeState>([
+  'acquiring-ownership',
+  'starting',
+  'ready',
+  'degraded',
+  'stopping',
+]);
+const RUNTIME_STATES = new Set<RuntimeState>([
+  ...ACTIVE_RUNTIME_STATES,
+  'stopped',
+  'authentication-required',
+  'owner-conflict',
+  'failed',
+]);
+const RUNTIME_STATUSES = new Set<RuntimeStatus>([
+  'starting',
+  'connected',
+  'incomplete-inventory',
+  'transport-degraded',
+  'authentication-required',
+  'owner-conflict',
+  'failed',
+  'stopped',
+]);
+
+export interface FreshRuntimeEvidence {
+  state: RuntimeState;
+  updatedAt: string;
+}
+
+export type RuntimeStatus =
+  | 'starting'
+  | 'connected'
+  | 'incomplete-inventory'
+  | 'transport-degraded'
+  | 'authentication-required'
+  | 'owner-conflict'
+  | 'failed'
+  | 'stopped';
+
+export interface RuntimeTrackerRecord {
+  version: 1;
+  source: 'runtime';
+  state: RuntimeState;
+  updatedAt: string;
+  generation?: string;
+  complete: boolean;
+  snapshot?: CompleteDeviceSnapshot;
+  status: RuntimeStatus;
+}
+
+export interface RuntimeTrackerUpdate {
+  generation?: string;
+  complete?: boolean;
+  snapshot?: CompleteDeviceSnapshot;
+  status?: RuntimeStatus;
+}
+
+/** The status a state implies when no caller states one, and the one mapping between the two. */
+export function runtimeStatusFor(state: RuntimeState): RuntimeStatus {
+  switch (state) {
+    case 'ready':
+      return 'connected';
+    case 'degraded':
+      return 'incomplete-inventory';
+    case 'authentication-required':
+      return 'authentication-required';
+    case 'owner-conflict':
+      return 'owner-conflict';
+    case 'failed':
+      return 'failed';
+    case 'stopped':
+      return 'stopped';
+    default:
+      return 'starting';
+  }
+}
+
+/** Reads advisory runtime liveness without granting or overriding SDK ownership. */
+export class RuntimeTracker {
+  private heartbeat?: NodeJS.Timeout;
+  private current?: RuntimeTrackerRecord;
+
+  constructor(
+    private readonly path: string,
+    private readonly now: () => number = Date.now,
+    private readonly onError: (error: unknown) => void = () => undefined,
+  ) {}
+
+  async fresh(): Promise<FreshRuntimeEvidence | null> {
+    try {
+      const value = this.readValue();
+      if (!value) {
+        return null;
+      }
+      if (
+        value.version !== 1 ||
+        value.source !== 'runtime' ||
+        typeof value.state !== 'string' ||
+        !ACTIVE_RUNTIME_STATES.has(value.state as RuntimeState) ||
+        typeof value.updatedAt !== 'string'
+      ) {
+        return null;
+      }
+      const updatedAt = Date.parse(value.updatedAt);
+      const age = this.now() - updatedAt;
+      if (!Number.isFinite(updatedAt) || age < -5_000 || age > FRESH_RUNTIME_MS) {
+        return null;
+      }
+      return { state: value.state as RuntimeState, updatedAt: value.updatedAt };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Reads the complete allowlisted runtime record used by the dashboard. */
+  async read(): Promise<RuntimeTrackerRecord | null> {
+    try {
+      const value = this.readValue();
+      if (
+        !value ||
+        value.version !== 1 ||
+        value.source !== 'runtime' ||
+        typeof value.state !== 'string' ||
+        !RUNTIME_STATES.has(value.state as RuntimeState) ||
+        typeof value.updatedAt !== 'string' ||
+        !Number.isFinite(Date.parse(value.updatedAt)) ||
+        typeof value.complete !== 'boolean' ||
+        typeof value.status !== 'string' ||
+        !RUNTIME_STATUSES.has(value.status as RuntimeStatus) ||
+        (value.generation !== undefined && typeof value.generation !== 'string')
+      ) {
+        return null;
+      }
+      const snapshot = value.snapshot === undefined ? undefined : parseCompleteDeviceSnapshot(value.snapshot);
+      if (value.complete && snapshot === undefined) {
+        return null;
+      }
+      return {
+        version: 1,
+        source: 'runtime',
+        state: value.state as RuntimeState,
+        updatedAt: value.updatedAt,
+        generation: typeof value.generation === 'string' ? value.generation : undefined,
+        complete: value.complete,
+        snapshot,
+        status: value.status as RuntimeStatus,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  start(state: RuntimeState = 'starting', update: RuntimeTrackerUpdate = {}): boolean {
+    reapAbandonedTemporaryFiles(dirname(this.path), this.now);
+    if (!this.update(state, update)) {
+      return false;
+    }
+    this.heartbeat ??= setInterval(() => this.current && this.publishSafely(this.current), 60_000);
+    this.heartbeat.unref();
+    return true;
+  }
+
+  /** Atomically changes runtime state while retaining the latest complete snapshot by default. */
+  update(state: RuntimeState, update: RuntimeTrackerUpdate = {}): boolean {
+    const snapshot = update.snapshot ?? this.current?.snapshot;
+    const record: RuntimeTrackerRecord = {
+      version: 1,
+      source: 'runtime',
+      state,
+      updatedAt: new Date(this.now()).toISOString(),
+      generation: update.generation ?? this.current?.generation,
+      complete: update.complete ?? state === 'ready',
+      snapshot,
+      status: update.status ?? runtimeStatusFor(state),
+    };
+    if (!ACTIVE_RUNTIME_STATES.has(state)) {
+      clearInterval(this.heartbeat);
+      this.heartbeat = undefined;
+    }
+    if (!this.publishSafely(record)) {
+      return false;
+    }
+    this.current = record;
+    return true;
+  }
+
+  /** The record this publisher last published. */
+  latest(): RuntimeTrackerRecord | undefined {
+    return this.current;
+  }
+
+  stop(): void {
+    clearInterval(this.heartbeat);
+    this.heartbeat = undefined;
+    this.update('stopped');
+  }
+
+  private readValue(): Record<string, unknown> | null {
+    return readJsonBounded(this.path, MAX_TRACKER_BYTES) as Record<string, unknown> | null;
+  }
+
+  private publishSafely(record: RuntimeTrackerRecord): boolean {
+    try {
+      this.publish(record);
+      return true;
+    } catch (error) {
+      this.onError(error);
+      return false;
+    }
+  }
+
+  private publish(record: RuntimeTrackerRecord): void {
+    writeJsonAtomically(
+      this.path,
+      { ...record, updatedAt: new Date(this.now()).toISOString() },
+      'runtime tracker',
+      MAX_TRACKER_BYTES,
+    );
+  }
+}

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - beta-5.0.0
+  pull_request:
+    branches:
+      - beta-5.0.0
+
+permissions:
+  contents: read
+
+# A force-push to a pull request supersedes the run already in flight, and only the newest head is a
+# result anyone acts on.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # `--ignore-scripts` above is what keeps an arbitrary dependency from running code on this runner, but
+      # `ffmpeg-for-homebridge` carries no binary in its tarball: its install script downloads the one the
+      # plugin ships and hands to every media session. Without this the gate runs against a path that names a
+      # file which is not there, so the one suite that reads a real banner off the shipped binary cannot.
+      # The install script exits 0 when its download or check fails, so the binary is run here to fail on it.
+      # It reuses an archive already in `.build`, so the cache serves later runs while the release host is down.
+      - name: Cache the bundled FFmpeg download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/ffmpeg-for-homebridge/.build
+          key: ffmpeg-for-homebridge-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Fetch the bundled FFmpeg binary
+        run: |
+          npm rebuild ffmpeg-for-homebridge --foreground-scripts
+          node_modules/ffmpeg-for-homebridge/ffmpeg -version
+
+      - name: Verify
+        run: npm run verify
+
+      # Release qualification refuses a tree whose SDK resolution or packed contents cannot be shipped. It runs
+      # here as well as from `prepublishOnly`, so a pull request that breaks it fails before a release does.
+      - name: Qualify provenance and contents
+        run: npm run qualify:release

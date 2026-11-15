@@ -1,0 +1,433 @@
+import { join } from 'node:path';
+
+import { HomebridgePluginUiServer, RequestError } from '@homebridge/plugin-ui-utils';
+import { EufyMega } from '@mega-yfue/eufy-sdk';
+
+import { AccountOwnership } from '../account/ownership.js';
+import { AccountSessionPersistence } from '../account/persistence.js';
+import {
+  observationOnlyAuthenticationClient,
+  TemporaryAuthentication,
+  type TemporaryAuthenticationClientFactory,
+  type TemporaryAuthenticationResult,
+  type TemporaryAuthenticationInput,
+} from '../account/temporary-authentication.js';
+import { isRecord, parseConfig } from '../configuration.js';
+import {
+  GuidedDiagnostics,
+  isDiagnosticsProfile,
+  isDiagnosticsReproductionMode,
+  isDiagnosticsUiEvent,
+  type AffectedDevices,
+  type DiagnosticsProfile,
+  type DiagnosticsReproductionMode,
+  type DiagnosticsUiEvent,
+} from '../diagnostics.js';
+import { PersistedLastSuccessfulImages } from '../media/last-successful-image.js';
+import { readDeviceImage } from './device-image.js';
+import {
+  noticedDeviceSettingWrite,
+  noticedLivePreviewQuery,
+  runtimeChannelEndpointForHost,
+  type RuntimeChannelDeviceSettingWrite,
+  type RuntimeChannelLivePreviewQuery,
+} from '../runtime/channel.js';
+import { RuntimeTracker } from '../runtime/tracker.js';
+import { resolveStorageRoot } from '../storage.js';
+import { readDashboard } from './dashboard.js';
+import { RuntimeChannelClient } from './runtime-channel-client.js';
+
+const AUTHENTICATION_FLOW_TIMEOUT_MS = 5 * 60_000;
+const AUTHENTICATION_CLEANUP_TIMEOUT_MS = 10_000;
+
+interface CleanupSignalTarget {
+  exit(code?: number): never;
+  once(event: 'disconnect' | 'SIGHUP' | 'SIGINT' | 'SIGTERM', listener: () => void): unknown;
+}
+
+/** Binds every custom-UI child-process exit path to one bounded authentication cleanup. */
+export function bindTemporaryAuthenticationProcessCleanup(
+  target: CleanupSignalTarget,
+  close: () => Promise<unknown>,
+): void {
+  let stopping: Promise<unknown> | undefined;
+  const stop = () => {
+    stopping ??= close().finally(() => target.exit(0));
+  };
+  target.once('disconnect', stop);
+  target.once('SIGHUP', stop);
+  target.once('SIGINT', stop);
+  target.once('SIGTERM', stop);
+}
+
+function requiredString(value: unknown, maximumLength: number): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length <= maximumLength ? value : undefined;
+}
+
+/**
+ * Validates a browser-submitted authentication start payload inside the custom-UI process.
+ *
+ * Every rejection raises the same generic message so no submitted credential is echoed back to the
+ * browser or into an error path that a diagnostic could record.
+ */
+export function parseAuthenticationStart(value: unknown): TemporaryAuthenticationInput {
+  if (!isRecord(value)) {
+    throw new RequestError('Invalid authentication request', { status: 400 });
+  }
+  const payload = value as Record<string, unknown>;
+  if (!isRecord(payload.configuration)) {
+    throw new RequestError('Invalid authentication request', { status: 400 });
+  }
+  const candidate = payload.configuration as Record<string, unknown>;
+  const account = requiredString(candidate.username, 320)?.trim().toLowerCase();
+  const password = requiredString(candidate.password, 1_024);
+  const country = requiredString(candidate.country, 2)?.toUpperCase();
+  const trustedDeviceName = requiredString(candidate.trustedDeviceName, 128)?.trim();
+  if (!account || !password || !country?.match(/^[A-Z]{2}$/) || !trustedDeviceName) {
+    throw new RequestError('Invalid authentication request', { status: 400 });
+  }
+  try {
+    return {
+      configuration: parseConfig({
+        ...candidate,
+        username: account,
+        password,
+        country,
+        trustedDeviceName,
+      }),
+    };
+  } catch {
+    throw new RequestError('Invalid authentication request', { status: 400 });
+  }
+}
+
+/**
+ * Validates one browser-submitted captcha answer or two-factor code inside the custom-UI process.
+ *
+ * Every rejection raises the same generic message so no submitted challenge answer is echoed back.
+ */
+export function parseAuthenticationAnswer(value: unknown, key: 'answer' | 'code'): string {
+  if (!isRecord(value)) {
+    throw new RequestError('Invalid authentication continuation', { status: 400 });
+  }
+  const answer = requiredString((value as Record<string, unknown>)[key], 128)?.trim();
+  if (!answer) {
+    throw new RequestError('Invalid authentication continuation', { status: 400 });
+  }
+  return answer;
+}
+
+function parseRepresentationPreferences(value: unknown): Record<string, boolean> {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new RequestError('Invalid dashboard request', { status: 400 });
+  }
+  const preferences = (value as Record<string, unknown>).representationPreferences;
+  if (preferences === undefined) {
+    return {};
+  }
+  if (
+    !isRecord(preferences) ||
+    Object.entries(preferences).some(
+      ([serial, represented]) => serial.length === 0 || serial.length > 128 || typeof represented !== 'boolean',
+    )
+  ) {
+    throw new RequestError('Invalid dashboard request', { status: 400 });
+  }
+  return { ...(preferences as Record<string, boolean>) };
+}
+
+/** The most devices a reporter may name, and the longest a serial may be, before the session refuses it. */
+const MOST_AFFECTED_DEVICES = 64;
+const LONGEST_SERIAL = 64;
+
+/**
+ * Whether a submitted affected-devices field is the word for all of them or a bounded list of serials.
+ *
+ * The value is persisted with the session, so its size is constrained here rather than at the point that writes
+ * it: an unbounded list arrives as supplied and is written as supplied.
+ */
+function isAffectedDevices(value: unknown): value is AffectedDevices {
+  if (value === 'all') return true;
+  return (
+    Array.isArray(value) &&
+    value.length <= MOST_AFFECTED_DEVICES &&
+    value.every((serial) => typeof serial === 'string' && serial.length > 0 && serial.length <= LONGEST_SERIAL)
+  );
+}
+
+export function parseDiagnosticsAuthorization(value: unknown): {
+  profile: DiagnosticsProfile;
+  reproductionMode: DiagnosticsReproductionMode;
+  affectedDevices?: AffectedDevices;
+} {
+  if (!isRecord(value)) {
+    throw new RequestError('Invalid diagnostics request', { status: 400 });
+  }
+  const payload = value as Record<string, unknown>;
+  const fields = Object.keys(payload).sort().join(',');
+  const reproductionMode = fields === 'profile' ? 'now' : payload.reproductionMode;
+  const naming = fields === 'affectedDevices,profile,reproductionMode';
+  if (
+    (fields !== 'profile' && fields !== 'profile,reproductionMode' && !naming) ||
+    !isDiagnosticsProfile(payload.profile) ||
+    !isDiagnosticsReproductionMode(reproductionMode) ||
+    (naming && !isAffectedDevices(payload.affectedDevices))
+  ) {
+    throw new RequestError('Invalid diagnostics request', { status: 400 });
+  }
+  return {
+    profile: payload.profile,
+    reproductionMode,
+    ...(naming ? { affectedDevices: payload.affectedDevices as AffectedDevices } : {}),
+  };
+}
+
+/**
+ * Validates a browser-submitted request that names one device serial and nothing else.
+ *
+ * The serial arrives from the browser, so it is bounded and constrained to the shape a serial has before it reaches
+ * storage or the runtime. Rejection carries one generic `message` that never repeats what was submitted.
+ */
+export function parseSerialRequest(value: unknown, message: string, bound: number): string {
+  const serial = isRecord(value) ? requiredString(value.serial, bound) : undefined;
+  if (!serial?.match(/^[A-Za-z0-9]+$/) || Object.keys(value as object).join(',') !== 'serial') {
+    throw new RequestError(message, { status: 400 });
+  }
+  return serial;
+}
+
+/** A live preview request: one device serial and the settings its HomeKit side is coded with. */
+function parseLivePreviewRequest(value: unknown): RuntimeChannelLivePreviewQuery {
+  const query = noticedLivePreviewQuery(value);
+  if (!query?.serial.match(/^[A-Za-z0-9]{1,64}$/)) {
+    throw new RequestError('Invalid live preview request', { status: 400 });
+  }
+  return query;
+}
+
+/**
+ * Validates a browser-submitted write of one eufy setting.
+ *
+ * A write reaches a real device, so the request names exactly a serial, one setting of the channel's closed set,
+ * and a value of the type that setting takes, and nothing beside them.
+ */
+export function parseDeviceSettingWriteRequest(value: unknown): RuntimeChannelDeviceSettingWrite {
+  const write = noticedDeviceSettingWrite(value);
+  if (
+    !write ||
+    Object.keys(value as Record<string, unknown>)
+      .sort()
+      .join(',') !== 'serial,setting,value' ||
+    !write.serial.match(/^[A-Za-z0-9]{1,64}$/)
+  ) {
+    throw new RequestError('Invalid device setting write', { status: 400 });
+  }
+  return write;
+}
+
+function parseArchiveReview(value: unknown): string {
+  if (!isRecord(value)) {
+    throw new RequestError('Invalid support archive request', { status: 400 });
+  }
+  const reviewId = requiredString((value as Record<string, unknown>).reviewId, 36);
+  if (!reviewId?.match(/^[0-9a-f-]{36}$/)) {
+    throw new RequestError('Invalid support archive request', { status: 400 });
+  }
+  return reviewId;
+}
+
+export function parseDiagnosticsUiEvent(value: unknown): DiagnosticsUiEvent {
+  if (!isRecord(value)) {
+    throw new RequestError('Invalid diagnostics UI event', { status: 400 });
+  }
+  const payload = value as Record<string, unknown>;
+  if (Object.keys(payload).join(',') !== 'event' || !isDiagnosticsUiEvent(payload.event)) {
+    throw new RequestError('Invalid diagnostics UI event', { status: 400 });
+  }
+  return payload.event;
+}
+
+/** Creates the production SDK client without enabling realtime ownership. */
+const createTemporaryAuthenticationClient: TemporaryAuthenticationClientFactory = (options) =>
+  observationOnlyAuthenticationClient(
+    new EufyMega({
+      email: options.account,
+      password: options.password,
+      countryCode: options.country,
+      phoneModel: options.trustedDeviceName,
+      store: options.sessionStore,
+      pushStore: options.pushStore,
+      autoRealtime: false,
+      storedSnapshotCache: false,
+    }),
+  );
+
+/** Homebridge custom-UI child process that exclusively owns interactive authentication. */
+export class EufyAuthenticationUiServer extends HomebridgePluginUiServer {
+  private authentication?: TemporaryAuthentication;
+  private readonly ownership: AccountOwnership;
+  private readonly persistence: AccountSessionPersistence;
+  private readonly runtimeTracker: RuntimeTracker;
+  private readonly runtimeChannel: RuntimeChannelClient;
+  private readonly images: PersistedLastSuccessfulImages;
+  /** The one live preview this page is watching, so starting another or leaving the step stops it. */
+  private live?: AbortController;
+  private readonly diagnostics: GuidedDiagnostics;
+  private startPending = false;
+  private flowGeneration = 0;
+
+  constructor() {
+    super();
+    if (!this.homebridgeStoragePath) {
+      throw new Error('Homebridge storage path is unavailable');
+    }
+    const root = resolveStorageRoot(this.homebridgeStoragePath);
+    this.ownership = new AccountOwnership(join(root, 'ownership'));
+    this.images = new PersistedLastSuccessfulImages(root);
+    this.persistence = new AccountSessionPersistence(join(root, 'accounts'), undefined, () => this.images.discardAll());
+    this.runtimeTracker = new RuntimeTracker(join(root, 'tracker.json'));
+    this.runtimeChannel = new RuntimeChannelClient(runtimeChannelEndpointForHost(root));
+    this.diagnostics = new GuidedDiagnostics(root);
+
+    this.onRequest('/auth/start', (payload) => this.startAuthentication(payload));
+    this.onRequest('/auth/captcha', (payload) => this.continueCaptcha(payload));
+    this.onRequest('/auth/two-factor', (payload) => this.continueTwoFactor(payload));
+    this.onRequest('/auth/close', () => this.closeAuthentication());
+    this.onRequest('/dashboard', (payload) =>
+      readDashboard(
+        this.runtimeTracker,
+        Date.now,
+        parseRepresentationPreferences(payload),
+        this.runtimeChannel,
+        this.persistence,
+      ),
+    );
+    this.onRequest('/update/restart', () => this.runtimeChannel.requestRestart());
+    this.onRequest('/device/image', (payload) =>
+      readDeviceImage(
+        this.images,
+        this.runtimeChannel,
+        parseSerialRequest(payload, 'Invalid device image request', 128),
+      ),
+    );
+    this.onRequest('/device/settings', async (payload) => {
+      const settings = await this.runtimeChannel.readDeviceSettings(
+        parseSerialRequest(payload, 'Invalid device settings request', 64),
+      );
+      return settings ? { available: true, settings } : { available: false };
+    });
+    this.onRequest('/device/settings/write', async (payload) => ({
+      ok: await this.runtimeChannel.writeDeviceSetting(parseDeviceSettingWriteRequest(payload)),
+    }));
+    this.onRequest('/device/live/start', (payload) => {
+      const query = parseLivePreviewRequest(payload);
+      const { serial } = query;
+      this.live?.abort();
+      const live = new AbortController();
+      this.live = live;
+      void this.runtimeChannel
+        .liveDevice(query, (image, coding) => this.pushEvent('device-live', { serial, image, ...coding }), live.signal)
+        .then((unplayable) => {
+          if (!live.signal.aborted) this.pushEvent('device-live-end', { serial, unplayable });
+        });
+      return { started: true };
+    });
+    this.onRequest('/device/live/adapt', async (payload) => ({
+      ok: await this.runtimeChannel.adaptLive(parseLivePreviewRequest(payload)),
+    }));
+    this.onRequest('/device/live/stop', () => {
+      this.live?.abort();
+      this.live = undefined;
+      return { stopped: true };
+    });
+    this.onRequest('/diagnostics/status', () => this.diagnostics.status());
+    this.onRequest('/diagnostics/authorize', async (payload) => {
+      const authorization = parseDiagnosticsAuthorization(payload);
+      const status = await this.diagnostics.authorize(
+        authorization.profile,
+        authorization.reproductionMode,
+        authorization.affectedDevices,
+      );
+      if (status.supportCaseId) {
+        void this.runtimeChannel.notifyAuthorization(status.supportCaseId);
+      }
+      return status;
+    });
+    this.onRequest('/diagnostics/reproduction/start', () => this.diagnostics.startReproduction());
+    this.onRequest('/diagnostics/reproduction/end', () => this.diagnostics.endReproduction());
+    this.onRequest('/diagnostics/cancel', () => this.diagnostics.cancel());
+    this.onRequest('/diagnostics/ui-event', (payload) =>
+      this.diagnostics.recordUiEvent(parseDiagnosticsUiEvent(payload)),
+    );
+    this.onRequest('/diagnostics/archive/review', () => this.diagnostics.reviewSupportArchive());
+    this.onRequest('/diagnostics/archive/export', async (payload) => {
+      const exported = await this.diagnostics.exportSupportArchive(parseArchiveReview(payload));
+      return { ...exported, archive: exported.archive.toString('base64') };
+    });
+    bindTemporaryAuthenticationProcessCleanup(process, () => this.closeAuthentication());
+    this.ready();
+  }
+
+  private async startAuthentication(payload: unknown): Promise<TemporaryAuthenticationResult> {
+    if (this.startPending) {
+      return { status: 'failed' };
+    }
+    this.startPending = true;
+    const generation = this.flowGeneration;
+    try {
+      await this.authentication?.close();
+      if (generation !== this.flowGeneration) {
+        return { status: 'closed' };
+      }
+      this.authentication = new TemporaryAuthentication(
+        this.ownership,
+        this.persistence,
+        createTemporaryAuthenticationClient,
+        {
+          flowTimeoutMs: AUTHENTICATION_FLOW_TIMEOUT_MS,
+          cleanupTimeoutMs: AUTHENTICATION_CLEANUP_TIMEOUT_MS,
+        },
+        this.runtimeTracker,
+        this.runtimeChannel,
+      );
+      return await this.recordSignIn(this.authentication.start(parseAuthenticationStart(payload)));
+    } finally {
+      this.startPending = false;
+    }
+  }
+
+  private continueCaptcha(payload: unknown): Promise<TemporaryAuthenticationResult> {
+    return this.recordSignIn(
+      this.authentication?.submitCaptcha(parseAuthenticationAnswer(payload, 'answer')) ??
+        Promise.resolve({ status: 'failed' }),
+    );
+  }
+
+  private continueTwoFactor(payload: unknown): Promise<TemporaryAuthenticationResult> {
+    return this.recordSignIn(
+      this.authentication?.submitTwoFactor(parseAuthenticationAnswer(payload, 'code')) ??
+        Promise.resolve({ status: 'failed' }),
+    );
+  }
+
+  /**
+   * Records a settings-page sign-in step and the kind of outcome it reached for a support session collecting
+   * UI events. Best effort: no session, or one collecting none, records nothing and changes no outcome.
+   */
+  private async recordSignIn(step: Promise<TemporaryAuthenticationResult>): Promise<TemporaryAuthenticationResult> {
+    void this.diagnostics.recordUiEvent('authentication-submitted').catch(() => undefined);
+    const result = await step;
+    void this.diagnostics.recordUiEvent(`authentication-${result.status}`).catch(() => undefined);
+    return result;
+  }
+
+  private async closeAuthentication(): Promise<TemporaryAuthenticationResult> {
+    this.flowGeneration++;
+    const authentication = this.authentication;
+    this.authentication = undefined;
+    return authentication?.close() ?? { status: 'closed' };
+  }
+}

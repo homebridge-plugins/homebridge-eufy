@@ -1,0 +1,229 @@
+import type { DeviceManifest } from '@mega-yfue/eufy-sdk';
+
+export interface CompleteDeviceSnapshot {
+  version: 1;
+  complete: true;
+  devices: DeviceManifest[];
+}
+
+interface DiscoveryDevice {
+  describe(): DeviceManifest;
+}
+
+/** The observation-only SDK surface a complete inventory pass is permitted to reach. */
+export interface DiscoveryClient<T extends DiscoveryDevice = DiscoveryDevice> {
+  on(event: 'error', listener: (error: Error) => void): unknown;
+  off(event: 'error', listener: (error: Error) => void): unknown;
+  getDevices(): Promise<readonly { sn: string }[]>;
+  getDevice(serial: string): Promise<T>;
+}
+
+interface CompleteDeviceDiscovery<T extends DiscoveryDevice = DiscoveryDevice> {
+  registry: ReadonlyMap<string, T>;
+  snapshot: CompleteDeviceSnapshot;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function isValueArray(value: unknown): boolean {
+  return (
+    value === undefined || (Array.isArray(value) && value.every((entry) => ['string', 'number'].includes(typeof entry)))
+  );
+}
+
+function isLabels(value: unknown): boolean {
+  return value === undefined || (isRecord(value) && Object.values(value).every((label) => typeof label === 'string'));
+}
+
+function isRead(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.accessor === 'string' &&
+    typeof value.property === 'string' &&
+    typeof value.type === 'string' &&
+    typeof value.writable === 'boolean' &&
+    (value.kind === undefined || typeof value.kind === 'string') &&
+    (value.unit === undefined || typeof value.unit === 'string') &&
+    (value.description === undefined || typeof value.description === 'string') &&
+    isValueArray(value.values) &&
+    isLabels(value.labels)
+  );
+}
+
+function isArgument(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.name === 'string' &&
+    typeof value.kind === 'string' &&
+    (value.optional === undefined || typeof value.optional === 'boolean') &&
+    [value.min, value.max, value.step].every((entry) => entry === undefined || typeof entry === 'number') &&
+    (value.description === undefined || typeof value.description === 'string') &&
+    isValueArray(value.values) &&
+    isLabels(value.labels)
+  );
+}
+
+function isAction(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.name === 'string' &&
+    (value.form === 'momentary' || value.form === 'stateful') &&
+    (value.reflects === undefined || typeof value.reflects === 'string') &&
+    (value.description === undefined || typeof value.description === 'string') &&
+    (value.args === undefined || (Array.isArray(value.args) && value.args.every(isArgument)))
+  );
+}
+
+function isDetail(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.capability === 'string' &&
+    (value.accessor === undefined || typeof value.accessor === 'string') &&
+    Array.isArray(value.reads) &&
+    value.reads.every(isRead) &&
+    Array.isArray(value.actions) &&
+    value.actions.every(isAction) &&
+    isStringArray(value.undescribedActions) &&
+    isStringArray(value.events)
+  );
+}
+
+function isManifest(value: unknown): value is DeviceManifest {
+  return (
+    isRecord(value) &&
+    typeof value.sn === 'string' &&
+    typeof value.name === 'string' &&
+    (value.model === undefined || typeof value.model === 'string') &&
+    typeof value.modelName === 'string' &&
+    typeof value.codec === 'string' &&
+    typeof value.source === 'string' &&
+    typeof value.bound === 'boolean' &&
+    isStringArray(value.capabilities) &&
+    Array.isArray(value.details) &&
+    value.details.every(isDetail)
+  );
+}
+
+function copyLabels(labels: Readonly<Record<string, string>> | undefined): Record<string, string> | undefined {
+  return labels ? { ...labels } : undefined;
+}
+
+function copyManifest(manifest: DeviceManifest): DeviceManifest {
+  return {
+    sn: manifest.sn,
+    name: manifest.name,
+    model: manifest.model,
+    modelName: manifest.modelName,
+    codec: manifest.codec,
+    source: manifest.source,
+    bound: manifest.bound,
+    capabilities: [...manifest.capabilities],
+    details: manifest.details.map((detail) => ({
+      capability: detail.capability,
+      accessor: detail.accessor,
+      reads: detail.reads.map((read) => ({
+        accessor: read.accessor,
+        property: read.property,
+        type: read.type,
+        kind: read.kind,
+        unit: read.unit,
+        values: read.values ? [...read.values] : undefined,
+        labels: copyLabels(read.labels),
+        writable: read.writable,
+        description: read.description,
+      })),
+      actions: detail.actions.map((action) => ({
+        name: action.name,
+        form: action.form,
+        reflects: action.reflects,
+        args: action.args?.map((argument) => ({
+          name: argument.name,
+          kind: argument.kind,
+          optional: argument.optional,
+          min: argument.min,
+          max: argument.max,
+          step: argument.step,
+          values: argument.values ? [...argument.values] : undefined,
+          labels: copyLabels(argument.labels),
+          description: argument.description,
+        })),
+        description: action.description,
+      })),
+      undescribedActions: [...detail.undescribedActions],
+      events: [...detail.events],
+    })),
+  };
+}
+
+/** Builds the allowlisted persisted view of one complete SDK discovery. */
+function createCompleteDeviceSnapshot(manifests: readonly DeviceManifest[]): CompleteDeviceSnapshot {
+  const serials = new Set<string>();
+  const devices = manifests.map((manifest) => {
+    if (!manifest.sn || serials.has(manifest.sn)) {
+      throw new TypeError('complete device discovery contains an empty or duplicate serial');
+    }
+    serials.add(manifest.sn);
+    return copyManifest(manifest);
+  });
+  return { version: 1, complete: true, devices };
+}
+
+/** Rejects malformed or incomplete persisted snapshots without treating them as device truth. */
+export function parseCompleteDeviceSnapshot(value: unknown): CompleteDeviceSnapshot {
+  if (!isRecord(value) || value.version !== 1 || value.complete !== true || !Array.isArray(value.devices)) {
+    throw new TypeError('device snapshot is not a complete version 1 snapshot');
+  }
+  if (!value.devices.every(isManifest)) {
+    throw new TypeError('device snapshot contains a malformed manifest');
+  }
+  return createCompleteDeviceSnapshot(value.devices);
+}
+
+/** Builds the canonical registry and its snapshot from the same complete inventory pass. */
+export async function discoverCompleteDeviceRegistry<T extends DiscoveryDevice>(
+  client: DiscoveryClient<T>,
+): Promise<CompleteDeviceDiscovery<T>> {
+  const errors: Error[] = [];
+  const onError = (error: Error) => errors.push(error);
+  client.on('error', onError);
+  try {
+    const devices = await client.getDevices();
+    const registry = new Map<string, T>();
+    const manifests: DeviceManifest[] = [];
+    for (const device of devices) {
+      const resolved = await client.getDevice(device.sn);
+      registry.set(device.sn, resolved);
+      manifests.push(resolved.describe());
+    }
+    if (errors.length > 0) {
+      throw new Error('SDK reported an incomplete device discovery');
+    }
+    return { registry, snapshot: createCompleteDeviceSnapshot(manifests) };
+  } finally {
+    client.off('error', onError);
+  }
+}
+
+/**
+ * The owner-facing label for one device in a snapshot: its name followed by its model and codec, or
+ * `undefined` when the snapshot does not carry the serial.
+ *
+ * A device the runtime recognized but HomeKit could not represent has no accessory, so it has no
+ * display name for a diagnostic to resolve, and a condition about it can otherwise only be reported as
+ * a tally. Model and codec accompany the name because they are what separate that device from the rest
+ * of a fleet where several share a name.
+ */
+export function deviceSnapshotLabel(snapshot: CompleteDeviceSnapshot | undefined, serial: string): string | undefined {
+  const manifest = snapshot?.devices.find((device) => device.sn === serial);
+  if (manifest === undefined) {
+    return undefined;
+  }
+  const type = [manifest.model, manifest.codec].filter((part) => part !== undefined && part !== '').join(' ');
+  return type === '' ? manifest.name : `${manifest.name} [${type}]`;
+}

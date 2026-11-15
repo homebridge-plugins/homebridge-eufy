@@ -1,6 +1,10 @@
 # Ignore compiled code
 dist
 
+# VitePress documentation output
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
 # ------------- Defaults ------------- #
 
 # Logs
@@ -120,15 +124,10 @@ dist
 .yarn/build-state.yml
 .pnp.*
 
-.npmrc
 .history
 .nx/
 
 .angular
-
-src/plugin/version.ts
-src/version.ts
-homebridge-ui/version.ts
 
 TODO
 
@@ -144,3 +143,6 @@ diagnostics-*
 keys/
 
 .claude-octopus
+
+# Agent tooling writes its own local state here; the rules live in CODING_STANDARDS.md
+.claude/

@@ -1,0 +1,557 @@
+import type { AudioActions, CameraActions, LightActions } from '@mega-yfue/eufy-sdk';
+
+import { untrusted } from '../../device/member-trust.js';
+import {
+  ownService,
+  type AdapterAttachmentContext,
+  type AdapterEventTrace,
+  type AttachedAdapter,
+  type HomeKitAdapter,
+} from '../adapter.js';
+import {
+  deviceOperationIssuer,
+  enablementAnnouncement,
+  CAMERA_ENABLED_WRITE,
+  INVALID_OBSERVATION_CONDITION,
+  observationReader,
+  OPERATION_FAILED_CONDITION,
+  type DeviceOperationState,
+} from '../device-control.js';
+
+export const CAMERA_CONTROLS_ADAPTER_KEY = 'camera.controls';
+export const CAMERA_ENABLED_SERVICE_KEY = 'camera.enabled';
+export const CAMERA_LIGHT_SERVICE_KEY = 'camera.physical-light';
+/** The switch an earlier version published for the indicator LED, retained only to withdraw it. */
+export const CAMERA_STATUS_LED_SERVICE_KEY = 'camera.status-led';
+export const CAMERA_MICROPHONE_SERVICE_KEY = 'camera.microphone';
+export const CAMERA_SPEAKER_SERVICE_KEY = 'camera.speaker';
+
+/**
+ * The coverage row for a camera's enablement, which this bundle owns and requires writable because it
+ * presents a switch. The reading alone is admitted by `CAMERA_ENABLED_READ` in `device/member-trust.ts`,
+ * which every consumer of the observation shares.
+ */
+const CAMERA_ENABLED_WRITABLE_READ = {
+  id: 'camera.enabled.read',
+  kind: 'read',
+  type: 'bool',
+  writable: true,
+} as const;
+const LIGHT_POWER_READ = {
+  id: 'light.isOn.read',
+  kind: 'read',
+  type: 'bool',
+  writable: true,
+} as const;
+const LIGHT_POWER_WRITE = {
+  id: 'light.isOn.persistent-operation',
+  kind: 'persistent-operation',
+} as const;
+const LIGHT_BRIGHTNESS_READ = {
+  id: 'light.brightness.read',
+  kind: 'read',
+  type: 'number',
+  writable: true,
+} as const;
+const LIGHT_BRIGHTNESS_WRITE = {
+  id: 'light.brightness.persistent-operation',
+  kind: 'persistent-operation',
+} as const;
+const AUDIO_MICROPHONE_READ = {
+  id: 'audio.microphone.read',
+  kind: 'read',
+  type: 'bool',
+  writable: true,
+} as const;
+const AUDIO_MICROPHONE_WRITE = {
+  id: 'audio.microphone.persistent-operation',
+  kind: 'persistent-operation',
+} as const;
+const AUDIO_SPEAKER_READ = {
+  id: 'audio.speaker.read',
+  kind: 'read',
+  type: 'bool',
+  writable: true,
+} as const;
+const AUDIO_SPEAKER_WRITE = {
+  id: 'audio.speaker.persistent-operation',
+  kind: 'persistent-operation',
+} as const;
+const AUDIO_VOLUME_READ = {
+  id: 'audio.volume.read',
+  kind: 'read',
+  type: 'number',
+  writable: true,
+} as const;
+const AUDIO_VOLUME_WRITE = {
+  id: 'audio.volume.persistent-operation',
+  kind: 'persistent-operation',
+} as const;
+
+const CAMERA_CONTROL_ROWS = [
+  CAMERA_ENABLED_WRITABLE_READ,
+  LIGHT_POWER_READ,
+  LIGHT_POWER_WRITE,
+  LIGHT_BRIGHTNESS_READ,
+  LIGHT_BRIGHTNESS_WRITE,
+  AUDIO_MICROPHONE_READ,
+  AUDIO_MICROPHONE_WRITE,
+  AUDIO_SPEAKER_READ,
+  AUDIO_SPEAKER_WRITE,
+  AUDIO_VOLUME_READ,
+  AUDIO_VOLUME_WRITE,
+] as const;
+const CAMERA_CONTROL_REQUIREMENTS = [...CAMERA_CONTROL_ROWS, CAMERA_ENABLED_WRITE] as const;
+type CameraControlRequirement = (typeof CAMERA_CONTROL_REQUIREMENTS)[number];
+
+const CAMERA_CONTROL_OWNERS = new WeakMap<object, symbol>();
+
+const CAMERA_CONTROL_STATES = new WeakMap<object, DeviceOperationState>();
+
+/** The typed SDK camera, physical-light, and audio accessors consumed by HomeKit. */
+export interface CameraControlsSdkDevice {
+  camera?: () => CameraActions | undefined;
+  light?: () => LightActions | undefined;
+  audio?: () => AudioActions | undefined;
+}
+
+/** Complete HomeKit policy for the independent controls attached to an evidenced camera. */
+export const CAMERA_CONTROLS_ADAPTER = {
+  key: CAMERA_CONTROLS_ADAPTER_KEY,
+  role: 'primary-purpose',
+  requires: [CAMERA_ENABLED_WRITABLE_READ],
+  coverage: CAMERA_CONTROL_ROWS.map(({ id }) => id),
+  attach: attachCameraControls,
+} as const satisfies HomeKitAdapter;
+
+/** Attaches each camera control only to the official service matching that member's semantics. */
+function attachCameraControls(context: AdapterAttachmentContext): AttachedAdapter | undefined {
+  const { accessory, hap } = context;
+  const device = context.device as CameraControlsSdkDevice;
+  let camera: CameraActions | undefined;
+  try {
+    camera = device.camera?.();
+  } catch {
+    context.diagnose({
+      code: 'camera-controls-capability-unavailable',
+      capability: 'camera',
+      member: 'enabled',
+      active: true,
+      reason: 'sdk-fault',
+    });
+    return undefined;
+  }
+  if (!camera) {
+    context.diagnose({
+      code: 'camera-controls-capability-unavailable',
+      capability: 'camera',
+      member: 'enabled',
+      active: true,
+      reason: 'missing',
+    });
+    return undefined;
+  }
+  context.diagnose({
+    code: 'camera-controls-capability-unavailable',
+    capability: 'camera',
+    member: 'enabled',
+    active: false,
+    reason: 'recovered',
+  });
+
+  const services: object[] = [];
+  const owner = Symbol('camera-controls-owner');
+  const detachRejectors = new Set<(error: unknown) => void>();
+  let detached = false;
+  const own = <T extends object>(service: T): T => {
+    CAMERA_CONTROL_OWNERS.set(service, owner);
+    services.push(service);
+    return service;
+  };
+  const readBoolean = observationReader(context, 'boolean');
+
+  const readNumber = observationReader(context, 'number');
+  /**
+   * One authoritative numeric observation reduced to a HomeKit percentage, rejecting a value outside the
+   * range HomeKit accepts rather than clamping it, because a value out of range is a value this plugin has
+   * not understood.
+   */
+  const readPercent = (capability: string, member: string, minimum: number, read: () => unknown): number =>
+    readNumber(capability, member, read, (value) => Number.isInteger(value) && value >= minimum && value <= 100);
+
+  const enabledService = own(ownService(accessory, hap.Service.Switch, 'Camera Enabled', CAMERA_ENABLED_SERVICE_KEY));
+  const enabledPower = enabledService.getCharacteristic(hap.Characteristic.On);
+  const readEnabled = (): boolean => readBoolean('camera', 'enabled', () => camera.enabled);
+  enabledPower.onGet(readEnabled);
+  const previousState = CAMERA_CONTROL_STATES.get(enabledService);
+  const state: DeviceOperationState = {
+    owner,
+    activeOperations: previousState?.activeOperations ?? new Map(),
+    blockedOperations: previousState?.blockedOperations ?? new Set(),
+  };
+  CAMERA_CONTROL_STATES.set(enabledService, state);
+
+  const matches = (requirement: CameraControlRequirement): boolean => {
+    const installed = context.evidence.get(requirement.id);
+    return (
+      installed?.kind === requirement.kind &&
+      (!('type' in requirement) || installed.type === requirement.type) &&
+      (!('writable' in requirement) || installed.writable === requirement.writable)
+    );
+  };
+  const unavailable = (
+    capability: string,
+    member: string,
+    active: boolean,
+    reason: 'missing' | 'malformed' | 'sdk-fault' | 'recovered',
+  ): void => {
+    context.diagnose({
+      code: 'camera-controls-capability-unavailable',
+      capability,
+      member,
+      active,
+      reason,
+    });
+  };
+  const issue = deviceOperationIssuer({
+    context,
+    state,
+    owned: () => CAMERA_CONTROL_STATES.get(enabledService)?.owner === owner,
+    detached: () => detached,
+    detachRejectors,
+  });
+
+  const clearMemberDiagnostics = (capability: string, member: string): void => {
+    for (const code of [
+      'camera-controls-capability-unavailable',
+      INVALID_OBSERVATION_CONDITION,
+      OPERATION_FAILED_CONDITION,
+    ]) {
+      context.diagnose({ code, capability, member, active: false, reason: 'recovered' });
+    }
+  };
+  const removeService = (serviceType: typeof hap.Service.Switch, key: string): void => {
+    const service = accessory.getServiceById(serviceType, key);
+    if (service) {
+      CAMERA_CONTROL_OWNERS.delete(service);
+      accessory.removeService(service);
+    }
+  };
+  const evidenceState = (...requirements: CameraControlRequirement[]): 'absent' | 'malformed' | 'valid' => {
+    const installed = requirements.some(({ id }) => context.evidence.has(id));
+    return !installed ? 'absent' : requirements.every(matches) ? 'valid' : 'malformed';
+  };
+
+  /**
+   * Switches the camera's power from HomeKit, which is the only control that stays reachable once the camera
+   * is off.
+   *
+   * A camera reporting itself disabled is one Apple Home declines to write the camera operating mode of at
+   * all — measured on a real home — so the operating mode service cannot be the way back on. A plain switch
+   * carries no such meaning and Home delivers writes to it, which is why this one must not merely report the
+   * state it reads. Where the camera's power cannot be written the switch still refuses, but now says so
+   * instead of failing silently.
+   */
+  const enablementWritable =
+    evidenceState(CAMERA_ENABLED_WRITE) === 'valid' &&
+    typeof camera.setEnabled === 'function' &&
+    !untrusted(camera, 'enabled');
+  if (enablementWritable) {
+    unavailable('camera', 'enabled', false, 'recovered');
+  }
+  enabledPower.onSet((value) => {
+    if (!enablementWritable) {
+      unavailable('camera', 'enabled', true, 'missing');
+      throw new hap.HapStatusError(hap.HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE);
+    }
+    if (typeof value !== 'boolean') {
+      throw new hap.HapStatusError(hap.HAPStatus.INVALID_VALUE_IN_REQUEST);
+    }
+    return issue(
+      'camera',
+      'enabled',
+      () => camera.setEnabled!(value),
+      () => undefined,
+    ).catch((error: unknown) => {
+      try {
+        enabledPower.updateValue(readEnabled());
+      } catch {}
+      throw error;
+    });
+  });
+
+  /**
+   * The indicator LED moved to the camera operating mode service, where HomeKit calls it the camera
+   * operating mode indicator and the Home app shows it as the camera's status light. A switch published for
+   * it by an earlier version is withdrawn here, by the bundle that published it, so an accessory does not
+   * keep a second control for one member.
+   */
+  removeService(hap.Service.Switch, CAMERA_STATUS_LED_SERVICE_KEY);
+  clearMemberDiagnostics('camera', 'statusLed');
+
+  let light: LightActions | undefined;
+  let lightFault = false;
+  try {
+    light = device.light?.();
+  } catch {
+    lightFault = true;
+    light = undefined;
+  }
+  const lightPowerEvidence = evidenceState(LIGHT_POWER_READ, LIGHT_POWER_WRITE);
+  if (lightPowerEvidence === 'valid') {
+    if (!light || typeof light.set !== 'function') {
+      removeService(hap.Service.Lightbulb, CAMERA_LIGHT_SERVICE_KEY);
+      unavailable('light', 'isOn', true, lightFault ? 'sdk-fault' : 'missing');
+      const brightnessEvidence = evidenceState(LIGHT_BRIGHTNESS_READ, LIGHT_BRIGHTNESS_WRITE);
+      if (brightnessEvidence === 'valid') {
+        unavailable('light', 'brightness', true, lightFault ? 'sdk-fault' : 'missing');
+      } else if (brightnessEvidence === 'malformed') {
+        unavailable('light', 'brightness', true, 'malformed');
+      } else {
+        clearMemberDiagnostics('light', 'brightness');
+      }
+    } else {
+      unavailable('light', 'isOn', false, 'recovered');
+      const physicalLight = own(ownService(accessory, hap.Service.Lightbulb, 'Camera Light', CAMERA_LIGHT_SERVICE_KEY));
+      const power = physicalLight.getCharacteristic(hap.Characteristic.On);
+      const readPower = (): boolean => readBoolean('light', 'isOn', () => light.isOn);
+      power.onGet(readPower);
+      power.onSet((value) => {
+        if (typeof value !== 'boolean') {
+          throw new hap.HapStatusError(hap.HAPStatus.INVALID_VALUE_IN_REQUEST);
+        }
+        return issue(
+          'light',
+          'isOn',
+          () => light.set!(value),
+          () => {
+            try {
+              power.updateValue(readPower());
+            } catch {}
+          },
+        );
+      });
+      const brightnessEvidence = evidenceState(LIGHT_BRIGHTNESS_READ, LIGHT_BRIGHTNESS_WRITE);
+      if (brightnessEvidence === 'valid') {
+        if (typeof light.setBrightness !== 'function') {
+          if (physicalLight.testCharacteristic(hap.Characteristic.Brightness)) {
+            physicalLight.removeCharacteristic(physicalLight.getCharacteristic(hap.Characteristic.Brightness));
+          }
+          unavailable('light', 'brightness', true, 'missing');
+        } else {
+          unavailable('light', 'brightness', false, 'recovered');
+          physicalLight.addOptionalCharacteristic(hap.Characteristic.Brightness);
+          const brightness = physicalLight.getCharacteristic(hap.Characteristic.Brightness);
+          const readBrightness = (): number => readPercent('light', 'brightness', 1, () => light.brightness);
+          brightness.onGet(readBrightness);
+          brightness.onSet((value) => {
+            if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 100) {
+              throw new hap.HapStatusError(hap.HAPStatus.INVALID_VALUE_IN_REQUEST);
+            }
+            return issue(
+              'light',
+              'brightness',
+              () => light.setBrightness!(value),
+              () => {
+                try {
+                  brightness.updateValue(readBrightness());
+                } catch {}
+              },
+            );
+          });
+        }
+      } else {
+        if (physicalLight.testCharacteristic(hap.Characteristic.Brightness)) {
+          physicalLight.removeCharacteristic(physicalLight.getCharacteristic(hap.Characteristic.Brightness));
+        }
+        if (brightnessEvidence === 'malformed') {
+          unavailable('light', 'brightness', true, 'malformed');
+        } else {
+          clearMemberDiagnostics('light', 'brightness');
+        }
+      }
+    }
+  } else {
+    removeService(hap.Service.Lightbulb, CAMERA_LIGHT_SERVICE_KEY);
+    if (lightPowerEvidence === 'malformed') {
+      unavailable('light', 'isOn', true, 'malformed');
+    } else {
+      clearMemberDiagnostics('light', 'isOn');
+      clearMemberDiagnostics('light', 'brightness');
+    }
+  }
+
+  let audio: AudioActions | undefined;
+  let audioFault = false;
+  try {
+    audio = device.audio?.();
+  } catch {
+    audioFault = true;
+    audio = undefined;
+  }
+  const microphoneEvidence = evidenceState(AUDIO_MICROPHONE_READ, AUDIO_MICROPHONE_WRITE);
+  if (microphoneEvidence === 'valid') {
+    if (!audio || typeof audio.setMicrophone !== 'function') {
+      removeService(hap.Service.Microphone, CAMERA_MICROPHONE_SERVICE_KEY);
+      unavailable('audio', 'microphone', true, audioFault ? 'sdk-fault' : 'missing');
+    } else {
+      unavailable('audio', 'microphone', false, 'recovered');
+      const microphone = own(
+        ownService(accessory, hap.Service.Microphone, 'Microphone', CAMERA_MICROPHONE_SERVICE_KEY),
+      );
+      const mute = microphone.getCharacteristic(hap.Characteristic.Mute);
+      const readMute = (): boolean => !readBoolean('audio', 'microphone', () => audio.microphone);
+      mute.onGet(readMute);
+      mute.onSet((value) => {
+        if (typeof value !== 'boolean') {
+          throw new hap.HapStatusError(hap.HAPStatus.INVALID_VALUE_IN_REQUEST);
+        }
+        return issue(
+          'audio',
+          'microphone',
+          () => audio.setMicrophone!(!value),
+          () => {
+            try {
+              mute.updateValue(readMute());
+            } catch {}
+          },
+        );
+      });
+    }
+  } else {
+    removeService(hap.Service.Microphone, CAMERA_MICROPHONE_SERVICE_KEY);
+    if (microphoneEvidence === 'malformed') {
+      unavailable('audio', 'microphone', true, 'malformed');
+    } else {
+      clearMemberDiagnostics('audio', 'microphone');
+    }
+  }
+  const speakerEvidence = evidenceState(AUDIO_SPEAKER_READ, AUDIO_SPEAKER_WRITE);
+  if (speakerEvidence === 'valid') {
+    if (!audio || typeof audio.setSpeaker !== 'function') {
+      removeService(hap.Service.Speaker, CAMERA_SPEAKER_SERVICE_KEY);
+      unavailable('audio', 'speaker', true, audioFault ? 'sdk-fault' : 'missing');
+      const volumeEvidence = evidenceState(AUDIO_VOLUME_READ, AUDIO_VOLUME_WRITE);
+      if (volumeEvidence === 'valid') {
+        unavailable('audio', 'volume', true, audioFault ? 'sdk-fault' : 'missing');
+      } else if (volumeEvidence === 'malformed') {
+        unavailable('audio', 'volume', true, 'malformed');
+      } else {
+        clearMemberDiagnostics('audio', 'volume');
+      }
+    } else {
+      unavailable('audio', 'speaker', false, 'recovered');
+      const speaker = own(ownService(accessory, hap.Service.Speaker, 'Speaker', CAMERA_SPEAKER_SERVICE_KEY));
+      const mute = speaker.getCharacteristic(hap.Characteristic.Mute);
+      const readMute = (): boolean => !readBoolean('audio', 'speaker', () => audio.speaker);
+      mute.onGet(readMute);
+      mute.onSet((value) => {
+        if (typeof value !== 'boolean') {
+          throw new hap.HapStatusError(hap.HAPStatus.INVALID_VALUE_IN_REQUEST);
+        }
+        return issue(
+          'audio',
+          'speaker',
+          () => audio.setSpeaker!(!value),
+          () => {
+            try {
+              mute.updateValue(readMute());
+            } catch {}
+          },
+        );
+      });
+      const volumeEvidence = evidenceState(AUDIO_VOLUME_READ, AUDIO_VOLUME_WRITE);
+      if (volumeEvidence === 'valid') {
+        if (typeof audio.setVolume !== 'function') {
+          if (speaker.testCharacteristic(hap.Characteristic.Volume)) {
+            speaker.removeCharacteristic(speaker.getCharacteristic(hap.Characteristic.Volume));
+          }
+          unavailable('audio', 'volume', true, 'missing');
+        } else {
+          unavailable('audio', 'volume', false, 'recovered');
+          speaker.addOptionalCharacteristic(hap.Characteristic.Volume);
+          const volume = speaker.getCharacteristic(hap.Characteristic.Volume);
+          const readVolume = (): number => readPercent('audio', 'volume', 0, () => audio.volume);
+          volume.onGet(readVolume);
+          volume.onSet((value) => {
+            if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 100) {
+              throw new hap.HapStatusError(hap.HAPStatus.INVALID_VALUE_IN_REQUEST);
+            }
+            return issue(
+              'audio',
+              'volume',
+              () => audio.setVolume!(value),
+              () => {
+                try {
+                  volume.updateValue(readVolume());
+                } catch {}
+              },
+            );
+          });
+        }
+      } else {
+        if (speaker.testCharacteristic(hap.Characteristic.Volume)) {
+          speaker.removeCharacteristic(speaker.getCharacteristic(hap.Characteristic.Volume));
+        }
+        if (volumeEvidence === 'malformed') {
+          unavailable('audio', 'volume', true, 'malformed');
+        } else {
+          clearMemberDiagnostics('audio', 'volume');
+        }
+      }
+    }
+  } else {
+    removeService(hap.Service.Speaker, CAMERA_SPEAKER_SERVICE_KEY);
+    if (speakerEvidence === 'malformed') {
+      unavailable('audio', 'speaker', true, 'malformed');
+    } else {
+      clearMemberDiagnostics('audio', 'speaker');
+      clearMemberDiagnostics('audio', 'volume');
+    }
+  }
+
+  return {
+    /**
+     * Keeps the Camera Enabled switch honest when the camera's power changes.
+     *
+     * HomeKit is not told a characteristic moved unless the accessory says so: it subscribes to notifications
+     * and otherwise reads only while the Home app is open, so a switch that answers reads and never pushes shows
+     * the old state indefinitely. That matters most for the change this plugin did not make — the vendor app or a
+     * physical switch — which is exactly what the poll announcement reports.
+     *
+     * Pushed only when the value actually moved, so a repeated announcement is not a notification, and nothing is
+     * pushed for a reading that faults: a switch left showing its last known state is honest, one showing a
+     * guess is not.
+     */
+    event(event): AdapterEventTrace | undefined {
+      return enablementAnnouncement(context, event, () => {
+        try {
+          const reading = readEnabled();
+          if (enabledPower.value !== reading) {
+            enabledPower.updateValue(reading);
+          }
+          return 'valid';
+        } catch {
+          return 'missing';
+        }
+      });
+    },
+    detach(): void {
+      detached = true;
+      const detachedError = new hap.HapStatusError(hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      for (const reject of detachRejectors) {
+        reject(detachedError);
+      }
+      detachRejectors.clear();
+      for (const service of services) {
+        if (CAMERA_CONTROL_OWNERS.get(service) === owner) {
+          CAMERA_CONTROL_OWNERS.delete(service);
+          accessory.removeService(service as never);
+        }
+      }
+      if (CAMERA_CONTROL_STATES.get(enabledService)?.owner === owner) {
+        CAMERA_CONTROL_STATES.delete(enabledService);
+      }
+    },
+  };
+}
