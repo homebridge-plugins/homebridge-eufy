@@ -10,7 +10,6 @@ const ADAPTER_BY_ROW = new Map(
 const BLOCKED = new Set([
   'ptz.rotationSpeed.read',
   'camera.imageFlipped.persistent-operation',
-  'leak.leakDetected.read',
   'smoke.smokeDetected.read',
   'co.coDetected.read',
   'keypad.batteryLow.read',

@@ -2432,6 +2432,7 @@ const MAX_ACCESSORY_ALIASES = 32;
 const HOMEKIT_EVENT_ROUTES: Readonly<Record<string, ReadonlySet<string>>> = {
   'battery.status': new Set(['battery-alert', 'battery-level']),
   'contact.sensor': new Set(['contact-state']),
+  'leak.sensor': new Set(['leak-state']),
   'doorbell.press': new Set(['doorbell-press']),
   'doorbell.package': new Set(['package-presence']),
   'lock.mechanism': new Set(['lock-state']),
@@ -2658,6 +2659,7 @@ const HOMEKIT_CONDITIONS = {
   'battery-temperature-alert': ['log.homekit.batteryTemperatureAlert', 'log.action.allowBatteryCooling'],
   'contact-capability-unavailable': ['log.homekit.contactCapabilityUnavailable', 'log.action.waitContact'],
   'invalid-contact-observation': ['log.homekit.invalidContactObservation', 'log.action.waitContactObservation'],
+  'invalid-leak-observation': ['log.homekit.invalidLeakObservation', 'log.action.waitLeakObservation'],
   'siren-capability-unavailable': ['log.homekit.sirenCapabilityUnavailable', 'log.action.waitSiren'],
   'invalid-siren-active-observation': ['log.homekit.invalidSirenObservation', 'log.action.waitSirenObservation'],
   'smart-light-capability-unavailable': ['log.homekit.lightCapabilityUnavailable', 'log.action.waitLight'],
