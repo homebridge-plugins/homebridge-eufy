@@ -392,12 +392,19 @@ describe('diagnostic conditions', () => {
 
     try {
       createSdkLogger(logger)!.warn(
-        '[rtc-call] RTC sign for T8223P0000000000 refused: HTTP 401 code 26052 synthetic-close-error',
+        '[rtc-call] RTC sign for T8223P0000000000 on eu-pr (phone ie-pr, web eu-pr) refused: HTTP 401 code 26052 synthetic-close-error',
       );
       await logger.flush?.();
 
       const written = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8');
-      expect(JSON.parse(written)).toMatchObject({ event: 'rtc-sign-refused', httpStatus: 401, code: 26052 });
+      expect(JSON.parse(written)).toMatchObject({
+        event: 'rtc-sign-refused',
+        httpStatus: 401,
+        code: 26052,
+        signShard: 'eu-pr',
+        phoneShard: 'ie-pr',
+        webShard: 'eu-pr',
+      });
       expect(written).not.toContain('T8223P0000000000');
       expect(written).not.toContain('synthetic-close-error');
     } finally {

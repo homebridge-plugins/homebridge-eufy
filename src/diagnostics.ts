@@ -2155,11 +2155,26 @@ function sanitizeSdkPush(value: Record<string, unknown>): Record<string, unknown
     : { scope: 'sdk', level: 'debug', subsystem: 'push', event: 'push-received', eventType, device, events };
 }
 
-/** A refused RTC sign's HTTP status and cloud code: a shard 401 apart from any other refusal. */
-function sanitizeSignRefusal(value: Record<string, unknown>): Record<string, number> {
+const SHARD = /^[a-z]{2}(?:-pr)?$/;
+
+/**
+ * A refused RTC sign's HTTP status and cloud code, and the shard it was sent on beside the PHONE and WEB
+ * identity shards: a shard 401 apart from any other refusal, and a split account apart from a single-shard one.
+ */
+function sanitizeSignRefusal(value: Record<string, unknown>): Record<string, number | string> {
   const httpStatus = boundedInteger(value.httpStatus, 599, 100);
   const code = nonNegativeInteger(value.code);
-  return { ...(httpStatus === undefined ? {} : { httpStatus }), ...(code === undefined ? {} : { code }) };
+  const shard = (v: unknown): string | undefined => (typeof v === 'string' && SHARD.test(v) ? v : undefined);
+  const signShard = shard(value.signShard);
+  const phoneShard = shard(value.phoneShard);
+  const webShard = shard(value.webShard);
+  return {
+    ...(httpStatus === undefined ? {} : { httpStatus }),
+    ...(code === undefined ? {} : { code }),
+    ...(signShard === undefined ? {} : { signShard }),
+    ...(phoneShard === undefined ? {} : { phoneShard }),
+    ...(webShard === undefined ? {} : { webShard }),
+  };
 }
 
 function sanitizeSdkLiveStartTrace(candidate: unknown): Record<string, unknown> | undefined {
@@ -2290,12 +2305,23 @@ export function createSdkLogger(target: Partial<PlatformLogger> | undefined): Lo
       }
       return { type: typeof value };
     });
-    const sign = event === 'rtc-sign-refused' ? / HTTP (\d+) code (\d+)?/.exec(message) : null;
+    const sign =
+      event === 'rtc-sign-refused'
+        ? /(?: on (\S+) \(phone ([^,]+), web ([^)]+)\))? refused: HTTP (\d+) code (\d+)?/.exec(message)
+        : null;
     return {
       scope: 'sdk',
       subsystem,
       event,
-      ...(sign ? sanitizeSignRefusal({ httpStatus: Number(sign[1]), code: Number(sign[2]) }) : {}),
+      ...(sign
+        ? sanitizeSignRefusal({
+            signShard: sign[1],
+            phoneShard: sign[2],
+            webShard: sign[3],
+            httpStatus: Number(sign[4]),
+            code: Number(sign[5]),
+          })
+        : {}),
       ...(details.length ? { details } : {}),
       ...(args.length > MAX_SDK_DETAILS ? { detailsTruncated: true } : {}),
     };
