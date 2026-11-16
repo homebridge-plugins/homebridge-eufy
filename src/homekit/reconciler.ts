@@ -21,6 +21,7 @@ import type {
   LiveEncodeAttempt,
 } from './adapter.js';
 import { admittedHomeKitAdapters } from './representation.js';
+import { admitsVacuum } from './vacuum.js';
 
 /** One complete canonical registry and snapshot published from the same discovery pass. */
 export interface HomeKitRegistryView {
@@ -210,7 +211,8 @@ export class HomeKitReconciler {
         this.snapshotMedia?.discard?.(serial);
         this.detachHandles(previousHandles);
         this.attachedAdapters.delete(serial);
-        this.setRepresentationDiagnostic(serial, 'no-primary-purpose-member');
+        if (admitsVacuum(evidence.members)) this.clearRepresentationDiagnostic(serial);
+        else this.setRepresentationDiagnostic(serial, 'no-primary-purpose-member');
         continue;
       }
 
