@@ -154,6 +154,58 @@ describe('persisted runtime owner', () => {
     expect(debug.mock.calls[0]?.[0]).toContain('"errorType":"DeviceChannelUnresolvedError"');
     expect(debug.mock.calls[0]?.[0]).not.toContain('T80');
   });
+  it('starts the SDK with the stored sign-in and every other setting from config.json', async () => {
+    const stored = parseConfig({
+      platform: 'HomebridgeEufy',
+      username: 'runtime@example.invalid',
+      password: 'stored-password',
+      country: 'DE',
+      ffmpegPath: '/synthetic/removed-package/ffmpeg',
+      warmUpEvents: ['doorbellPress'],
+    });
+    const configured = parseConfig({
+      platform: 'HomebridgeEufy',
+      username: 'runtime@example.invalid',
+      ffmpegPath: '/synthetic/current-package/ffmpeg',
+      warmUpEvents: ['doorbellPress', 'personDetected'],
+    });
+    const clientFactory = vi.fn((): SdkClient => ({
+      start: vi.fn(async () => ({ state: 'authentication-required' as const })),
+      stop: vi.fn(async () => undefined),
+      deviceAvailability: vi.fn(() => undefined),
+    }));
+    const runtime = new RuntimeOwner({ error: vi.fn(), warn: vi.fn() }, configured, clientFactory, {
+      storageRoot: '/synthetic-runtime',
+      ownership: {
+        acquire: vi.fn(async () => ({
+          state: 'owner' as const,
+          lease: { release: vi.fn(async () => ({ state: 'stopped' as const })) },
+          recovered: false,
+        })),
+      },
+      persistence: {
+        active: vi.fn(async () => ({
+          account: 'runtime@example.invalid',
+          generation: 'synthetic-generation',
+          configuration: { load: () => stored },
+          session: { load: () => session(), save: vi.fn(), clear: vi.fn() },
+          push: { load: () => null, save: vi.fn(), clear: vi.fn() },
+          snapshot: { load: () => null, save: vi.fn() },
+        })),
+      },
+      statusPublisher: { start: vi.fn(() => true), update: vi.fn(() => true), stop: vi.fn() },
+    });
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(clientFactory.mock.calls.at(-1)?.[0]).toMatchObject({
+      password: 'stored-password',
+      country: 'DE',
+      ffmpegPath: '/synthetic/current-package/ffmpeg',
+      warmUpEvents: ['doorbellPress', 'personDetected'],
+    });
+  });
   it('owns startup, complete publication, and shutdown through one direct interface', async () => {
     const calls: string[] = [];
     const config = parseConfig({

@@ -480,7 +480,9 @@ export class RuntimeOwner {
     if (configuration.username?.trim().toLowerCase() !== active.account) {
       throw new Error('active account generation has mismatched configuration');
     }
-    return { active, config: configuration };
+    // The generation owns the sign-in; every other setting follows config.json, so an edit or a moved FFmpeg applies.
+    const { username, password, country, trustedDeviceName } = configuration;
+    return { active, config: { ...this.configuredConfig, username, password, country, trustedDeviceName } };
   }
 
   private createStatusPublisher(): RuntimeStatusPublisher {
