@@ -15,7 +15,8 @@ name: Release
 #
 # package.json's committed version is never what ships and is not consulted. Releasing is creating a
 # release; there is no bump commit to remember and no way for the number on the release page to
-# disagree with the number on npm.
+# disagree with the number on npm. Once a beta is on npm, `record` commits its number to its
+# `beta-X.Y.Z` branch, so the tree says what last shipped from it.
 #
 # A prerelease tag must be flagged `prerelease` on the release, and a stable tag must not be: the flag
 # is what decides whether the Homebridge UI offers the version to everyone or only to the beta channel,
@@ -50,6 +51,8 @@ jobs:
     # A fork must not publish.
     if: github.repository == 'homebridge-plugins/homebridge-eufy'
     runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.release.outputs.channel }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -148,3 +151,42 @@ jobs:
 
       - name: Publish to npm with OIDC
         run: npm publish --tag ${{ steps.release.outputs.channel }} --provenance --access public
+
+  # A beta's branch is named by the version's core (5.1.0-beta.3 ships from beta-5.1.0). Stable and alpha
+  # releases are not recorded: master takes changes only through a pull request.
+  record:
+    needs: publish
+    if: needs.publish.outputs.channel == 'beta'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Name the branch
+        id: branch
+        run: |
+          version="${TAG#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "name=beta-${version%%-*}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.branch.outputs.name }}
+
+      - name: Commit the released version
+        env:
+          VERSION: ${{ steps.branch.outputs.version }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+        run: |
+          set -euo pipefail
+          if [ "$(jq -r .version package.json)" = "$VERSION" ]; then
+            echo "$BRANCH already records $VERSION"
+            exit 0
+          fi
+          npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -qam "chore(release): record $VERSION as $BRANCH's version"
+          git push origin "HEAD:$BRANCH"
