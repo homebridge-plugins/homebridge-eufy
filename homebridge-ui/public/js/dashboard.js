@@ -205,6 +205,7 @@
     'camera.controls': 'serviceCameraSwitches',
     'contact.sensor': 'serviceContact',
     'leak.sensor': 'serviceLeak',
+    'smoke.sensor': 'serviceSmoke',
     'doorbell.press': 'serviceDoorbell',
     'lock.mechanism': 'serviceLock',
     'motion.sensor': 'serviceMotion',

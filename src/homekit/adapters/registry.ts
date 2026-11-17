@@ -11,6 +11,7 @@ import { PACKAGE_SENSOR_ADAPTER, PACKAGE_SENSOR_ADAPTER_KEY } from './package-se
 import { SECURITY_SYSTEM_ADAPTER, SECURITY_SYSTEM_ADAPTER_KEY } from './security-system.js';
 import { SIREN_ADAPTER, SIREN_ADAPTER_KEY } from './siren.js';
 import { SMART_LIGHT_ADAPTER, SMART_LIGHT_ADAPTER_KEY } from './smart-light.js';
+import { SMOKE_ADAPTER, SMOKE_ADAPTER_KEY } from './smoke.js';
 import type { HomeKitAdapter } from '../adapter.js';
 
 /** The closed set of adapters permitted to create HomeKit representation. */
@@ -28,4 +29,5 @@ export const ADAPTER_REGISTRY = {
   [SECURITY_SYSTEM_ADAPTER_KEY]: SECURITY_SYSTEM_ADAPTER,
   [SIREN_ADAPTER_KEY]: SIREN_ADAPTER,
   [SMART_LIGHT_ADAPTER_KEY]: SMART_LIGHT_ADAPTER,
+  [SMOKE_ADAPTER_KEY]: SMOKE_ADAPTER,
 } as const satisfies Readonly<Record<string, HomeKitAdapter>>;
