@@ -12,7 +12,6 @@ const BLOCKED = new Set([
   'camera.imageFlipped.persistent-operation',
   'leak.leakDetected.read',
   'smoke.smokeDetected.read',
-  'co.coDetected.read',
   'keypad.batteryLow.read',
   'keypad.charging.read',
 ]);

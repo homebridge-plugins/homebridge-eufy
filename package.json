@@ -44,7 +44,7 @@
   ],
   "dependencies": {
     "@homebridge/plugin-ui-utils": "^2.3.0",
-    "@mega-yfue/eufy-sdk": "0.6.0-beta.49",
+    "@mega-yfue/eufy-sdk": "0.6.0-beta.63",
     "ffmpeg-for-homebridge": "2.2.2"
   },
   "devDependencies": {
