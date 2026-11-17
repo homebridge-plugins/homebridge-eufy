@@ -1302,6 +1302,7 @@ describe('packed plugin', () => {
       'serviceCamera',
       'serviceCameraSwitches',
       'serviceContact',
+      'serviceLeak',
       'serviceDoorbell',
       'serviceLight',
       'serviceLock',

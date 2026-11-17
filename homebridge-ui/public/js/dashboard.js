@@ -204,6 +204,7 @@
     'camera.streaming': 'serviceCamera',
     'camera.controls': 'serviceCameraSwitches',
     'contact.sensor': 'serviceContact',
+    'leak.sensor': 'serviceLeak',
     'doorbell.press': 'serviceDoorbell',
     'lock.mechanism': 'serviceLock',
     'motion.sensor': 'serviceMotion',
