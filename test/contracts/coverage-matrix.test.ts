@@ -60,7 +60,7 @@ describe('SDK/HAP coverage matrix', () => {
 
     const representedBattery = SDK_HAP_COVERAGE_MATRIX.filter(({ adapter }) => adapter === 'battery.status');
     expect(representedBattery.map(({ id }) => id).sort()).toEqual(
-      ['battery.level.read', 'battery.charging.read', 'battery.batteryAlert.event'].sort(),
+      ['battery.level.read', 'battery.batteryLow.read', 'battery.charging.read', 'battery.batteryAlert.event'].sort(),
     );
 
     const representedSiren = SDK_HAP_COVERAGE_MATRIX.filter(({ adapter }) => adapter === 'siren.test');

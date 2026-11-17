@@ -1,4 +1,4 @@
-import type { AnyDeviceEvent, BatteryActions } from '@mega-yfue/eufy-sdk';
+import { Device, type AnyDeviceEvent, type BatteryActions } from '@mega-yfue/eufy-sdk';
 import { Accessory, Characteristic, HAPStatus, HapStatusError, Service, uuid } from '@homebridge/hap-nodejs';
 import type { PlatformAccessory } from 'homebridge';
 import { describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,8 @@ import {
   type BatteryDiagnostic,
   type BatterySdkDevice,
 } from '../../src/homekit/adapters/battery.js';
+import { indexDeviceEvidence } from '../../src/device/member-evidence.js';
+import { admittedHomeKitAdapters } from '../../src/homekit/representation.js';
 
 const HAP = { Service, Characteristic, HAPStatus, HapStatusError };
 /**
@@ -19,7 +21,7 @@ const HAP = { Service, Characteristic, HAPStatus, HapStatusError };
  * an adapter that had simply hardcoded the accessor.
  */
 const ANNOUNCED_LEVEL_PROPERTY = 'synthetic_battery_level';
-const LEVEL_EVIDENCE = { ...BATTERY_ADAPTER.requires[0], property: ANNOUNCED_LEVEL_PROPERTY };
+const LEVEL_EVIDENCE = { ...BATTERY_ADAPTER.requiresAny[0], property: ANNOUNCED_LEVEL_PROPERTY };
 const ALL_BATTERY_EVIDENCE = new Map(BATTERY_ADAPTER.coverage.map((id) => [id, { id, kind: 'event' as const }]));
 ALL_BATTERY_EVIDENCE.set('battery.level.read', LEVEL_EVIDENCE);
 ALL_BATTERY_EVIDENCE.set('battery.charging.read', {
@@ -210,7 +212,7 @@ describe('battery capability adapter', () => {
     const unnamed = attach(
       batteryDevice(() => 60),
       unnamedTarget,
-      new Map([['battery.level.read', BATTERY_ADAPTER.requires[0]]]),
+      new Map([['battery.level.read', BATTERY_ADAPTER.requiresAny[0]]]),
     )!;
     expect(unnamed.event?.(levelAnnouncement(30))).toBeUndefined();
 
@@ -317,5 +319,33 @@ describe('battery capability adapter', () => {
       active: true,
       reason: 'sdk-fault',
     });
+  });
+
+  /** A sensor reports a low-battery flag and no level: its Battery service carries StatusLowBattery from that flag alone. */
+  it('presents a sensor low-battery flag without a level', async () => {
+    const device = Device.fromRecord('T8900SYNTH000001', {
+      model: 'T8900',
+      params: { 1101: '30', 1550: '0', 1552: '1' },
+    });
+    device.bindActions(
+      { channel: 0, codec: device.codec, model: device.model, paramIds: new Set([1101, 1550, 1552]) } as never,
+      (() => Promise.resolve()) as never,
+    );
+    const evidence = indexDeviceEvidence(device.describe());
+    expect(admittedHomeKitAdapters(device.describe(), evidence).map(([key]) => key)).toContain(BATTERY_ADAPTER_KEY);
+
+    const target = accessory();
+    const adapter = attach(device as BatterySdkDevice, target, evidence.members)!;
+    const service = target.getServiceById(Service.Battery, BATTERY_ADAPTER_KEY)!;
+    expect(service.testCharacteristic(Characteristic.BatteryLevel)).toBe(false);
+    await expect(service.getCharacteristic(Characteristic.StatusLowBattery).handleGetRequest()).resolves.toBe(
+      Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW,
+    );
+
+    const property = evidence.members.get('battery.batteryLow.read')!.property;
+    adapter.event!({ eventName: 'propertyChanged', property, value: false } as unknown as AnyDeviceEvent);
+    expect(service.getCharacteristic(Characteristic.StatusLowBattery).value).toBe(
+      Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL,
+    );
   });
 });
