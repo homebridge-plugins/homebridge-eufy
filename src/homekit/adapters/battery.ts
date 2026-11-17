@@ -14,6 +14,12 @@ import {
 export const BATTERY_ADAPTER_KEY = 'battery.status';
 
 const BATTERY_LEVEL_REQUIREMENT = BATTERY_LEVEL_READ;
+const BATTERY_LOW_REQUIREMENT = {
+  id: 'battery.batteryLow.read',
+  kind: 'read',
+  type: 'bool',
+  writable: false,
+} as const;
 const BATTERY_CHARGING_EVIDENCE = 'battery.charging.read';
 const BATTERY_ALERT_EVENT_EVIDENCE = 'battery.batteryAlert.event';
 const LOW_BATTERY_THRESHOLD = 20;
@@ -49,17 +55,26 @@ type BatteryDiagnosticReason = 'missing' | 'malformed' | 'sdk-fault' | 'hot' | '
 export interface BatteryDiagnostic extends AdapterDiagnostic {
   code: 'battery-capability-unavailable' | 'invalid-battery-observation' | 'battery-temperature-alert';
   capability: 'battery';
-  member: 'level' | 'charging' | 'batteryAlert';
+  member: 'level' | 'charging' | 'batteryAlert' | 'batteryLow';
   active: boolean;
   reason: BatteryDiagnosticReason;
 }
 
-/** Complete supplemental HomeKit policy for verified battery evidence. */
+/**
+ * Complete supplemental HomeKit policy for verified battery evidence: a level, or on a sensor, which reports no level,
+ * its low-battery flag alone.
+ */
 export const BATTERY_ADAPTER = {
   key: BATTERY_ADAPTER_KEY,
   role: 'supplemental',
-  requires: [BATTERY_LEVEL_REQUIREMENT],
-  coverage: [BATTERY_LEVEL_REQUIREMENT.id, BATTERY_CHARGING_EVIDENCE, BATTERY_ALERT_EVENT_EVIDENCE],
+  requires: [],
+  requiresAny: [BATTERY_LEVEL_REQUIREMENT, BATTERY_LOW_REQUIREMENT],
+  coverage: [
+    BATTERY_LEVEL_REQUIREMENT.id,
+    BATTERY_LOW_REQUIREMENT.id,
+    BATTERY_CHARGING_EVIDENCE,
+    BATTERY_ALERT_EVENT_EVIDENCE,
+  ],
   attach: attachBattery,
 } as const satisfies HomeKitAdapter;
 
@@ -113,8 +128,10 @@ function attachBattery(context: AdapterAttachmentContext): AttachedAdapter | und
    * foreign value to this battery.
    */
   const announcedLevelProperty = context.evidence.get(BATTERY_LEVEL_REQUIREMENT.id)?.property;
+  const hasLevel = context.evidence.has(BATTERY_LEVEL_REQUIREMENT.id);
+  const announcedLowProperty = hasLevel ? undefined : context.evidence.get(BATTERY_LOW_REQUIREMENT.id)?.property;
 
-  const fail = (member: 'level' | 'charging', reason: BatteryDiagnosticReason): never => {
+  const fail = (member: 'level' | 'charging' | 'batteryLow', reason: BatteryDiagnosticReason): never => {
     context.diagnose({
       code: 'invalid-battery-observation',
       capability: 'battery',
@@ -124,7 +141,7 @@ function attachBattery(context: AdapterAttachmentContext): AttachedAdapter | und
     });
     throw new hap.HapStatusError(hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
   };
-  const recover = (member: 'level' | 'charging'): void => {
+  const recover = (member: 'level' | 'charging' | 'batteryLow'): void => {
     context.diagnose({
       code: 'invalid-battery-observation',
       capability: 'battery',
@@ -160,8 +177,31 @@ function attachBattery(context: AdapterAttachmentContext): AttachedAdapter | und
     return level;
   };
 
-  service.getCharacteristic(hap.Characteristic.BatteryLevel).onGet(readLevel);
+  const flagValue = (low: boolean): number =>
+    low
+      ? hap.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
+      : hap.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL;
+  const readLow = (): boolean => {
+    let low: unknown;
+    try {
+      low = battery.batteryLow;
+    } catch {
+      return fail('batteryLow', 'sdk-fault');
+    }
+    if (typeof low !== 'boolean') {
+      return fail('batteryLow', low === undefined ? 'missing' : 'malformed');
+    }
+    recover('batteryLow');
+    return low;
+  };
+
+  if (hasLevel) {
+    service.getCharacteristic(hap.Characteristic.BatteryLevel).onGet(readLevel);
+  }
   service.getCharacteristic(hap.Characteristic.StatusLowBattery).onGet(() => {
+    if (!hasLevel) {
+      return flagValue(readLow());
+    }
     if (state.lowAlert) {
       return hap.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW;
     }
@@ -188,6 +228,17 @@ function attachBattery(context: AdapterAttachmentContext): AttachedAdapter | und
 
   return {
     event(event: AnyDeviceEvent): AdapterEventTrace | undefined {
+      if (event.eventName === 'propertyChanged' && announcedLowProperty !== undefined) {
+        if (event.property !== announcedLowProperty) {
+          return undefined;
+        }
+        if (typeof event.value !== 'boolean') {
+          return { event: 'battery-alert', observation: event.value === undefined ? 'missing' : 'malformed' };
+        }
+        service.updateCharacteristic(hap.Characteristic.StatusLowBattery, flagValue(event.value));
+        recover('batteryLow');
+        return { event: 'battery-alert', observation: 'valid' };
+      }
       if (event.eventName === 'propertyChanged') {
         if (announcedLevelProperty === undefined || event.property !== announcedLevelProperty) {
           return undefined;
