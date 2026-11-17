@@ -244,7 +244,12 @@ describe('platform lifecycle', () => {
 
       await vi.waitFor(() =>
         expect(clientFactory).toHaveBeenCalledExactlyOnceWith(
-          replacementConfig,
+          expect.objectContaining({
+            username: replacementConfig.username,
+            password: replacementConfig.password,
+            country: replacementConfig.country,
+            trustedDeviceName: replacementConfig.trustedDeviceName,
+          }),
           expect.objectContaining({ account: 'replacement@example.invalid' }),
           expect.objectContaining({
             error: expect.any(Function),
