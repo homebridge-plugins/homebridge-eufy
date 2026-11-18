@@ -2047,7 +2047,14 @@ describe('guided diagnostics issue handoff', () => {
 
     try {
       recordFleet(root, [
-        { accessory: alias, model: 'T8410', represented: true, attached: false, services: ['camera.streaming'] },
+        {
+          accessory: alias,
+          model: 'T8410',
+          firmware: '1.2.3.4',
+          represented: true,
+          attached: false,
+          services: ['camera.streaming'],
+        },
         { accessory: 'T8410P0000000000', model: 'T8410', represented: true, attached: true, services: [] },
       ]);
       await diagnostics.authorize('live-media', 'now');
@@ -2073,7 +2080,14 @@ describe('guided diagnostics issue handoff', () => {
           `${JSON.stringify({
             version: 1,
             devices: [
-              { accessory: alias, model: 'T8410', represented: true, attached: false, services: ['camera.streaming'] },
+              {
+                accessory: alias,
+                model: 'T8410',
+                firmware: '1.2.3.4',
+                represented: true,
+                attached: false,
+                services: ['camera.streaming'],
+              },
             ],
           })}\n`,
         ),

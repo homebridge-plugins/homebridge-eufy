@@ -149,10 +149,13 @@ export function createEufyPlatform(
             storageRoot,
             view.snapshot.devices.map((manifest) => {
               const admission = describeHomeKitRepresentation(manifest);
-              const station = view.registry.get(manifest.sn)?.stationSn;
+              const device = view.registry.get(manifest.sn);
+              const station = device?.stationSn;
+              const firmware = fleetFirmware(device);
               return {
                 accessory: diagnostics.aliasFor(manifest.sn) ?? 'accessory-unaliased',
                 ...(manifest.model === undefined ? {} : { model: manifest.model }),
+                ...(firmware === undefined ? {} : { firmware }),
                 represented: admission.represented,
                 attached: station !== undefined && station !== manifest.sn,
                 services: admission.services,
@@ -258,3 +261,12 @@ function createAccessoryStore(api: PlatformApi): HomeKitAccessoryStore | undefin
 }
 
 export const EufyPlatform = createEufyPlatform(createPersistedSdkClient, 10_000, process);
+/** The firmware version a device reports through its typed identity accessor; nothing where it reports none or the read faults. */
+function fleetFirmware(device: unknown): string | undefined {
+  try {
+    const info = (device as { info?: () => { firmwareVersion?: unknown } | undefined } | undefined)?.info?.();
+    return typeof info?.firmwareVersion === 'string' ? info.firmwareVersion : undefined;
+  } catch {
+    return undefined;
+  }
+}
