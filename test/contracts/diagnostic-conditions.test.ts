@@ -519,7 +519,7 @@ describe('diagnostic conditions', () => {
       'session-unreachable': { waitedMs: 25000 },
       'level2-unavailable': { reason: 'grace-elapsed', waitedMs: 8000 },
       'cipher-fallback': { cipherId: 209, answeredCipherId: 196 },
-      'level2-negotiating': { cipherId: 209 },
+      'level2-negotiating': { cipherId: 209, version: 1 },
       'lookup-channels': { local: true, cloud: false, cloudMissing: 'dsk-key' },
       'station-resolved': { topology: 'attached', channel: 2, stationAdmin: 'self', stationModel: 'T8030' },
       'station-channel-unresolved': { issue: 'shared' },
@@ -548,6 +548,14 @@ describe('diagnostic conditions', () => {
       resolved?.stationModel,
       'a base this SDK reaches differently reads like a base switched off unless its model is retained',
     ).toBe('T8030');
+
+    const negotiating = debug.mock.calls
+      .map(([message]) => JSON.parse(message))
+      .find((record) => record.phase === 'level2-negotiating');
+    expect(
+      negotiating?.version,
+      'a derivation that fails reads the same on either key branch unless the gateway info version is retained',
+    ).toBe(1);
 
     const lookup = debug.mock.calls
       .map(([message]) => JSON.parse(message))

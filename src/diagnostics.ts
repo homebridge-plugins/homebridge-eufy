@@ -2086,7 +2086,12 @@ const LIVE_TRACE_PHASES = {
     const answeredCipherId = boundedInteger(c.answeredCipherId, 65535);
     return cipherId === undefined || answeredCipherId === undefined ? undefined : { cipherId, answeredCipherId };
   },
-  'level2-negotiating': retainedInteger('cipherId', 65535),
+  /** The cipher a negotiation began under, and the gateway info's header version that picked its key branch. */
+  'level2-negotiating': (c) => {
+    const cipherId = boundedInteger(c.cipherId, 65535);
+    const version = boundedInteger(c.version, 255);
+    return cipherId === undefined ? undefined : { cipherId, ...(version === undefined ? {} : { version }) };
+  },
   /**
    * What a call resolved a station as, which decides what its failure means.
    *
