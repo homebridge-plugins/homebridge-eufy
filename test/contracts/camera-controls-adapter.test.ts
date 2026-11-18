@@ -187,6 +187,25 @@ describe('camera controls capability adapter', () => {
     ).toBe(false);
   });
 
+  it('treats a light the SDK only reads, with no write operation, as absent rather than malformed', () => {
+    const target = accessory();
+    const diagnostics: AdapterDiagnostic[] = [];
+    const readOnlyLight = new Map(EVIDENCE);
+    readOnlyLight.set('light.isOn.read', { id: 'light.isOn.read', kind: 'read', type: 'bool', writable: false });
+    readOnlyLight.delete('light.isOn.persistent-operation');
+
+    attach(target, device({ enabled: true }, { isOn: false }), readOnlyLight, (diagnostic) =>
+      diagnostics.push(diagnostic),
+    );
+
+    expect(target.getServiceById(Service.Lightbulb, CAMERA_LIGHT_SERVICE_KEY)).toBeUndefined();
+    expect(
+      diagnostics.filter(
+        ({ code, member, active }) => code === 'camera-controls-capability-unavailable' && member === 'isOn' && active,
+      ),
+    ).toEqual([]);
+  });
+
   it('faults malformed authoritative observations instead of borrowing another boolean member', async () => {
     const target = accessory();
     const diagnostics: AdapterDiagnostic[] = [];
