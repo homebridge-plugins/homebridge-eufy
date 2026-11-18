@@ -779,10 +779,13 @@ interface PersistedFfmpegEnvironment {
  * `attached` is what decides what a media failure means, because a camera behind a HomeBase reaches its media
  * over that base and a standalone one does not. `services` is empty for a device nothing represents, and names
  * what a partially represented one does become — which is the difference between unsupported and incomplete.
+ * `firmware` is the version the device reports, a HomeBase's included, because a protocol a station speaks
+ * depends on it.
  */
 interface PersistedFleetEntry {
   readonly accessory: string;
   readonly model?: string;
+  readonly firmware?: string;
   readonly represented: boolean;
   readonly attached: boolean;
   readonly services: readonly string[];
@@ -822,6 +825,8 @@ function readFleet(storageRoot: string): PersistedFleetEntry[] | undefined {
         return [];
       }
       const model = typeof row.model === 'string' ? boundedText(row.model, MAX_DEVICE_MODEL_LENGTH) : undefined;
+      const firmware =
+        typeof row.firmware === 'string' ? boundedText(row.firmware, MAX_DEVICE_MODEL_LENGTH) : undefined;
       const services = (Array.isArray(row.services) ? row.services : [])
         .filter((service): service is string => typeof service === 'string')
         .slice(0, MAX_FLEET_SERVICES)
@@ -833,6 +838,7 @@ function readFleet(storageRoot: string): PersistedFleetEntry[] | undefined {
         {
           accessory,
           ...(model === undefined ? {} : { model }),
+          ...(firmware === undefined ? {} : { firmware }),
           represented: row.represented,
           attached: row.attached,
           services,
