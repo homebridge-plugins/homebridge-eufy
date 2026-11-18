@@ -2728,6 +2728,7 @@ const HOMEKIT_CONDITIONS = {
   ],
   'camera-talkback-failed': ['log.homekit.cameraTalkbackFailed', 'log.action.retryTalkback'],
   'camera-talkback-capability-unavailable': ['log.homekit.cameraTalkbackUnavailable', 'log.action.waitTalkback'],
+  'vacuum-matter-disabled': ['log.homekit.vacuumMatterDisabled', 'log.action.enableMatter'],
 } as const;
 
 type HomeKitConditionCode = keyof typeof HOMEKIT_CONDITIONS;
