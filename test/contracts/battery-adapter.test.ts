@@ -322,6 +322,30 @@ describe('battery capability adapter', () => {
   });
 
   /** A sensor reports a low-battery flag and no level: its Battery service carries StatusLowBattery from that flag alone. */
+  /** A level a cached Battery service still carries from an earlier version is withdrawn from a sensor that reports none. */
+  it('withdraws a cached battery level from a sensor that reports only a low flag', () => {
+    const device = Device.fromRecord('T8900SYNTH000001', {
+      model: 'T8900',
+      params: { 1101: '30', 1550: '0', 1552: '1' },
+    });
+    device.bindActions(
+      { channel: 0, codec: device.codec, model: device.model, paramIds: new Set([1101, 1550, 1552]) } as never,
+      (() => Promise.resolve()) as never,
+    );
+    const evidence = indexDeviceEvidence(device.describe());
+    const target = accessory();
+    target
+      .addService(Service.Battery, 'Battery', BATTERY_ADAPTER_KEY)
+      .getCharacteristic(Characteristic.BatteryLevel)
+      .updateValue(30);
+
+    attach(device as BatterySdkDevice, target, evidence.members);
+
+    expect(
+      target.getServiceById(Service.Battery, BATTERY_ADAPTER_KEY)!.testCharacteristic(Characteristic.BatteryLevel),
+    ).toBe(false);
+  });
+
   it('presents a sensor low-battery flag without a level', async () => {
     const device = Device.fromRecord('T8900SYNTH000001', {
       model: 'T8900',
