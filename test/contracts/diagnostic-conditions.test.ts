@@ -1835,6 +1835,41 @@ describe('diagnostic conditions', () => {
     }
   }, 30_000);
 
+  /** Each process that logs into a running reproduction first names its build, so a restart onto another version divides the records. */
+  it('opens each process share of a reproduction with one build-loaded record', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-build-loaded-'));
+    const diagnostics = new GuidedDiagnostics(root);
+    await diagnostics.authorize('other', 'now');
+    await diagnostics.startReproduction();
+    const event = JSON.stringify({ scope: 'sdk', level: 'warn', subsystem: 'p2p', event: 'connection-retrying' });
+
+    try {
+      for (const logger of [0, 1].map(() =>
+        createDiagnosticLogger({ error: vi.fn(), info: vi.fn(), warn: vi.fn() }, root),
+      )) {
+        logger.debug?.(event);
+        logger.debug?.(event);
+        await logger.flush?.();
+      }
+
+      const events = readFileSync(join(root, 'logs', 'homebridge-eufy.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(events.map(({ event }) => event)).toEqual([
+        'build-loaded',
+        'connection-retrying',
+        'connection-retrying',
+        'build-loaded',
+        'connection-retrying',
+        'connection-retrying',
+      ]);
+      expect(events[0]).toMatchObject({ scope: 'sdk', plugin: expect.any(String), sdk: expect.any(String) });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it('reconstructs file records from allowlisted fields and excludes FFmpeg', async () => {
     const root = mkdtempSync(join(tmpdir(), 'homebridge-eufy-diagnostics-'));
     await new GuidedDiagnostics(root).authorize('startup-authentication', 'now');
