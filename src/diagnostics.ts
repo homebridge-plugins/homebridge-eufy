@@ -1855,6 +1855,9 @@ class JsonLineLog {
 /**
  * Routes human messages to Homebridge and structured events to the plugin JSONL log.
  * File writes preserve accepted order; records beyond the bounded pending queue are counted and reported.
+ * The first record this process writes into a running reproduction is preceded by one `build-loaded` record of
+ * the same scope naming the plugin and SDK versions, so the records of a capture that spans an update or a
+ * rollback divide at it, and a class with no evidence of its own stays missing.
  */
 export function createDiagnosticLogger(
   target: PlatformLogger,
@@ -1869,6 +1872,7 @@ export function createDiagnosticLogger(
     }
   };
   const file = storageRoot ? new JsonLineLog(storageRoot, reportFileFailure, now) : undefined;
+  let loadedFor: string | undefined;
   const debug = file
     ? (message: string): void => {
         const event = sanitizeStructuredEvent(message);
@@ -1877,6 +1881,16 @@ export function createDiagnosticLogger(
         const verbose = VERBOSE_SCOPES.has(String(event.scope));
         if (verbose && (!session || !selectedEvidence(session).includes(evidenceClassOf(event)))) {
           return;
+        }
+        if (session?.reproductionStartedAt && !session.reproductionEndedAt && session.supportCaseId !== loadedFor) {
+          loadedFor = session.supportCaseId;
+          file.write({
+            scope: event.scope,
+            level: 'info',
+            event: 'build-loaded',
+            plugin: PLUGIN_VERSION,
+            sdk: SDK_VERSION,
+          });
         }
         file.write(event);
       }

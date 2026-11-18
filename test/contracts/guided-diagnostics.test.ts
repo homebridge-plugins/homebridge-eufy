@@ -1459,6 +1459,7 @@ describe('guided diagnostics session', () => {
           });
 
       expect(retained('homekit-log')).toEqual([
+        { scope: 'homekit', level: 'info', event: 'build-loaded', plugin: expect.any(String), sdk: expect.any(String) },
         {
           scope: 'homekit',
           level: 'debug',
