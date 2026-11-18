@@ -237,9 +237,11 @@ function attachCameraControls(context: AdapterAttachmentContext): AttachedAdapte
       accessory.removeService(service);
     }
   };
+  /** A member the SDK only reads, with no operation to write it, is not a control: absent, not malformed. */
   const evidenceState = (...requirements: CameraControlRequirement[]): 'absent' | 'malformed' | 'valid' => {
-    const installed = requirements.some(({ id }) => context.evidence.has(id));
-    return !installed ? 'absent' : requirements.every(matches) ? 'valid' : 'malformed';
+    const installed = requirements.filter(({ id }) => context.evidence.has(id));
+    const readOnly = installed.every(({ id }) => context.evidence.get(id)?.writable === false);
+    return installed.length === 0 || readOnly ? 'absent' : requirements.every(matches) ? 'valid' : 'malformed';
   };
 
   /**
