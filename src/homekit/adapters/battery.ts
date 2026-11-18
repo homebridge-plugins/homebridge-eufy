@@ -197,6 +197,8 @@ function attachBattery(context: AdapterAttachmentContext): AttachedAdapter | und
 
   if (hasLevel) {
     service.getCharacteristic(hap.Characteristic.BatteryLevel).onGet(readLevel);
+  } else if (service.testCharacteristic(hap.Characteristic.BatteryLevel)) {
+    service.removeCharacteristic(service.getCharacteristic(hap.Characteristic.BatteryLevel));
   }
   service.getCharacteristic(hap.Characteristic.StatusLowBattery).onGet(() => {
     if (!hasLevel) {
