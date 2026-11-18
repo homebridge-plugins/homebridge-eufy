@@ -142,6 +142,7 @@ function deviceClassOf(codec: DeviceManifest['codec']): DashboardDevice['deviceC
     light: 'light',
     printer: 'printer',
     display: 'other',
+    tracker: 'other',
   };
   return classes[codec];
 }
