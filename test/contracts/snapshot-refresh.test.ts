@@ -290,3 +290,25 @@ describe('push thumbnail under refresh', () => {
     }
   });
 });
+
+/** A still the SDK answers from its retained image instead of a fresh capture is kept as stored-only, never as live. */
+describe('retained live still', () => {
+  it('keeps a still the SDK marks retained with stored-only provenance', async () => {
+    const images = retainedImages([]);
+    const acquisition = new SnapshotAcquisition(images, NO_CEILING, undefined, () => 0);
+    const source = {
+      snapshotLive: vi.fn(async () => ({
+        jpeg: jpeg('retained still'),
+        width: 1280,
+        height: 720,
+        retained: true as const,
+      })),
+    };
+
+    await acquisition.acquire({ identity: {}, serial: 'SYNTHETIC0000000E' }, source, 'Live');
+
+    await vi.waitFor(() =>
+      expect(images.write).toHaveBeenCalledWith('SYNTHETIC0000000E', expect.any(Buffer), 'stored-only'),
+    );
+  });
+});

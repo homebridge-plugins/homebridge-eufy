@@ -403,8 +403,8 @@ export class SnapshotAcquisition implements SnapshotMediaAdapter {
         : undefined;
     const pending = Promise.resolve()
       .then(() => snapshotLive({ signal: abandonment.signal }))
-      .then(({ jpeg }) => {
-        const retained = this.retain(scope, jpeg, 'live', generation);
+      .then(({ jpeg, retained: stale }) => {
+        const retained = this.retain(scope, jpeg, stale ? 'stored-only' : 'live', generation);
         this.failedLive.delete(scope.serial);
         return retained;
       })
