@@ -53,7 +53,7 @@
     "homebridge": "^2.5.0",
     "prettier": "^3.10.1",
     "typescript": "^7.0.2",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   },
   "homepage": "https://homebridge-plugins.github.io/homebridge-eufy/",
   "author": "homebridge-eufy",
