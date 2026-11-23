@@ -19,6 +19,7 @@ import {
 import { deviceSnapshotLabel } from './device/snapshot.js';
 import { HomeKitReconciler, type HomeKitAccessoryStore } from './homekit/reconciler.js';
 import { describeHomeKitRepresentation } from './homekit/representation.js';
+import { representVacuums } from './homekit/vacuum.js';
 import type { AdaptationDiagnostics } from './media/contracts.js';
 import { FfmpegLiveMedia, resolveFfmpegIdentity, SMALL_VIDEO_PACKET_SIZE } from './media/live-stream.js';
 import { FfmpegRecordingMedia } from './media/recording.js';
@@ -50,6 +51,8 @@ interface PlatformApi {
   registerPlatformAccessories?: API['registerPlatformAccessories'];
   updatePlatformAccessories?: API['updatePlatformAccessories'];
   unregisterPlatformAccessories?: API['unregisterPlatformAccessories'];
+  isMatterEnabled?: API['isMatterEnabled'];
+  matter?: API['matter'];
 }
 
 interface EufyPlatformConstructor {
@@ -65,6 +68,7 @@ export function createEufyPlatform(
     private readonly runtime: RuntimeOwner;
     private readonly cachedAccessories: PlatformAccessory[] = [];
     private reconciler?: HomeKitReconciler;
+    private vacuums?: () => void;
     private unconfirmedWrites?: () => void;
     private fleet?: () => void;
 
@@ -174,6 +178,7 @@ export function createEufyPlatform(
           }
         }
         this.reconciler?.stop();
+        this.vacuums?.();
         void this.runtime.stop().finally(() => diagnosticLog.flush?.());
       };
       for (const signal of signals) {
@@ -229,6 +234,19 @@ export function createEufyPlatform(
           );
           this.reconciler.start();
         }
+        const matter = api.isMatterEnabled?.() ? api.matter : undefined;
+        this.vacuums ??= representVacuums(
+          this.runtime,
+          matter && {
+            deviceType: matter.deviceTypes.RoboticVacuumCleaner,
+            uuid: (serial) => matter.uuid.generate(`d1_${serial}`),
+            register: (accessory) => matter.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]),
+            unregister: (accessory) => matter.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]),
+            update: (uuid, cluster, state) => matter.updateAccessoryState(uuid, cluster, state),
+          },
+          (diagnostic, serials) => diagnostics.reportHomeKit(diagnostic, serials),
+          (serial) => configuredConfig.entityPreferences[serial]?.represented === false,
+        );
         void this.runtime.start();
       });
       api.on('shutdown', stop);

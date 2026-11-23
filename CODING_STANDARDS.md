@@ -59,6 +59,9 @@ or dependency edge requires updating this section and the architecture contract 
   camera bundles share: issuing a bounded HomeKit-initiated SDK operation and reading an authoritative
   observation fail-closed, plus the coalescing write queue the persistent-write adapters share. Adapters
   keep their own policy.
+  `homekit/vacuum.ts` is the one representation outside the HAP reconciler: robot vacuums have no HAP
+  service, so it registers them through the Homebridge Matter API the composition root hands it, and adds
+  no module edge.
 - `platform.ts` and `ui/server.ts` are composition roots. The UI server may consume diagnostics to
   manage explicitly initiated support sessions and media retention to clear account-bound images after
   successful account replacement, and the `ui/` dashboard projection may consume

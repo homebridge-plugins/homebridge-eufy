@@ -8,6 +8,7 @@ import {
 } from '../device/member-evidence.js';
 import type { HomeKitAdapter } from './adapter.js';
 import { ADAPTER_REGISTRY } from './adapters/registry.js';
+import { admitsVacuum } from './vacuum.js';
 
 type AdmittedHomeKitAdapter = readonly [key: string, adapter: HomeKitAdapter];
 
@@ -35,12 +36,18 @@ export function describeHomeKitRepresentation(manifest: DeviceManifest): {
   controllable: boolean;
   services: string[];
 } {
-  const primary = admittedHomeKitAdapters(manifest).filter(([, adapter]) => adapter.role === 'primary-purpose');
+  const evidence = indexDeviceEvidence(manifest);
+  const primary = admittedHomeKitAdapters(manifest, evidence).filter(
+    ([, adapter]) => adapter.role === 'primary-purpose',
+  );
+  const vacuum = admitsVacuum(evidence.members);
   return {
-    represented: primary.length > 0,
-    controllable: primary.some(([, adapter]) =>
-      adapter.coverage.some((id) => id.endsWith('.persistent-operation') || id.endsWith('.momentary-action')),
-    ),
-    services: primary.map(([key]) => key),
+    represented: vacuum || primary.length > 0,
+    controllable:
+      vacuum ||
+      primary.some(([, adapter]) =>
+        adapter.coverage.some((id) => id.endsWith('.persistent-operation') || id.endsWith('.momentary-action')),
+      ),
+    services: [...primary.map(([key]) => key), ...(vacuum ? ['vacuum.matter'] : [])],
   };
 }
