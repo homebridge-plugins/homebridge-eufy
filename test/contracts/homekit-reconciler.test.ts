@@ -842,6 +842,18 @@ describe('HomeKit registry reconciliation', () => {
     expect(recording.unregisterPlatformAccessories).not.toHaveBeenCalled();
   });
 
+  it('represents a lock target for the T8530 video lock', () => {
+    const serial = 'synthetic-video-lock-s330';
+    const source = new RegistrySource();
+    const recording = recordingApi();
+    new HomeKitReconciler(source, recording.api, vi.fn()).start();
+
+    source.publish(registryView(1, new Map([[serial, lockDevice()]]), snapshot(lockManifest(serial, 'T8530'))));
+
+    const accessory = recording.registerPlatformAccessories.mock.calls[0]?.[0][0] as PlatformAccessory;
+    expect(accessory.getServiceById(Service.LockMechanism, 'lock.mechanism')).toBeDefined();
+  });
+
   it('represents lock targets only for the exact evidenced T8531 boundary', async () => {
     const serial = 'synthetic-video-lock';
     const source = new RegistrySource();
