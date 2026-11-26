@@ -159,13 +159,13 @@ const COVERAGE = [LOCK_ACTION.id, UNLOCK_ACTION.id, LOCK_STATE_EVENT_ROW, LOCKED
  *
  * The SDK's actuation covers the whole lock family, and a family is not evidence: a lock button that a wrong
  * frame leaves inert is worse on a door than no button, so a model is listed once the bolt has been seen to
- * move on it. `T8531` is confirmed. `T8506` and `T85L0` are listed to be confirmed by their owner, and come
- * off again if the bolt does not move.
+ * move on it. `T8531` and `T8530` are confirmed. `T8506` and `T85L0` are listed to be confirmed by their
+ * owner, and come off again if the bolt does not move.
  */
 export const LOCK_ADAPTER = {
   key: LOCK_ADAPTER_KEY,
   role: 'primary-purpose',
-  requiresProduct: { models: ['T8531', 'T8506', 'T85L0'] },
+  requiresProduct: { models: ['T8531', 'T8530', 'T8506', 'T85L0'] },
   requires: [LOCK_ACTION, UNLOCK_ACTION],
   coverage: COVERAGE,
   attach: attachLock,
